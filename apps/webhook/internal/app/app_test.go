@@ -100,4 +100,3 @@ func newTestApp() *App {
 		"test-secret",
 	)
 }
-

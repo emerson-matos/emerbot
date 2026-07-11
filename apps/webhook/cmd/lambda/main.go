@@ -10,4 +10,3 @@ func main() {
 	application := app.NewDefault(shared.Getenv("WEBHOOK_SECRET", "local-secret"))
 	lambda.Start(application.HandleLambda)
 }
-
