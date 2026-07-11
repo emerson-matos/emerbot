@@ -27,4 +27,3 @@ type Output struct {
 type Client interface {
 	Generate(ctx context.Context, input Input) (Output, error)
 }
-

@@ -10,4 +10,3 @@ type Memory struct {
 func (m Memory) Key() string {
 	return m.Type + "#" + m.ID
 }
-

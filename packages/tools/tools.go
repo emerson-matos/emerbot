@@ -11,4 +11,3 @@ type Tool interface {
 	Description() string
 	Execute(ctx context.Context, userID string, input string) (domain.ToolResult, error)
 }
-

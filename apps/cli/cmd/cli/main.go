@@ -24,12 +24,14 @@ func main() {
 	}
 
 	stores := memory.NewInMemoryStores()
-	_ = stores.Save(context.Background(), domain.Memory{
+	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: *userID,
 		Type:   "Goal",
 		ID:     "LearnAWS",
-		Value:  "Construir um assistente via WhatsApp gastando menos de R$20 por mes.",
-	})
+		Value:  "Construir um assistente via WhatsApp gastando menos de R$20 por mês.",
+	}); err != nil {
+		log.Fatal(err)
+	}
 
 	service := orchestrator.NewService(
 		llm.StaticClient{},
@@ -50,4 +52,3 @@ func main() {
 
 	fmt.Println(response.Text)
 }
-

@@ -15,4 +15,3 @@ type LongTermStore interface {
 	Save(ctx context.Context, memory domain.Memory) error
 	LoadByUser(ctx context.Context, userID string) ([]domain.Memory, error)
 }
-

@@ -25,3 +25,7 @@ variable "message_ttl_days" {
   default = 7
 }
 
+variable "webhook_secret_value" {
+  type      = string
+  sensitive = true
+}

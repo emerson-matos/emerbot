@@ -18,3 +18,8 @@ variable "lambda_zip_path" {
   description = "Caminho do artefato zip da Lambda."
 }
 
+variable "webhook_secret_value" {
+  type        = string
+  sensitive   = true
+  description = "Valor do segredo usado para validar o webhook."
+}

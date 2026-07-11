@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -30,12 +31,14 @@ type webhookResponse struct {
 
 func main() {
 	stores := memory.NewInMemoryStores()
-	_ = stores.Save(context.Background(), domain.Memory{
+	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "demo-user",
 		Type:   "Preference",
 		ID:     "Language",
 		Value:  "pt-BR",
-	})
+	}); err != nil {
+		log.Fatal(err)
+	}
 
 	service := orchestrator.NewService(
 		llm.StaticClient{},
@@ -107,6 +110,11 @@ func normalize(req whatsappWebhookRequest) (domain.Message, error) {
 }
 
 func validSignature(signature, secret string) bool {
-	return strings.TrimSpace(signature) != "" && signature == secret
-}
+	signature = strings.TrimSpace(signature)
+	secret = strings.TrimSpace(secret)
+	if signature == "" || secret == "" {
+		return false
+	}
 
+	return subtle.ConstantTimeCompare([]byte(signature), []byte(secret)) == 1
+}

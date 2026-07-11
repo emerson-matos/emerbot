@@ -10,4 +10,3 @@ type ToolResult struct {
 	Name   string
 	Output string
 }
-

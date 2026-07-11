@@ -66,4 +66,3 @@ func (s *InMemoryStores) LoadByUser(_ context.Context, userID string) ([]domain.
 
 	return append([]domain.Memory(nil), s.longTerm[userID]...), nil
 }
-
