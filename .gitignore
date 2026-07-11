@@ -24,6 +24,20 @@ profile.cov
 go.work
 go.work.sum
 
+# Local build artifacts
+/bin/
+*.zip
+
+# OpenTofu / Terraform
+/.terraform/
+/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# Nix / direnv
+.direnv/
+result
+
 # env file
 .env
 
