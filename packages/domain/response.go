@@ -5,4 +5,3 @@ type Response struct {
 	UsedLLM     bool
 	ToolResults []ToolResult
 }
-

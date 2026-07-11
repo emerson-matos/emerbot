@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/llm"
@@ -16,7 +17,14 @@ type Registry struct {
 func NewRegistry(items ...Tool) *Registry {
 	registry := &Registry{tools: make(map[string]Tool, len(items))}
 	for _, item := range items {
-		registry.tools[item.Name()] = item
+		name := strings.TrimSpace(item.Name())
+		if name == "" {
+			panic("tool name must not be empty")
+		}
+		if _, exists := registry.tools[name]; exists {
+			panic(fmt.Sprintf("tool %q already registered", name))
+		}
+		registry.tools[name] = item
 	}
 	return registry
 }
@@ -44,4 +52,3 @@ func (r *Registry) Execute(ctx context.Context, call domain.ToolCall, userID str
 
 	return tool.Execute(ctx, userID, call.Input)
 }
-

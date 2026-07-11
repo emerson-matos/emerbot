@@ -13,7 +13,7 @@ func (EchoTool) Name() string {
 }
 
 func (EchoTool) Description() string {
-	return "Retorna o texto recebido. Util para validar o fluxo de tools."
+	return "Retorna o texto recebido. Útil para validar o fluxo de tools."
 }
 
 func (EchoTool) Execute(_ context.Context, _ string, input string) (domain.ToolResult, error) {
@@ -22,4 +22,3 @@ func (EchoTool) Execute(_ context.Context, _ string, input string) (domain.ToolR
 		Output: input,
 	}, nil
 }
-

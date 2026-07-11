@@ -65,6 +65,11 @@ resource "aws_secretsmanager_secret" "webhook_secret" {
   name = "${local.prefix}/webhook/secret"
 }
 
+resource "aws_secretsmanager_secret_version" "webhook_secret" {
+  secret_id     = aws_secretsmanager_secret.webhook_secret.id
+  secret_string = var.webhook_secret_value
+}
+
 resource "aws_lambda_function" "webhook" {
   function_name = "${local.prefix}-webhook"
   role          = aws_iam_role.lambda_exec.arn
@@ -79,7 +84,7 @@ resource "aws_lambda_function" "webhook" {
     variables = {
       MESSAGES_TABLE = aws_dynamodb_table.messages.name
       MEMORIES_TABLE = aws_dynamodb_table.memories.name
-      WEBHOOK_SECRET = aws_secretsmanager_secret.webhook_secret.name
+      WEBHOOK_SECRET = var.webhook_secret_value
     }
   }
 }
@@ -115,4 +120,3 @@ resource "aws_lambda_permission" "allow_apigw" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
-

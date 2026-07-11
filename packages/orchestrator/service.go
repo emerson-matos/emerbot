@@ -28,7 +28,7 @@ func NewService(client llm.Client, shortTerm memory.ShortTermStore, longTerm mem
 		longTerm:         longTerm,
 		tools:            registry,
 		shortTermLimit:   10,
-		defaultResponder: "Nao consegui gerar uma resposta.",
+		defaultResponder: "Não consegui gerar uma resposta.",
 	}
 }
 
@@ -108,6 +108,5 @@ func (s *Service) validateMessage(message domain.Message) error {
 }
 
 func systemPrompt() string {
-	return "Voce e um assistente pessoal via WhatsApp. Seja objetivo, mantenha contexto e use tools apenas quando necessario."
+	return "Você é um assistente pessoal via WhatsApp. Seja objetivo, mantenha contexto e use tools apenas quando necessário."
 }
-

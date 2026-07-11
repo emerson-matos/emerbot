@@ -1,9 +1,11 @@
 package app
 
 import (
+	"crypto/subtle"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -42,12 +44,14 @@ func New(service *orchestrator.Service, secret string) *App {
 
 func NewDefault(secret string) *App {
 	stores := memory.NewInMemoryStores()
-	_ = stores.Save(context.Background(), domain.Memory{
+	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "demo-user",
 		Type:   "Preference",
 		ID:     "Language",
 		Value:  "pt-BR",
-	})
+	}); err != nil {
+		log.Printf("failed to seed default memory: %v", err)
+	}
 
 	return New(
 		orchestrator.NewService(
@@ -115,7 +119,13 @@ func normalize(req Request) (domain.Message, error) {
 }
 
 func validSignature(signature, secret string) bool {
-	return strings.TrimSpace(signature) != "" && signature == secret
+	signature = strings.TrimSpace(signature)
+	secret = strings.TrimSpace(secret)
+	if signature == "" || secret == "" {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(signature), []byte(secret)) == 1
 }
 
 func jsonResponse(statusCode int, payload any) (events.APIGatewayV2HTTPResponse, error) {
@@ -132,4 +142,3 @@ func jsonResponse(statusCode int, payload any) (events.APIGatewayV2HTTPResponse,
 		Body: string(body),
 	}, nil
 }
-

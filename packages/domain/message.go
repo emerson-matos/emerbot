@@ -24,4 +24,3 @@ type ConversationMessage struct {
 	Text      string
 	Timestamp time.Time
 }
-
