@@ -48,7 +48,7 @@ WhatsApp -> API Gateway -> Lambda Webhook -> Orchestrator
 - `packages/llm`: abstrações do provider e adapter local de desenvolvimento.
 - `packages/memory`: contratos e implementações de memória.
 - `packages/tools`: registry e contratos de tools.
-- `apps/webhook`: entrada HTTP para o webhook do WhatsApp.
+- `apps/webhook`: handler Lambda e runner local para o webhook do WhatsApp.
 - `apps/worker`: entrypoint para processamento assíncrono futuro.
 - `apps/cli`: fluxo local para exercitar o orchestrator sem WhatsApp.
 
@@ -60,7 +60,7 @@ Esta base entrega:
 - contratos normalizados do domínio
 - orchestrator com fluxo explícito
 - adapters in-memory para memória e tools
-- webhook HTTP local com normalização do payload
+- handler Lambda com runner local de desenvolvimento
 - base inicial de OpenTofu para Lambda, API Gateway, DynamoDB e Secrets Manager
 - ADRs iniciais
 
@@ -74,6 +74,9 @@ direnv allow
 make build
 make run-webhook
 ```
+
+Para desenvolvimento local, `make run-webhook` sobe um servidor HTTP que reaproveita a mesma app do handler Lambda.
+Em produção, o entrypoint é `apps/webhook/cmd/lambda`.
 
 O `flake.nix` instala:
 
@@ -90,4 +93,4 @@ O `flake.nix` instala:
 1. Implementar adapter real do WhatsApp.
 2. Implementar adapter real do Gemini respeitando `LLMClient`.
 3. Persistir mensagens e memórias no DynamoDB.
-4. Empacotar `apps/webhook` para deploy via OpenTofu.
+4. Empacotar `apps/webhook/cmd/lambda` para deploy via OpenTofu.
