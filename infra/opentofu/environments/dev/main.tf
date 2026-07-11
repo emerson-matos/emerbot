@@ -6,3 +6,23 @@ module "assistant" {
   lambda_zip_path      = var.lambda_zip_path
   webhook_secret_value = var.webhook_secret_value
 }
+
+locals {
+  cloudflare_records = var.cloudflare_enabled ? [{
+    id      = "webhook"
+    name    = var.cloudflare_record_name
+    type    = "CNAME"
+    content = module.assistant.api_url
+    ttl     = 1
+    proxied = false
+    comment = "WhatsApp webhook endpoint"
+  }] : []
+}
+
+module "cloudflare_dns" {
+  count  = var.cloudflare_enabled ? 1 : 0
+  source = "../../../modules/cloudflare_dns"
+
+  zone_id = var.cloudflare_zone_id
+  records = local.cloudflare_records
+}

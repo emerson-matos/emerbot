@@ -23,3 +23,21 @@ variable "webhook_secret_value" {
   sensitive   = true
   description = "Valor do segredo usado para validar o webhook."
 }
+
+variable "cloudflare_enabled" {
+  type        = bool
+  default     = false
+  description = "Habilita a criação opcional de DNS no Cloudflare."
+}
+
+variable "cloudflare_zone_id" {
+  type        = string
+  default     = ""
+  description = "Zone ID do Cloudflare para os registros DNS opcionais."
+}
+
+variable "cloudflare_record_name" {
+  type        = string
+  default     = "webhook"
+  description = "Nome do registro DNS que apontará para o API Gateway."
+}
