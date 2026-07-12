@@ -176,7 +176,7 @@ export default function Dashboard() {
               <div><IncomeExpenseChart data={monthlyData} /></div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
                 <CardContent className="p-5">
                   <h3 className="text-sm font-semibold text-card-foreground mb-4">🔥 Maiores Gastos do Mês</h3>
@@ -208,9 +208,10 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
               <div><CategoryDonut data={categories} /></div>
-              <div className="lg:col-span-1">
-                <TransactionsTable entries={displayEntries} onMarkPaid={handleMarkPaid} />
-              </div>
+            </div>
+
+            <div className="w-full">
+              <TransactionsTable entries={displayEntries} onMarkPaid={handleMarkPaid} />
             </div>
           </>
         )}
