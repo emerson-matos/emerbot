@@ -3,6 +3,8 @@ import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { api, formatBRL } from '../api/client'
 import type { Entry, MonthlySummary, CategorySummary, CashFlowPoint } from '../api/client'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import KpiCard from '../components/KpiCard'
 import CashFlowChart from '../components/CashFlowChart'
 import IncomeExpenseChart from '../components/IncomeExpenseChart'
@@ -109,26 +111,28 @@ export default function Dashboard() {
     ? { date: format(new Date(worstDayEntry[0]), 'dd/MM'), total: worstDayEntry[1] }
     : null
 
+  const colorDots = ['#ef4444', '#f97316', '#f59e0b', '#8b5cf6', '#3b82f6']
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-background">
+      <header className="bg-card border-b border-border px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-2xl">💊</span>
           <div>
-            <h1 className="font-bold text-gray-900 leading-tight">Farmácia — Painel Financeiro</h1>
-            <p className="text-xs text-gray-500 capitalize">{monthLabel}</p>
+            <h1 className="font-bold text-foreground leading-tight">Farmácia — Painel Financeiro</h1>
+            <p className="text-xs text-muted-foreground capitalize">{monthLabel}</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-600">Olá, <strong>{userName}</strong></span>
-          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-700 transition-colors">Sair</button>
+          <span className="text-sm text-muted-foreground">Olá, <strong className="text-foreground">{userName}</strong></span>
+          <button onClick={handleLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Sair</button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="text-gray-400 text-sm animate-pulse">Carregando dados...</div>
+            <div className="text-muted-foreground text-sm animate-pulse">Carregando dados...</div>
           </div>
         ) : (
           <>
@@ -142,23 +146,29 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <KpiCard title="A Pagar Hoje" value={payableToday} icon="⚠️" color="yellow" subtitle="Vencimento hoje" />
               {worstMonth && (
-                <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
-                  <span className="text-3xl">📉</span>
+                <Card>
+                  <CardContent className="p-5 flex items-center gap-4">
+                    <span className="text-3xl">📉</span>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior Mês</p>
+                      <p className="text-sm text-foreground mt-1">
+                        <strong className="capitalize">{worstMonth.month}</strong> — saldo de {formatBRL(worstMonth.income - worstMonth.expense)}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              <Card>
+                <CardContent className="p-5 flex items-center gap-4">
+                  <span className="text-3xl">📱</span>
                   <div>
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pior Mês</p>
-                    <p className="text-sm text-gray-700 mt-1">
-                      <strong className="capitalize">{worstMonth.month}</strong> — saldo de {formatBRL(worstMonth.income - worstMonth.expense)}
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">WhatsApp Bot</p>
+                    <p className="text-sm text-foreground mt-1">
+                      Envie <Badge variant="secondary" className="font-mono text-xs">/despesa 500 aluguel</Badge> para registrar
                     </p>
                   </div>
-                </div>
-              )}
-              <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
-                <span className="text-3xl">📱</span>
-                <div>
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">WhatsApp Bot</p>
-                  <p className="text-sm text-gray-700 mt-1">Envie <code className="bg-gray-100 px-1 rounded">/despesa 500 aluguel</code> para registrar</p>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -167,34 +177,36 @@ export default function Dashboard() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">🔥 Maiores Gastos do Mês</h3>
-                {topExpenses.length === 0 ? (
-                  <p className="text-gray-400 text-sm text-center py-6">Sem dados</p>
-                ) : (
-                  <div className="space-y-3">
-                    {topExpenses.map((cat, i) => (
-                      <div key={cat.Category} className="flex items-center gap-3">
-                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: ['#ef4444','#f97316','#f59e0b','#8b5cf6','#3b82f6'][i] }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{cat.Category.replace(/_/g, ' ')}</p>
-                          <p className="text-xs text-gray-400">{cat.Count} registro(s)</p>
+              <Card>
+                <CardContent className="p-5">
+                  <h3 className="text-sm font-semibold text-card-foreground mb-4">🔥 Maiores Gastos do Mês</h3>
+                  {topExpenses.length === 0 ? (
+                    <p className="text-muted-foreground text-sm text-center py-6">Sem dados</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {topExpenses.map((cat, i) => (
+                        <div key={cat.Category} className="flex items-center gap-3">
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorDots[i] }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{cat.Category.replace(/_/g, ' ')}</p>
+                            <p className="text-xs text-muted-foreground">{cat.Count} registro(s)</p>
+                          </div>
+                          <span className="text-sm font-semibold text-foreground">{formatBRL(cat.Total)}</span>
                         </div>
-                        <span className="text-sm font-semibold text-gray-900">{formatBRL(cat.Total)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {worstDay && (
-                  <div className="mt-4 pt-4 border-t border-gray-100">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pior dia do mês</p>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-sm text-gray-700">{worstDay.date}</span>
-                      <span className="text-sm font-semibold text-red-600">{formatBRL(worstDay.total)}</span>
+                      ))}
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                  {worstDay && (
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior dia do mês</p>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-sm text-foreground">{worstDay.date}</span>
+                        <span className="text-sm font-semibold text-destructive">{formatBRL(worstDay.total)}</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
               <div><CategoryDonut data={categories} /></div>
               <div className="lg:col-span-1">
                 <TransactionsTable entries={displayEntries} onMarkPaid={handleMarkPaid} />

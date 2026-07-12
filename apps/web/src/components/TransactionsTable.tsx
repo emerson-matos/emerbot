@@ -1,3 +1,7 @@
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatBRL } from '../api/client'
 import type { Entry } from '../api/client'
 import { format, parseISO } from 'date-fns'
@@ -28,70 +32,65 @@ const categoryLabels: Record<string, string> = {
 
 export default function TransactionsTable({ entries, onMarkPaid }: Props) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-100">
-        <h3 className="text-sm font-semibold text-gray-700">🧾 Últimas Transações</h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-              <th className="px-4 py-3 text-left">Data</th>
-              <th className="px-4 py-3 text-left">Descrição</th>
-              <th className="px-4 py-3 text-left">Categoria</th>
-              <th className="px-4 py-3 text-right">Valor</th>
-              <th className="px-4 py-3 text-center">Status</th>
-              {onMarkPaid && <th className="px-4 py-3" />}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">🧾 Últimas Transações</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Data</TableHead>
+              <TableHead>Descrição</TableHead>
+              <TableHead>Categoria</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead className="text-center">Status</TableHead>
+              {onMarkPaid && <TableHead />}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {entries.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   Nenhuma transação encontrada
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
             {entries.map(e => (
-              <tr key={e.EntryID} className="hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+              <TableRow key={e.EntryID}>
+                <TableCell className="text-muted-foreground whitespace-nowrap">
                   {format(parseISO(e.Date), 'dd/MM/yy', { locale: ptBR })}
-                </td>
-                <td className="px-4 py-3 text-gray-900 max-w-xs truncate">
-                  {e.Description || '—'}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="inline-block bg-gray-100 text-gray-600 text-xs rounded-full px-2 py-0.5">
+                </TableCell>
+                <TableCell className="max-w-xs truncate">{e.Description || '—'}</TableCell>
+                <TableCell>
+                  <Badge variant="secondary" className="font-normal">
                     {categoryLabels[e.Category] ?? e.Category}
-                  </span>
-                </td>
-                <td className={`px-4 py-3 text-right font-medium tabular-nums ${e.Type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
+                  </Badge>
+                </TableCell>
+                <TableCell className={`text-right font-medium tabular-nums ${e.Type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
                   {e.Type === 'income' ? '+' : '-'}{formatBRL(e.Amount)}
-                </td>
-                <td className="px-4 py-3 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   {e.PaymentStatus === 'paid' ? (
-                    <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">Pago</span>
+                    <Badge variant="default" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">Pago</Badge>
                   ) : (
-                    <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">Pendente</span>
+                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Pendente</Badge>
                   )}
-                </td>
+                </TableCell>
                 {onMarkPaid && (
-                  <td className="px-4 py-3 text-center">
+                  <TableCell className="text-center">
                     {e.PaymentStatus === 'pending' && (
-                      <button
-                        onClick={() => onMarkPaid(e.EntryID)}
-                        className="text-xs text-emerald-600 hover:underline"
-                      >
+                      <Button variant="link" size="sm" className="text-emerald-600 h-auto p-0" onClick={() => onMarkPaid(e.EntryID)}>
                         Marcar pago
-                      </button>
+                      </Button>
                     )}
-                  </td>
+                  </TableCell>
                 )}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   )
 }

@@ -1,3 +1,5 @@
+import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import { formatBRL } from '../api/client'
 
 interface KpiCardProps {
@@ -17,15 +19,17 @@ const colorMap = {
 
 export default function KpiCard({ title, value, icon, color, subtitle }: KpiCardProps) {
   return (
-    <div className={`rounded-xl border p-5 ${colorMap[color]}`}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide opacity-70">{title}</p>
-          <p className="text-2xl font-bold mt-1">{formatBRL(value)}</p>
-          {subtitle && <p className="text-xs mt-1 opacity-60">{subtitle}</p>}
+    <Card className={cn('border', colorMap[color])}>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide opacity-70">{title}</p>
+            <p className="text-2xl font-bold mt-1">{formatBRL(value)}</p>
+            {subtitle && <p className="text-xs mt-1 opacity-60">{subtitle}</p>}
+          </div>
+          <span className="text-2xl">{icon}</span>
         </div>
-        <span className="text-2xl">{icon}</span>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }
