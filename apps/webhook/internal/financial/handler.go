@@ -58,6 +58,56 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 	return formatConfirmation(entry), nil
 }
 
+func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
+	now := time.Now().UTC()
+	yearMonth := now.Format("2006-01")
+	summary, err := h.store.MonthlySummary(ctx, userID, yearMonth)
+	if err != nil {
+		return "", fmt.Errorf("resumo: %w", err)
+	}
+
+	due := now.AddDate(0, 0, 1)
+	tomorrow := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
+	pending, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{
+		Status: domain.PaymentStatusPending,
+		To:     &tomorrow,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resumo pending: %w", err)
+	}
+
+	var totalDue int64
+	for _, e := range pending {
+		totalDue += e.Amount
+	}
+
+	msg := "📊 *Resumo Financeiro — " + now.Format("01/2006") + "*\n\n"
+	msg += fmt.Sprintf("💰 *Receitas:* R$%s\n", money(summary.TotalIncome))
+	msg += fmt.Sprintf("💸 *Despesas:* R$%s\n", money(summary.TotalExpense))
+	msg += fmt.Sprintf("💵 *Saldo:* R$%s\n", money(summary.Balance))
+	if len(pending) > 0 {
+		msg += fmt.Sprintf("\n⏳ *A vencer amanhã:* R$%s (%d conta(s))", money(totalDue), len(pending))
+	}
+	msg += "\n\nComandos:\n/despesa, /receita, /pagar, /receber"
+	return msg, nil
+}
+
+func money(centavos int64) string {
+	abs := centavos
+	if abs < 0 {
+		abs = -abs
+	}
+	s := fmt.Sprintf("%d,%02d", abs/100, abs%100)
+	n := len(s)
+	for i := n - 6; i > 0; i -= 4 {
+		s = s[:i] + "." + s[i:]
+	}
+	if centavos < 0 {
+		s = "-" + s
+	}
+	return s
+}
+
 func formatConfirmation(e domain.FinancialEntry) string {
 	typeEmoji := "💸"
 	typeLabel := "Despesa"

@@ -34,7 +34,7 @@ type Response struct {
 
 // financialCommands are prefixes that route to the financial handler instead
 // of the AI orchestrator.
-var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber"}
+var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/resumo"}
 
 type App struct {
 	service           *orchestrator.Service
@@ -89,10 +89,15 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	// Route financial commands to the financial handler.
 	text := strings.TrimSpace(message.Text)
 	if a.financialHandler != nil && isFinancialCommand(text) {
-		reply, err := a.financialHandler.Handle(ctx, message.UserID, text)
+		var reply string
+		var err error
+		if strings.HasPrefix(strings.ToLower(text), "/resumo") {
+			reply, err = a.financialHandler.Resumo(ctx, message.UserID)
+		} else {
+			reply, err = a.financialHandler.Handle(ctx, message.UserID, text)
+		}
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
-			// reply already contains user-friendly error message
 		}
 		return Response{Message: reply}, http.StatusOK, nil
 	}
