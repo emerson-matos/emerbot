@@ -121,6 +121,7 @@ func newTestApp() *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
+		nil, // no financial handler in tests
 		"test-secret",
 	)
 }

@@ -15,13 +15,30 @@ variable "environment" {
 
 variable "lambda_zip_path" {
   type        = string
-  description = "Caminho do artefato zip da Lambda."
+  description = "Caminho do artefato zip do webhook Lambda."
+}
+
+variable "dashboard_api_zip_path" {
+  type        = string
+  description = "Caminho do artefato zip do dashboard-api Lambda."
 }
 
 variable "webhook_secret_value" {
   type        = string
   sensitive   = true
   description = "Valor do segredo usado para validar o webhook."
+}
+
+variable "jwt_secret_value" {
+  type        = string
+  sensitive   = true
+  description = "Segredo para assinar JWTs do dashboard."
+}
+
+variable "gemini_api_key_value" {
+  type        = string
+  sensitive   = true
+  description = "API key do Gemini para parsing de mensagens do WhatsApp."
 }
 
 variable "cloudflare_enabled" {

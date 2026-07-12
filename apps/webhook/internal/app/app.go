@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/llm"
 	"github.com/emerson/emerbot/packages/memory"
@@ -31,18 +32,27 @@ type Response struct {
 	Message string `json:"message"`
 }
 
+// financialCommands are prefixes that route to the financial handler instead
+// of the AI orchestrator.
+var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber"}
+
 type App struct {
-	service *orchestrator.Service
-	secret  string
+	service           *orchestrator.Service
+	financialHandler  *financial.Handler
+	secret            string
 }
 
-func New(service *orchestrator.Service, secret string) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, secret string) *App {
 	return &App{
-		service: service,
-		secret:  secret,
+		service:          service,
+		financialHandler: finHandler,
+		secret:           secret,
 	}
 }
 
+// NewDefault builds an App with in-memory stores and a static LLM client.
+// Used for local development without Docker. The financial handler uses a
+// nil store (no-op) unless DYNAMODB_ENDPOINT is set — see cmd/local for wiring.
 func NewDefault(secret string) *App {
 	stores := memory.NewInMemoryStores()
 	if err := stores.Save(context.Background(), domain.Memory{
@@ -61,6 +71,7 @@ func NewDefault(secret string) *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
+		nil, // financial handler not wired in NewDefault; use New() directly
 		secret,
 	)
 }
@@ -75,12 +86,33 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		return Response{}, http.StatusBadRequest, err
 	}
 
+	// Route financial commands to the financial handler.
+	text := strings.TrimSpace(message.Text)
+	if a.financialHandler != nil && isFinancialCommand(text) {
+		reply, err := a.financialHandler.Handle(ctx, message.UserID, text)
+		if err != nil {
+			log.Printf("financial handler error: %v", err)
+			// reply already contains user-friendly error message
+		}
+		return Response{Message: reply}, http.StatusOK, nil
+	}
+
 	response, err := a.service.HandleMessage(ctx, message)
 	if err != nil {
 		return Response{}, http.StatusInternalServerError, err
 	}
 
 	return Response{Message: response.Text}, http.StatusOK, nil
+}
+
+func isFinancialCommand(text string) bool {
+	lower := strings.ToLower(text)
+	for _, cmd := range financialCommands {
+		if strings.HasPrefix(lower, cmd) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
