@@ -12,15 +12,36 @@ interface Props {
 }
 
 export default function CashFlowChart({ data }: Props) {
-  const formatted = data.map(p => ({
-    ...p,
-    label: format(parseISO(p.Date), 'dd/MM', { locale: ptBR }),
-    balance: p.RunningBalance / 100,
-  }))
+  const today = format(new Date(), 'yyyy-MM-dd')
+  let todayIndex = -1
+
+  const formatted = data.map((p, i) => {
+    if (p.Date === today) todayIndex = i
+    return {
+      ...p,
+      label: format(parseISO(p.Date), 'dd/MM', { locale: ptBR }),
+      balance: p.RunningBalance / 100,
+    }
+  })
+
+  const refLines = [
+    <ReferenceLine key="zero" y={0} stroke="#ef4444" strokeDasharray="4 4" />,
+  ]
+  if (todayIndex >= 0) {
+    refLines.push(
+      <ReferenceLine
+        key="today"
+        x={formatted[todayIndex].label}
+        stroke="#3b82f6"
+        strokeDasharray="4 4"
+        label={{ value: 'hoje', position: 'top', fontSize: 10, fill: '#3b82f6' }}
+      />
+    )
+  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">📈 Fluxo de Caixa — Próximos 30 dias</h3>
+      <h3 className="text-sm font-semibold text-gray-700 mb-4">📈 Fluxo de Caixa — 30 dias (passado + projeção)</h3>
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={formatted} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -34,10 +55,10 @@ export default function CashFlowChart({ data }: Props) {
             tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`}
           />
           <Tooltip
-            formatter={(value: number) => [formatBRL(value * 100), 'Saldo Previsto']}
+            formatter={(value: number) => [formatBRL(value * 100), 'Saldo']}
             labelStyle={{ fontSize: 12 }}
           />
-          <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 4" />
+          {refLines}
           <Line
             type="monotone"
             dataKey="balance"

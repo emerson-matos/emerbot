@@ -24,9 +24,11 @@ services:
     image: docker.io/amazon/dynamodb-local:latest
     container_name: emerbot-dynamodb
     restart: unless-stopped
-    command: -jar DynamoDBLocal.jar -sharedDb -inMemory
+    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /data
     ports:
       - "8000:8000"
+    volumes:
+      - dynamodb-data:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000"]
       interval: 5s
@@ -156,3 +158,6 @@ services:
       VITE_API_URL: http://localhost:8081
     ports:
       - "5173:5173"
+
+volumes:
+  dynamodb-data:

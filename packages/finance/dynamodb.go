@@ -208,6 +208,18 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 		exprValues[":to"] = &types.AttributeValueMemberS{
 			Value: entryPrefix + filter.To.Format("2006-01-02") + "#\xff",
 		}
+	} else if filter.From != nil {
+		keyCondition = "PK = :pk AND SK >= :from"
+		delete(exprValues, ":prefix")
+		exprValues[":from"] = &types.AttributeValueMemberS{
+			Value: entryPrefix + filter.From.Format("2006-01-02"),
+		}
+	} else if filter.To != nil {
+		keyCondition = "PK = :pk AND SK <= :to"
+		delete(exprValues, ":prefix")
+		exprValues[":to"] = &types.AttributeValueMemberS{
+			Value: entryPrefix + filter.To.Format("2006-01-02") + "#\xff",
+		}
 	}
 
 	var filterExpr *string
@@ -339,11 +351,30 @@ func (s *DynamoDBStore) CategorySummary(ctx context.Context, userID string, from
 }
 
 func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, days int) ([]CashFlowPoint, error) {
-	now := time.Now().UTC().Truncate(24 * time.Hour)
-	end := now.AddDate(0, 0, days)
-	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &now, To: &end})
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	past := days / 2
+	future := days - past
+
+	from := today.AddDate(0, 0, -past)
+	to := today.AddDate(0, 0, future-1)
+
+	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
 	if err != nil {
 		return nil, err
+	}
+
+	// Compute starting balance: sum all entries before "from"
+	startEntries, err := s.ListEntries(ctx, userID, EntryFilter{To: &from})
+	if err != nil {
+		return nil, err
+	}
+	var running int64
+	for _, e := range startEntries {
+		if e.Type == domain.EntryTypeIncome {
+			running += e.Amount
+		} else {
+			running -= e.Amount
+		}
 	}
 
 	type dayTotals struct{ income, expense int64 }
@@ -353,6 +384,9 @@ func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, day
 		if dueDate == nil {
 			d := e.Date
 			dueDate = &d
+		}
+		if dueDate.Before(from) || dueDate.After(to) {
+			continue
 		}
 		day := dueDate.Format("2006-01-02")
 		if _, ok := byDay[day]; !ok {
@@ -366,9 +400,8 @@ func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, day
 	}
 
 	points := make([]CashFlowPoint, 0, days)
-	var running int64
 	for i := 0; i < days; i++ {
-		d := now.AddDate(0, 0, i)
+		d := from.AddDate(0, 0, i)
 		day := d.Format("2006-01-02")
 		var inc, exp int64
 		if t := byDay[day]; t != nil {

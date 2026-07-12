@@ -112,21 +112,40 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 	// --- Pending items for the current/future month only ---
 	now := time.Now().UTC()
 	if base.Year() == now.Year() && base.Month() == now.Month() {
-		// A pagar: próxima fatura de fornecedor
 		nextDue := time.Date(year, month+1, 3, 0, 0, 0, 0, time.UTC)
 		pending := expense(userID, now, randBetween(rng, 1500000, 2000000), "fornecedor_medicamentos", "Compra Distribuidora (a pagar)", "Distribuidora", domain.PaymentStatusPending)
 		pending.DueDate = &nextDue
 		save(pending)
 
-		// A receber: convênio do mês atual
 		nextConvenio := time.Date(year, month, lastDay, 0, 0, 0, 0, time.UTC)
 		rec := income(userID, now, randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio (a receber)")
 		rec.PaymentStatus = domain.PaymentStatusPending
 		rec.DueDate = &nextConvenio
 		save(rec)
+
+		// A pagar hoje
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		save(pendingDue(
+			expense(userID, now, 189700, "fornecedor_medicamentos", "Duplicata Distribuidora Alfarma", "Distribuidora", domain.PaymentStatusPending),
+			today,
+		))
+		save(pendingDue(
+			expense(userID, now, 54300, "fornecedor_geral", "Embalagens e Insumos (vencimento hoje)", "Fornecedor Geral", domain.PaymentStatusPending),
+			today,
+		))
+		recHoje := income(userID, now, 312000, "convenio", "Convênio Unimed (a receber hoje)")
+		recHoje.PaymentStatus = domain.PaymentStatusPending
+		recHoje.DueDate = &today
+		save(recHoje)
 	}
 
 	return count
+}
+
+func pendingDue(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
+	e.PaymentStatus = domain.PaymentStatusPending
+	e.DueDate = &due
+	return e
 }
 
 func expense(userID string, d time.Time, amount int64, cat, desc, supplier string, status domain.PaymentStatus) domain.FinancialEntry {

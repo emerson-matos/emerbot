@@ -4,24 +4,26 @@ import {
 } from 'recharts'
 import { formatBRL } from '../api/client'
 
-interface Props {
+interface MonthlyData {
+  month: string
   income: number
   expense: number
-  month: string
 }
 
-export default function IncomeExpenseChart({ income, expense, month }: Props) {
-  const data = [
-    {
-      name: month,
-      Receitas: income / 100,
-      Despesas: expense / 100,
-    },
-  ]
+interface Props {
+  data: MonthlyData[]
+}
+
+export default function IncomeExpenseChart({ data }: Props) {
+  const chartData = data.map(d => ({
+    name: d.month,
+    Receitas: d.income / 100,
+    Despesas: d.expense / 100,
+  }))
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">📊 Entradas × Saídas</h3>
+      <h3 className="text-sm font-semibold text-gray-700 mb-4">📊 Entradas × Saídas (3 meses)</h3>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={data} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
