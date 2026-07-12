@@ -139,6 +139,22 @@ func geminiResponseToParsed(gr geminiResponse) (ParsedEntry, error) {
 	}, nil
 }
 
+// RegexParser implements Parser using only regex (no Gemini API key needed).
+// Useful for local development or when no API key is configured.
+type RegexParser struct{}
+
+func NewRegexParser() *RegexParser {
+	return &RegexParser{}
+}
+
+func (p *RegexParser) Parse(_ context.Context, text string) (ParsedEntry, error) {
+	entry, ok := parseRegex(text)
+	if !ok {
+		return ParsedEntry{}, fmt.Errorf("could not parse command, use format: /despesa 500 aluguel")
+	}
+	return entry, nil
+}
+
 // --- Regex parser for structured commands ---
 
 // commandPattern matches: /command amount [category] [rest]
