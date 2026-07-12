@@ -136,22 +136,22 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               <KpiCard title="Saldo do Mês" value={summary?.Balance ?? 0} icon="💰" color={(summary?.Balance ?? 0) >= 0 ? 'green' : 'red'} subtitle="Receitas − Despesas" />
               <KpiCard title="Total Receitas" value={summary?.TotalIncome ?? 0} icon="📈" color="green" subtitle="Este mês" />
               <KpiCard title="Total Despesas" value={summary?.TotalExpense ?? 0} icon="📉" color="red" subtitle="Este mês" />
               <KpiCard title="A Receber" value={totalReceivable} icon="⏳" color="blue" subtitle="Pendente" />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               <KpiCard title="A Pagar Hoje" value={payableToday} icon="⚠️" color="yellow" subtitle="Vencimento hoje" />
               {worstMonth && (
                 <Card>
-                  <CardContent className="p-5 flex items-center gap-4">
-                    <span className="text-3xl">📉</span>
+                  <CardContent className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
+                    <span className="text-2xl sm:text-3xl">📉</span>
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior Mês</p>
-                      <p className="text-sm text-foreground mt-1">
+                      <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior Mês</p>
+                      <p className="text-xs sm:text-sm text-foreground mt-0.5">
                         <strong className="capitalize">{worstMonth.month}</strong> — saldo de {formatBRL(worstMonth.income - worstMonth.expense)}
                       </p>
                     </div>
@@ -159,12 +159,12 @@ export default function Dashboard() {
                 </Card>
               )}
               <Card>
-                <CardContent className="p-5 flex items-center gap-4">
-                  <span className="text-3xl">📱</span>
+                <CardContent className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
+                  <span className="text-2xl sm:text-3xl">📱</span>
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">WhatsApp Bot</p>
-                    <p className="text-sm text-foreground mt-1">
-                      Envie <Badge variant="secondary" className="font-mono text-xs">/despesa 500 aluguel</Badge> para registrar
+                    <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wide">WhatsApp Bot</p>
+                    <p className="text-xs sm:text-sm text-foreground mt-0.5">
+                      Envie <Badge variant="secondary" className="font-mono text-[10px] sm:text-xs">/despesa 500 aluguel</Badge> para registrar
                     </p>
                   </div>
                 </CardContent>
