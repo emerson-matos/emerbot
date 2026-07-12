@@ -16,10 +16,13 @@ lint:
 	golangci-lint run ./...
 
 run-webhook:
-	$(GO) run ./apps/webhook/cmd/webhook
+	$(GO) run ./apps/webhook/cmd/local
 
 run-cli:
 	$(GO) run ./apps/cli/cmd/cli --help
+
+run-lambda:
+	$(GO) run ./apps/webhook/cmd/lambda
 
 tofu-fmt:
 	$(TOFU) fmt -recursive infra
@@ -29,4 +32,3 @@ tofu-fmt-check:
 
 tofu-init:
 	$(TOFU) -chdir=infra/opentofu/environments/dev init
-

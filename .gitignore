@@ -30,6 +30,7 @@ go.work.sum
 
 # OpenTofu / Terraform
 /.terraform/
+**/.terraform/
 /.terraform.lock.hcl
 *.tfstate
 *.tfstate.*

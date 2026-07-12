@@ -36,5 +36,4 @@
 1. mover persistência in-memory para adapters DynamoDB
 2. adicionar fila assíncrona apenas quando houver um padrão de acesso claro
 3. manter tools atrás de contracts explícitos
-4. manter provider de IA trocável via `LLMClient`
-
+4. manter provider de IA trocável via `llm.Client`

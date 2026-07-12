@@ -31,9 +31,9 @@ func NewRegistry(items ...Tool) *Registry {
 
 func (r *Registry) Definitions() []llm.ToolDefinition {
 	definitions := make([]llm.ToolDefinition, 0, len(r.tools))
-	for _, tool := range r.tools {
+	for name, tool := range r.tools {
 		definitions = append(definitions, llm.ToolDefinition{
-			Name:        tool.Name(),
+			Name:        name,
 			Description: tool.Description(),
 		})
 	}
@@ -45,9 +45,14 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 }
 
 func (r *Registry) Execute(ctx context.Context, call domain.ToolCall, userID string) (domain.ToolResult, error) {
-	tool, ok := r.tools[call.Name]
+	name := strings.TrimSpace(call.Name)
+	if name == "" {
+		return domain.ToolResult{}, fmt.Errorf("tool name is required")
+	}
+
+	tool, ok := r.tools[name]
 	if !ok {
-		return domain.ToolResult{}, fmt.Errorf("tool %q not registered", call.Name)
+		return domain.ToolResult{}, fmt.Errorf("tool %q not registered", name)
 	}
 
 	return tool.Execute(ctx, userID, call.Input)

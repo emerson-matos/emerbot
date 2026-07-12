@@ -18,7 +18,7 @@ func (c StaticClient) Generate(_ context.Context, input Input) (Output, error) {
 	}
 
 	lower := strings.ToLower(text)
-	if strings.Contains(lower, "memória") && len(input.LongTerm) > 0 {
+	if (strings.Contains(lower, "memória") || strings.Contains(lower, "memoria")) && len(input.LongTerm) > 0 {
 		return Output{Text: "Encontrei informações salvas sobre você e considerei isso na resposta."}, nil
 	}
 
