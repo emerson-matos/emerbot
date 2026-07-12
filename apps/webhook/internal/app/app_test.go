@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -81,14 +82,37 @@ func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 	}
 }
 
+func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp()
+	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
+		Body:            base64.StdEncoding.EncodeToString([]byte(`{"user_id":"u1","message_id":"m1","text":"oi","signature":"test-secret"}`)),
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleLambda returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+}
+
 func newTestApp() *App {
 	stores := memory.NewInMemoryStores()
-	_ = stores.Save(context.Background(), domain.Memory{
+	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "u1",
 		Type:   "Goal",
 		ID:     "LearnAWS",
 		Value:  "Study Lambda architecture locally first.",
-	})
+	}); err != nil {
+		panic(err)
+	}
 
 	return New(
 		orchestrator.NewService(

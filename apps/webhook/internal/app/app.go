@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -87,8 +88,17 @@ func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPReq
 		return jsonResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 
+	body := []byte(event.Body)
+	if event.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(event.Body)
+		if err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid base64 body"})
+		}
+		body = decoded
+	}
+
 	var req Request
-	if err := json.Unmarshal([]byte(event.Body), &req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
 	}
 

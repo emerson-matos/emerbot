@@ -20,11 +20,6 @@ variable "lambda_runtime" {
   default = "provided.al2023"
 }
 
-variable "message_ttl_days" {
-  type    = number
-  default = 7
-}
-
 variable "webhook_secret_value" {
   type      = string
   sensitive = true

@@ -22,6 +22,22 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy" "read_webhook_secret" {
+  name = "${local.prefix}-read-webhook-secret"
+  role = aws_iam_role.lambda_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = [
+        "secretsmanager:GetSecretValue"
+      ]
+      Effect   = "Allow"
+      Resource = aws_secretsmanager_secret.webhook_secret.arn
+    }]
+  })
+}
+
 resource "aws_dynamodb_table" "messages" {
   name         = "${local.prefix}-messages"
   billing_mode = "PAY_PER_REQUEST"
@@ -82,9 +98,9 @@ resource "aws_lambda_function" "webhook" {
 
   environment {
     variables = {
-      MESSAGES_TABLE = aws_dynamodb_table.messages.name
-      MEMORIES_TABLE = aws_dynamodb_table.memories.name
-      WEBHOOK_SECRET = var.webhook_secret_value
+      MESSAGES_TABLE           = aws_dynamodb_table.messages.name
+      MEMORIES_TABLE           = aws_dynamodb_table.memories.name
+      WEBHOOK_SECRET_SECRET_ID = aws_secretsmanager_secret.webhook_secret.id
     }
   }
 }
