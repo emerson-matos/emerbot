@@ -1,5 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { CategorySummary, formatBRL } from '../api/client'
+import { formatBRL } from '../api/client'
+import type { CategorySummary } from '../api/client'
 
 const COLORS = [
   '#10b981', '#3b82f6', '#f59e0b', '#ef4444',

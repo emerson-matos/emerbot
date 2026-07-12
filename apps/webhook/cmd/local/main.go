@@ -13,6 +13,10 @@ func main() {
 	addr := shared.Getenv("WEBHOOK_ADDR", ":8080")
 	application := app.NewDefault(shared.Getenv("WEBHOOK_SECRET", "local-secret"))
 
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

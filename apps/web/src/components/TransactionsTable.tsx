@@ -1,4 +1,5 @@
-import { Entry, formatBRL } from '../api/client'
+import { formatBRL } from '../api/client'
+import type { Entry } from '../api/client'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 

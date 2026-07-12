@@ -2,7 +2,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { CashFlowPoint, formatBRL } from '../api/client'
+import { formatBRL } from '../api/client'
+import type { CashFlowPoint } from '../api/client'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 

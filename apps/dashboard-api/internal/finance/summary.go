@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -32,7 +33,8 @@ func (h *SummaryHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 
 	summary, err := h.store.MonthlySummary(r.Context(), claims.UserID, month)
 	if err != nil {
-		jsonError(w, "failed to get monthly summary", http.StatusInternalServerError)
+		log.Printf("monthly summary error: %v", err)
+		jsonError(w, "failed to get monthly summary: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonOK(w, summary)

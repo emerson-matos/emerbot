@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import {
-  api, Entry, MonthlySummary, CategorySummary, CashFlowPoint, formatBRL,
-} from '../api/client'
+import { api, formatBRL } from '../api/client'
+import type { Entry, MonthlySummary, CategorySummary, CashFlowPoint } from '../api/client'
 import KpiCard from '../components/KpiCard'
 import CashFlowChart from '../components/CashFlowChart'
 import IncomeExpenseChart from '../components/IncomeExpenseChart'

@@ -201,6 +201,7 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	// Date range on SK
 	if filter.From != nil && filter.To != nil {
 		keyCondition = "PK = :pk AND SK BETWEEN :from AND :to"
+		delete(exprValues, ":prefix")
 		exprValues[":from"] = &types.AttributeValueMemberS{
 			Value: entryPrefix + filter.From.Format("2006-01-02"),
 		}

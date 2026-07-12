@@ -72,6 +72,7 @@ logs-api:
 ## Seed 3 months of realistic pharmacy data into DynamoDB Local.
 ## Requires: $(COMPOSE) up-infra (DynamoDB must be running on :8000).
 seed:
+	AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 \
 	$(GO) run ./scripts/seed \
 		--endpoint http://localhost:8000 \
 		--table emerbot-local-financial-entries \
