@@ -1,6 +1,11 @@
-GO    ?= go
-TOFU  ?= tofu
-NPM   ?= npm
+GO      ?= go
+TOFU    ?= tofu
+NPM     ?= npm
+COMPOSE ?= podman compose
+
+# On NixOS / is nearly full; redirect buildah temp files to /home.
+export TMPDIR := $(HOME)/.tmp/buildah
+$(shell mkdir -p $(TMPDIR))
 
 .PHONY: build test fmt lint \
         run-webhook run-api run-cli run-lambda \
@@ -44,28 +49,28 @@ run-lambda:
 ## Start the full local stack (infra + apps + frontend).
 ## GEMINI_API_KEY must be set in .env or the environment.
 up:
-	docker compose up --build
+	$(COMPOSE) up --build
 
 ## Stop all containers and remove them.
 down:
-	docker compose down
+	$(COMPOSE) down
 
 ## Start only infrastructure (DynamoDB + admin). Useful for native Go dev.
 up-infra:
-	docker compose up --build dynamodb-local dynamodb-admin dynamodb-init
+	$(COMPOSE) up --build dynamodb-local dynamodb-admin dynamodb-init
 
 logs-webhook:
-	docker compose logs -f webhook
+	$(COMPOSE) logs -f webhook
 
 logs-api:
-	docker compose logs -f dashboard-api
+	$(COMPOSE) logs -f dashboard-api
 
 # ---------------------------------------------------------------------------
 # Demo seed
 # ---------------------------------------------------------------------------
 
 ## Seed 3 months of realistic pharmacy data into DynamoDB Local.
-## Requires: docker compose up-infra (DynamoDB must be running on :8000).
+## Requires: $(COMPOSE) up-infra (DynamoDB must be running on :8000).
 seed:
 	$(GO) run ./scripts/seed \
 		--endpoint http://localhost:8000 \
@@ -77,7 +82,7 @@ seed:
 ## Usage: make demo GEMINI_API_KEY=your-key
 demo: up
 	@echo "Waiting for dashboard-api to be healthy..."
-	@until curl -sf http://localhost:8081/health > /dev/null; do sleep 2; done
+	@until wget -qO-  http://localhost:8081/health > /dev/null 2>&1; do sleep 2; done
 	$(MAKE) seed
 	@echo ""
 	@echo "✅ Demo ready!"
