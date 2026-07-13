@@ -13,22 +13,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v1
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
 
       - name: Check formatting
-        run: make tofu-fmt-check
+        run: nix develop --command sh -c "make tofu-fmt-check"
 
       - name: Build
-        run: make build
+        run: nix develop --command sh -c "make build"
 
       - name: Test
-        run: make test
+        run: nix develop --command sh -c "make test"
 
       - name: Lint
-        run: make lint
+        run: nix develop --command sh -c "make lint"

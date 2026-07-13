@@ -70,14 +70,27 @@ Esta base entrega:
 
 ## Ambiente local
 
+Em NixOS, o fluxo esperado e suportado é com `flake` + `direnv`.
+
 ```bash
 cp .env.example .env
+direnv allow
 make build
 make run-webhook
 ```
 
 Para desenvolvimento local, `make run-webhook` sobe um servidor HTTP que reaproveita a mesma app do handler Lambda.
 Em produção, o entrypoint é `apps/webhook/cmd/lambda`.
+
+O `flake.nix` instala:
+
+- `go`
+- `gopls`
+- `gofumpt`
+- `golangci-lint`
+- `opentofu`
+- `awscli2`
+- utilitários mínimos como `jq` e `zip`
 
 ## Cloudflare DNS
 
