@@ -45,3 +45,4 @@ result
 # Editor/IDE
 # .idea/
 # .vscode/
+/lambda
