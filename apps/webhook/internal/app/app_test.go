@@ -70,7 +70,7 @@ func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
-				Method: http.MethodGet,
+				Method: http.MethodPut,
 			},
 		},
 	})
@@ -121,6 +121,9 @@ func newTestApp() *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
+		nil, // no financial handler in tests
+		nil, // no whatsapp client in tests
 		"test-secret",
+		"test-verify-token",
 	)
 }

@@ -14,5 +14,9 @@ resource "cloudflare_dns_record" "this" {
   ttl     = each.value.ttl
   proxied = each.value.proxied
   comment = try(each.value.comment, null)
+
+  lifecycle {
+    ignore_changes = [content]
+  }
 }
 

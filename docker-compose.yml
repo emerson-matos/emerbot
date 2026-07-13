@@ -1,0 +1,159 @@
+name: emerbot
+
+# ---------------------------------------------------------------------------
+# Shared env fragments
+# ---------------------------------------------------------------------------
+x-aws-local: &aws-local
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+  AWS_REGION: us-east-1
+
+x-dynamo-env: &dynamo-env
+  DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+  FINANCIAL_ENTRIES_TABLE: emerbot-local-financial-entries
+  USERS_TABLE: emerbot-local-users
+  REFRESH_TOKENS_TABLE: emerbot-local-refresh-tokens
+
+services:
+  # ---------------------------------------------------------------------------
+  # DynamoDB Local
+  # ---------------------------------------------------------------------------
+  dynamodb-local:
+    image: docker.io/amazon/dynamodb-local:latest
+    container_name: emerbot-dynamodb
+    restart: unless-stopped
+    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /data
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB table bootstrap (runs once, exits 0)
+  # ---------------------------------------------------------------------------
+  dynamodb-init:
+    image: docker.io/amazon/aws-cli:latest
+    container_name: emerbot-dynamodb-init
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    environment:
+      <<: *aws-local
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+    volumes:
+      - ./docker/dynamodb-init/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB Admin UI  →  http://localhost:8001
+  # ---------------------------------------------------------------------------
+  dynamodb-admin:
+    image: docker.io/aaronshaf/dynamodb-admin:latest
+    container_name: emerbot-dynamodb-admin
+    restart: unless-stopped
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    environment:
+      DYNAMO_ENDPOINT: http://dynamodb-local:8000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+    ports:
+      - "8001:8001"
+
+  # ---------------------------------------------------------------------------
+  # Webhook service  →  http://localhost:8080
+  # ---------------------------------------------------------------------------
+  webhook:
+    build:
+      context: .
+      dockerfile: apps/webhook/Dockerfile.local
+    container_name: emerbot-webhook
+    restart: unless-stopped
+    depends_on:
+      dynamodb-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*aws-local, *dynamo-env]
+      WEBHOOK_ADDR: :8080
+      WEBHOOK_SECRET: local-secret
+      WEBHOOK_VERIFY_TOKEN: local-secret
+      REPLY_URL: http://wa-simulator:9000/reply
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Dashboard API  →  http://localhost:8081
+  # ---------------------------------------------------------------------------
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: apps/dashboard-api/Dockerfile.local
+    container_name: emerbot-dashboard-api
+    restart: unless-stopped
+    depends_on:
+      dynamodb-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*aws-local, *dynamo-env]
+      API_ADDR: :8081
+      JWT_SECRET: local-jwt-secret-change-in-prod
+      USER_DEMO_PASSWORD: ${USER_DEMO_PASSWORD:-fake123}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # WhatsApp Simulator  →  http://localhost:9000
+  # ---------------------------------------------------------------------------
+  wa-simulator:
+    build:
+      context: ./docker/wa-simulator
+    container_name: emerbot-wa-simulator
+    restart: unless-stopped
+    depends_on:
+      webhook:
+        condition: service_healthy
+    environment:
+      WEBHOOK_URL: http://webhook:8080/webhook
+      WEBHOOK_SECRET: local-secret
+    ports:
+      - "9000:9000"
+
+  # ---------------------------------------------------------------------------
+  # Frontend (Vite dev server)  →  http://localhost:5173
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    container_name: emerbot-web
+    restart: unless-stopped
+    depends_on:
+      dashboard-api:
+        condition: service_healthy
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8081
+    ports:
+      - "5173:5173"
+
+volumes:
+  dynamodb-data:

@@ -15,25 +15,46 @@ variable "environment" {
 
 variable "lambda_zip_path" {
   type        = string
-  description = "Caminho do artefato zip da Lambda."
+  description = "Caminho do artefato zip do webhook Lambda."
+}
+
+variable "dashboard_api_zip_path" {
+  type        = string
+  description = "Caminho do artefato zip do dashboard-api Lambda."
 }
 
 variable "webhook_secret_value" {
   type        = string
   sensitive   = true
   description = "Valor do segredo usado para validar o webhook."
+  default     = "local-dev-webhook-secret"
 }
 
-variable "cloudflare_enabled" {
-  type        = bool
-  default     = false
-  description = "Habilita a criação opcional de DNS no Cloudflare."
+variable "jwt_secret_value" {
+  type        = string
+  sensitive   = true
+  description = "Segredo para assinar JWTs do dashboard."
+  default     = "local-dev-jwt-secret"
+}
+
+variable "gemini_api_key_value" {
+  type        = string
+  sensitive   = true
+  description = "API key do Gemini para parsing de mensagens do WhatsApp."
+  default     = ""
+}
+
+variable "meta_graph_api_token_value" {
+  type        = string
+  sensitive   = true
+  description = "Token da API do WhatsApp Business (Graph API)."
+  default     = ""
 }
 
 variable "cloudflare_zone_id" {
   type        = string
+  description = "Zone ID do Cloudflare para os registros DNS."
   default     = ""
-  description = "Zone ID do Cloudflare para os registros DNS opcionais."
 }
 
 variable "cloudflare_record_name" {
