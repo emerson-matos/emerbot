@@ -44,12 +44,30 @@ resource "aws_dynamodb_table" "financial_entries" {
   hash_key     = "PK"
   range_key    = "SK"
 
-  attribute { name = "PK";     type = "S" }
-  attribute { name = "SK";     type = "S" }
-  attribute { name = "GSI1PK"; type = "S" }
-  attribute { name = "GSI1SK"; type = "S" }
-  attribute { name = "GSI2PK"; type = "S" }
-  attribute { name = "GSI2SK"; type = "S" }
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+  attribute {
+    name = "GSI1PK"
+    type = "S"
+  }
+  attribute {
+    name = "GSI1SK"
+    type = "S"
+  }
+  attribute {
+    name = "GSI2PK"
+    type = "S"
+  }
+  attribute {
+    name = "GSI2SK"
+    type = "S"
+  }
 
   global_secondary_index {
     name            = "GSI1-Category"
@@ -72,8 +90,14 @@ resource "aws_dynamodb_table" "users" {
   hash_key     = "PK"
   range_key    = "SK"
 
-  attribute { name = "PK"; type = "S" }
-  attribute { name = "SK"; type = "S" }
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+  attribute {
+    name = "SK"
+    type = "S"
+  }
 }
 
 resource "aws_dynamodb_table" "refresh_tokens" {
@@ -81,7 +105,10 @@ resource "aws_dynamodb_table" "refresh_tokens" {
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "Token"
 
-  attribute { name = "Token"; type = "S" }
+  attribute {
+    name = "Token"
+    type = "S"
+  }
 
   ttl {
     attribute_name = "TTL"
