@@ -19,7 +19,7 @@ DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
         seed demo \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-plan tofu-apply
+        tofu-fmt tofu-fmt-check tofu-init tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
 # Go
@@ -143,3 +143,7 @@ tofu-plan: build-lambdas
 tofu-apply: build-lambdas
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(TOFU_DIR) apply
+
+tofu-destroy:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(TOFU_DIR) destroy
