@@ -22,23 +22,6 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-data "aws_region" "current" {}
-data "aws_caller_identity" "current" {}
-
-resource "aws_iam_role_policy" "read_webhook_parameters" {
-  name = "${local.prefix}-read-webhook-parameters"
-  role = aws_iam_role.lambda_exec.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action   = ["ssm:GetParameter"]
-      Effect   = "Allow"
-      Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${local.prefix}/*"
-    }]
-  })
-}
-
 resource "aws_dynamodb_table" "financial_entries" {
   name         = "${local.prefix}-financial-entries"
   billing_mode = "PAY_PER_REQUEST"
@@ -117,30 +100,6 @@ resource "aws_dynamodb_table" "refresh_tokens" {
   }
 }
 
-resource "aws_ssm_parameter" "webhook_secret" {
-  name  = "/${local.prefix}/webhook/secret"
-  type  = "SecureString"
-  value = var.webhook_secret_value
-}
-
-resource "aws_ssm_parameter" "jwt_secret" {
-  name  = "/${local.prefix}/jwt/secret"
-  type  = "SecureString"
-  value = var.jwt_secret_value
-}
-
-resource "aws_ssm_parameter" "gemini_api_key" {
-  name  = "/${local.prefix}/gemini/api-key"
-  type  = "SecureString"
-  value = var.gemini_api_key_value
-}
-
-resource "aws_ssm_parameter" "meta_graph_api_token" {
-  name  = "/${local.prefix}/meta/graph-api-token"
-  type  = "SecureString"
-  value = var.meta_graph_api_token_value
-}
-
 resource "aws_lambda_function" "webhook" {
   function_name    = "${local.prefix}-webhook"
   role             = aws_iam_role.lambda_exec.arn
@@ -154,11 +113,11 @@ resource "aws_lambda_function" "webhook" {
 
   environment {
     variables = {
-      WEBHOOK_SECRET_PARAMETER       = aws_ssm_parameter.webhook_secret.name
-      WEBHOOK_VERIFY_TOKEN           = var.webhook_secret_value
-      FINANCIAL_ENTRIES_TABLE        = aws_dynamodb_table.financial_entries.name
-      META_GRAPH_API_TOKEN_PARAMETER = aws_ssm_parameter.meta_graph_api_token.name
-      GEMINI_API_KEY_PARAMETER       = aws_ssm_parameter.gemini_api_key.name
+      WEBHOOK_SECRET          = var.webhook_secret_value
+      WEBHOOK_VERIFY_TOKEN    = var.webhook_secret_value
+      FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
+      META_GRAPH_API_TOKEN    = var.meta_graph_api_token_value
+      GEMINI_API_KEY          = var.gemini_api_key_value
     }
   }
 }
@@ -296,20 +255,6 @@ resource "aws_iam_role_policy" "dashboard_api_dynamodb" {
   })
 }
 
-resource "aws_iam_role_policy" "dashboard_api_parameters" {
-  name = "${local.prefix}-dashboard-api-parameters"
-  role = aws_iam_role.dashboard_api_exec.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["ssm:GetParameter"]
-      Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${local.prefix}/*"
-    }]
-  })
-}
-
 resource "aws_lambda_function" "dashboard_api" {
   function_name    = "${local.prefix}-dashboard-api"
   role             = aws_iam_role.dashboard_api_exec.arn
@@ -326,7 +271,7 @@ resource "aws_lambda_function" "dashboard_api" {
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
       USERS_TABLE             = aws_dynamodb_table.users.name
       REFRESH_TOKENS_TABLE    = aws_dynamodb_table.refresh_tokens.name
-      JWT_SECRET_PARAMETER    = aws_ssm_parameter.jwt_secret.name
+      JWT_SECRET              = var.jwt_secret_value
     }
   }
 }
