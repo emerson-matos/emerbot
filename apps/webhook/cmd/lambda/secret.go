@@ -6,21 +6,21 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
 func loadWebhookSecret(ctx context.Context) (string, error) {
-	return loadSecret(ctx, "WEBHOOK_SECRET_SECRET_ID", true)
+	return loadParameter(ctx, "WEBHOOK_SECRET_PARAMETER", true)
 }
 
 func loadMetaToken(ctx context.Context) (string, error) {
-	return loadSecret(ctx, "META_GRAPH_API_TOKEN_SECRET_ID", false)
+	return loadParameter(ctx, "META_GRAPH_API_TOKEN_PARAMETER", false)
 }
 
-func loadSecret(ctx context.Context, envVar string, required bool) (string, error) {
-	secretID := shared.Getenv(envVar, "")
-	if secretID == "" {
+func loadParameter(ctx context.Context, envVar string, required bool) (string, error) {
+	name := shared.Getenv(envVar, "")
+	if name == "" {
 		if required {
 			return "", fmt.Errorf("%s is required", envVar)
 		}
@@ -32,16 +32,17 @@ func loadSecret(ctx context.Context, envVar string, required bool) (string, erro
 		return "", fmt.Errorf("load aws config: %w", err)
 	}
 
-	client := secretsmanager.NewFromConfig(cfg)
-	response, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-		SecretId: aws.String(secretID),
+	client := ssm.NewFromConfig(cfg)
+	response, err := client.GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		return "", fmt.Errorf("get secret %q: %w", secretID, err)
+		return "", fmt.Errorf("get parameter %q: %w", name, err)
 	}
-	if response.SecretString == nil || *response.SecretString == "" {
-		return "", fmt.Errorf("secret %q is empty", secretID)
+	if response.Parameter == nil || response.Parameter.Value == nil || *response.Parameter.Value == "" {
+		return "", fmt.Errorf("parameter %q is empty", name)
 	}
 
-	return *response.SecretString, nil
+	return *response.Parameter.Value, nil
 }

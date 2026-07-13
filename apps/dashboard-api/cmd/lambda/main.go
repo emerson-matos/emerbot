@@ -14,7 +14,7 @@ import (
 func main() {
 	ctx := context.Background()
 
-	jwtSecret, err := loadSecret(ctx, shared.Getenv("JWT_SECRET_SECRET_ID", ""))
+	jwtSecret, err := loadParameter(ctx, shared.Getenv("JWT_SECRET_PARAMETER", ""))
 	if err != nil {
 		log.Fatalf("load jwt secret: %v", err)
 	}

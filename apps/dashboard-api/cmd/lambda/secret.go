@@ -6,26 +6,27 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
-func loadSecret(ctx context.Context, secretID string) (string, error) {
-	if secretID == "" {
-		return "", fmt.Errorf("secret ID env var is not set")
+func loadParameter(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("parameter name env var is not set")
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
 		return "", fmt.Errorf("load aws config: %w", err)
 	}
-	client := secretsmanager.NewFromConfig(cfg)
-	out, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-		SecretId: aws.String(secretID),
+	client := ssm.NewFromConfig(cfg)
+	out, err := client.GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		return "", fmt.Errorf("get secret %q: %w", secretID, err)
+		return "", fmt.Errorf("get parameter %q: %w", name, err)
 	}
-	if out.SecretString == nil || *out.SecretString == "" {
-		return "", fmt.Errorf("secret %q is empty", secretID)
+	if out.Parameter == nil || out.Parameter.Value == nil || *out.Parameter.Value == "" {
+		return "", fmt.Errorf("parameter %q is empty", name)
 	}
-	return *out.SecretString, nil
+	return *out.Parameter.Value, nil
 }
