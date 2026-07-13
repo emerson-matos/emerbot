@@ -109,7 +109,7 @@ demo: up
 	@echo "   Dashboard:       http://localhost:5173"
 	@echo "   WhatsApp sim:    http://localhost:9000"
 	@echo "   DynamoDB admin:  http://localhost:8001"
-	@echo "   Login:           pai@farmacia.local / senha123"
+	@echo "   Login:           demo@user.com / fake123"
 
 # ---------------------------------------------------------------------------
 # Frontend
@@ -135,7 +135,9 @@ tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
 
 tofu-plan: build-lambdas
+	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(TOFU_DIR) plan
 
 tofu-apply: build-lambdas
+	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(TOFU_DIR) apply
