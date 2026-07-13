@@ -41,16 +41,16 @@ variable "gemini_api_key_value" {
   description = "API key do Gemini para parsing de mensagens do WhatsApp."
 }
 
-variable "cloudflare_enabled" {
-  type        = bool
-  default     = false
-  description = "Habilita a criação opcional de DNS no Cloudflare."
+variable "meta_graph_api_token_value" {
+  type        = string
+  sensitive   = true
+  description = "Token da API do WhatsApp Business (Graph API)."
+  default     = ""
 }
 
 variable "cloudflare_zone_id" {
   type        = string
-  default     = ""
-  description = "Zone ID do Cloudflare para os registros DNS opcionais."
+  description = "Zone ID do Cloudflare para os registros DNS."
 }
 
 variable "cloudflare_record_name" {
