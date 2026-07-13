@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -97,11 +96,3 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// mustMarshal is kept for compatibility but unused after the bridge refactor.
-func mustMarshal(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}

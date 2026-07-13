@@ -130,13 +130,17 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 
 	msgID := send(req.UserID, req.Text)
 	if msgID == "" {
-		json.NewEncoder(w).Encode(sendResult{Error: "failed to send"})
+		if err := json.NewEncoder(w).Encode(sendResult{Error: "failed to send"}); err != nil {
+			log.Printf("encode error response: %v", err)
+		}
 		return
 	}
 
 	// Poll for the reply (simulates async delivery via Meta).
 	reply := waitForReply(msgID, 8*time.Second)
-	json.NewEncoder(w).Encode(sendResult{StatusCode: 200, Body: reply})
+	if err := json.NewEncoder(w).Encode(sendResult{StatusCode: 200, Body: reply}); err != nil {
+		log.Printf("encode reply: %v", err)
+	}
 }
 
 func send(userID, text string) string {
@@ -178,7 +182,9 @@ func send(userID, text string) string {
 		log.Printf("send: %v", err)
 		return ""
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		log.Printf("close send response body: %v", err)
+	}
 	return msgID
 }
 
@@ -312,5 +318,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 
 func serveUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	uiTmpl.Execute(w, nil)
+	if err := uiTmpl.Execute(w, nil); err != nil {
+		log.Printf("execute UI template: %v", err)
+	}
 }

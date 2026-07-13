@@ -76,12 +76,14 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	}
 
 	stores := memory.NewInMemoryStores()
-	stores.Save(context.Background(), domain.Memory{
+	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "demo-user",
 		Type:   "Preference",
 		ID:     "Language",
 		Value:  "pt-BR",
-	})
+	}); err != nil {
+		log.Printf("NewFromEnv: seed memory: %v", err)
+	}
 
 	svc := orchestrator.NewService(
 		llm.StaticClient{},

@@ -78,7 +78,9 @@ func main() {
 			resp := application.HandleVerification(mode, token, challenge)
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(resp.StatusCode)
-			w.Write([]byte(resp.Body))
+			if _, err := w.Write([]byte(resp.Body)); err != nil {
+				log.Printf("write verification response: %v", err)
+			}
 			return
 		}
 

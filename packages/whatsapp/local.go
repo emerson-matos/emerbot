@@ -26,7 +26,7 @@ func (c *LocalClient) SendReply(_ context.Context, _ /*phoneNumberID*/ string, _
 	if err != nil {
 		return fmt.Errorf("local post: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("local client: unexpected status %d", resp.StatusCode)
 	}

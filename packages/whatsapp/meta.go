@@ -62,7 +62,7 @@ func (c *MetaClient) SendReply(_ context.Context, phoneNumberID, to, messageBody
 	if err != nil {
 		return fmt.Errorf("meta post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		log.Printf("meta client: unexpected status %d", resp.StatusCode)
