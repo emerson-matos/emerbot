@@ -108,10 +108,7 @@ services:
       <<: [*aws-local, *dynamo-env]
       API_ADDR: :8081
       JWT_SECRET: local-jwt-secret-change-in-prod
-      USER_EMERSON_EMAIL: ${USER_EMERSON_EMAIL:-emerson@farmacia.local}
-      USER_EMERSON_PASSWORD: ${USER_EMERSON_PASSWORD:-senha123}
-      USER_PAI_EMAIL: ${USER_PAI_EMAIL:-pai@farmacia.local}
-      USER_PAI_PASSWORD: ${USER_PAI_PASSWORD:-senha123}
+      USER_DEMO_PASSWORD: ${USER_DEMO_PASSWORD:-fake123}
     ports:
       - "8081:8081"
     healthcheck:

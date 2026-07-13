@@ -17,7 +17,7 @@ import (
 func main() {
 	endpoint := flag.String("endpoint", shared.Getenv("DYNAMODB_ENDPOINT", "http://localhost:8000"), "DynamoDB endpoint")
 	table := flag.String("table", shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries"), "financial entries table name")
-	userID := flag.String("user-id", "pai", "user ID to seed data for")
+	userID := flag.String("user-id", "demo", "user ID to seed data for")
 	months := flag.Int("months", 3, "number of past months to generate data for")
 	flag.Parse()
 

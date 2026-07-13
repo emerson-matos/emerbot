@@ -21,8 +21,7 @@ func seedUsers(ctx context.Context, store auth.Store) {
 		envPwd   string
 		fallback string
 	}{
-		{"emerson", shared.Getenv("USER_EMERSON_EMAIL", "emerson@farmacia.local"), "Emerson", "USER_EMERSON_PASSWORD", "senha123"},
-		{"pai", shared.Getenv("USER_PAI_EMAIL", "pai@farmacia.local"), "Pai", "USER_PAI_PASSWORD", "senha123"},
+		{"demo", "demo@user.com", "Demo", "USER_DEMO_PASSWORD", "fake123"},
 	}
 
 	for _, u := range users {
