@@ -5,7 +5,7 @@ locals {
     type    = "CNAME"
     content = trimsuffix(replace(module.assistant.api_url, "https://", ""), "/")
     ttl     = 1
-    proxied = false
+    proxied = true
     comment = "WhatsApp webhook endpoint"
   }] : []
 }
