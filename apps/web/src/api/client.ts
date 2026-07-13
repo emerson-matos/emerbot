@@ -69,6 +69,13 @@ export const api = {
   categories: {
     list: () => request<{ categories: Category[] }>('/categories'),
   },
+
+  goals: {
+    get: (month?: string) => {
+      const qs = month ? `?month=${month}` : ''
+      return request<{ goal: Goal | null; month: string }>(`/goals${qs}`)
+    },
+  },
 }
 
 // --- Types ---
@@ -118,6 +125,13 @@ export interface CashFlowPoint {
   ProjectedIncome: number
   ProjectedExpense: number
   RunningBalance: number
+}
+
+export interface Goal {
+  UserID: string
+  Month: string
+  RevenueTarget: number
+  ExpenseTarget: number
 }
 
 export interface Category {

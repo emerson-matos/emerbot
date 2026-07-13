@@ -4,8 +4,8 @@ import { ptBR } from 'date-fns/locale'
 import { api, formatBRL } from '../api/client'
 import type { Entry, MonthlySummary, CategorySummary, CashFlowPoint } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import KpiCard from '../components/KpiCard'
+import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
 import IncomeExpenseChart from '../components/IncomeExpenseChart'
 import CategoryDonut from '../components/CategoryDonut'
@@ -158,17 +158,7 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
               )}
-              <Card>
-                <CardContent className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
-                  <span className="text-2xl sm:text-3xl">📱</span>
-                  <div>
-                    <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wide">WhatsApp Bot</p>
-                    <p className="text-xs sm:text-sm text-foreground mt-0.5">
-                      Envie <Badge variant="secondary" className="font-mono text-[10px] sm:text-xs">/despesa 500 aluguel</Badge> para registrar
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+              <GoalCard month={currentMonth} summary={summary} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

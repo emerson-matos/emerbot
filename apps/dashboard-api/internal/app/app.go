@@ -49,8 +49,13 @@ func New(authStore pkgauth.Store, finStore pkgfinance.Store, jwtSecret string) *
 	mux.Handle("GET /summary/categories", authMw(http.HandlerFunc(summaryHandler.Categories)))
 	mux.Handle("GET /summary/cashflow", authMw(http.HandlerFunc(summaryHandler.CashFlow)))
 
+	goalHandler := apifinance.NewGoalsHandler(finStore)
+
 	mux.Handle("GET /categories", authMw(http.HandlerFunc(catsHandler.List)))
 	mux.Handle("POST /categories", authMw(http.HandlerFunc(catsHandler.Create)))
+
+	mux.Handle("GET /goals", authMw(http.HandlerFunc(goalHandler.Get)))
+	mux.Handle("PUT /goals", authMw(http.HandlerFunc(goalHandler.Save)))
 
 	return &App{handler: withCORS(mux)}
 }

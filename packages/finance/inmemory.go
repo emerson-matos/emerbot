@@ -16,17 +16,20 @@ type InMemoryStore struct {
 	mu         sync.RWMutex
 	entries    map[string]domain.FinancialEntry // key: userID+entryID
 	categories map[string]domain.Category       // key: userID+slug
+	goals      map[string]domain.Goal           // key: userID+month
 }
 
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		entries:    make(map[string]domain.FinancialEntry),
 		categories: make(map[string]domain.Category),
+		goals:      make(map[string]domain.Goal),
 	}
 }
 
 func entryKey(userID, entryID string) string { return userID + "#" + entryID }
 func catKey(userID, slug string) string       { return userID + "#" + slug }
+func goalKey(userID, month string) string     { return userID + "#" + month }
 
 // --- Entries ---
 
@@ -233,6 +236,25 @@ func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID string, days 
 		})
 	}
 	return points, nil
+}
+
+// --- Goals ---
+
+func (s *InMemoryStore) SaveGoal(_ context.Context, goal domain.Goal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.goals[goalKey(goal.UserID, goal.Month)] = goal
+	return nil
+}
+
+func (s *InMemoryStore) GetGoal(_ context.Context, userID, month string) (domain.Goal, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	g, ok := s.goals[goalKey(userID, month)]
+	if !ok {
+		return domain.Goal{}, fmt.Errorf("goal not found for %s/%s", userID, month)
+	}
+	return g, nil
 }
 
 // --- Categories ---
