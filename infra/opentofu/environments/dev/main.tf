@@ -3,7 +3,7 @@ locals {
     id      = "webhook"
     name    = var.cloudflare_record_name
     type    = "CNAME"
-    content = module.assistant.api_url
+    content = trimsuffix(replace(module.assistant.api_url, "https://", ""), "/")
     ttl     = 1
     proxied = false
     comment = "WhatsApp webhook endpoint"

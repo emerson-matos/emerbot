@@ -153,14 +153,15 @@ resource "aws_secretsmanager_secret_version" "meta_graph_api_token" {
 }
 
 resource "aws_lambda_function" "webhook" {
-  function_name = "${local.prefix}-webhook"
-  role          = aws_iam_role.lambda_exec.arn
-  filename      = var.lambda_zip_path
-  handler       = var.lambda_handler
-  runtime       = var.lambda_runtime
-  architectures = ["arm64"]
-  timeout       = 10
-  memory_size   = 128
+  function_name    = "${local.prefix}-webhook"
+  role             = aws_iam_role.lambda_exec.arn
+  filename         = var.lambda_zip_path
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  handler          = var.lambda_handler
+  runtime          = var.lambda_runtime
+  architectures    = ["arm64"]
+  timeout          = 10
+  memory_size      = 128
 
   environment {
     variables = {
@@ -323,14 +324,15 @@ resource "aws_iam_role_policy" "dashboard_api_secrets" {
 }
 
 resource "aws_lambda_function" "dashboard_api" {
-  function_name = "${local.prefix}-dashboard-api"
-  role          = aws_iam_role.dashboard_api_exec.arn
-  filename      = var.dashboard_api_zip_path
-  handler       = var.lambda_handler
-  runtime       = var.lambda_runtime
-  architectures = ["arm64"]
-  timeout       = 10
-  memory_size   = 128
+  function_name    = "${local.prefix}-dashboard-api"
+  role             = aws_iam_role.dashboard_api_exec.arn
+  filename         = var.dashboard_api_zip_path
+  source_code_hash = filebase64sha256(var.dashboard_api_zip_path)
+  handler          = var.lambda_handler
+  runtime          = var.lambda_runtime
+  architectures    = ["arm64"]
+  timeout          = 10
+  memory_size      = 128
 
   environment {
     variables = {
