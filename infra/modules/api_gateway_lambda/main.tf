@@ -197,10 +197,31 @@ resource "aws_apigatewayv2_route" "webhook_post" {
   target    = "integrations/${aws_apigatewayv2_integration.webhook.id}"
 }
 
+locals {
+  route_config = jsonencode({
+    webhook_get  = aws_apigatewayv2_route.webhook_get.route_key
+    webhook_post = aws_apigatewayv2_route.webhook_post.route_key
+    dashboard    = aws_apigatewayv2_route.dashboard_api.route_key
+    webhook_int  = aws_apigatewayv2_integration.webhook.id
+    dashboard_int = aws_apigatewayv2_integration.dashboard_api.id
+  })
+}
+
+resource "aws_apigatewayv2_deployment" "this" {
+  api_id = aws_apigatewayv2_api.http.id
+  triggers = {
+    config = local.route_config
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "$default"
-  auto_deploy = true
+  deployment_id = aws_apigatewayv2_deployment.this.id
 }
 
 resource "aws_lambda_permission" "allow_apigw" {
