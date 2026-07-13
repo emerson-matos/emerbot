@@ -71,6 +71,17 @@ func main() {
 	})
 
 	http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			mode := r.URL.Query().Get("hub.mode")
+			token := r.URL.Query().Get("hub.verify_token")
+			challenge := r.URL.Query().Get("hub.challenge")
+			resp := application.HandleVerification(mode, token, challenge)
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(resp.StatusCode)
+			w.Write([]byte(resp.Body))
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return

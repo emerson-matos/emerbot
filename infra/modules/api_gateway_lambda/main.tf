@@ -186,7 +186,7 @@ resource "aws_apigatewayv2_integration" "webhook" {
 
 resource "aws_apigatewayv2_route" "webhook" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "POST /webhook"
+  route_key = "ANY /webhook"
   target    = "integrations/${aws_apigatewayv2_integration.webhook.id}"
 }
 

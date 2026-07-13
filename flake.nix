@@ -41,6 +41,9 @@
           };
 
           shellHook = ''
+            if aws sts get-caller-identity >/dev/null 2>&1; then
+              eval "$(aws configure export-credentials --format env)"
+            fi
             export PATH="$PWD/bin:$PATH"
             echo "emerbot dev shell carregado"
           '';

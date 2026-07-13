@@ -180,8 +180,38 @@ func isFinancialCommand(text string) bool {
 	return false
 }
 
+func (a *App) HandleVerification(mode, token, challenge string) events.APIGatewayV2HTTPResponse {
+	if mode != "subscribe" {
+		return jsonResponseOrDie(http.StatusBadRequest, map[string]string{"error": "invalid mode"})
+	}
+	if token != a.secret {
+		return jsonResponseOrDie(http.StatusForbidden, map[string]string{"error": "verify token mismatch"})
+	}
+	return events.APIGatewayV2HTTPResponse{
+		StatusCode: http.StatusOK,
+		Headers:    map[string]string{"Content-Type": "text/plain"},
+		Body:       challenge,
+	}
+}
+
+// jsonResponseOrDie is like jsonResponse but panics on error (never happens in practice).
+func jsonResponseOrDie(statusCode int, payload any) events.APIGatewayV2HTTPResponse {
+	resp, err := jsonResponse(statusCode, payload)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
 func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	if event.RequestContext.HTTP.Method != http.MethodPost {
+	method := event.RequestContext.HTTP.Method
+
+	if method == http.MethodGet {
+		q := event.QueryStringParameters
+		return a.HandleVerification(q["hub.mode"], q["hub.verify_token"], q["hub.challenge"]), nil
+	}
+
+	if method != http.MethodPost {
 		return jsonResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 

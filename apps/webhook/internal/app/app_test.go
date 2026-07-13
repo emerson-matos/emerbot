@@ -70,7 +70,7 @@ func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
-				Method: http.MethodGet,
+				Method: http.MethodPut,
 			},
 		},
 	})
