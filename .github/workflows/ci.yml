@@ -22,9 +22,9 @@ jobs:
         uses: opentofu/setup-opentofu@v1
 
       - name: Setup golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12
 
       - name: Check formatting
         run: make tofu-fmt-check
