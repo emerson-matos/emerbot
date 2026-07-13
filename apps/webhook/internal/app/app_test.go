@@ -122,6 +122,7 @@ func newTestApp() *App {
 			tools.NewRegistry(tools.EchoTool{}),
 		),
 		nil, // no financial handler in tests
+		nil, // no whatsapp client in tests
 		"test-secret",
 	)
 }

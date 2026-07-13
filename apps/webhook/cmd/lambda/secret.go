@@ -11,9 +11,20 @@ import (
 )
 
 func loadWebhookSecret(ctx context.Context) (string, error) {
-	secretID := shared.Getenv("WEBHOOK_SECRET_SECRET_ID", "")
+	return loadSecret(ctx, "WEBHOOK_SECRET_SECRET_ID", true)
+}
+
+func loadMetaToken(ctx context.Context) (string, error) {
+	return loadSecret(ctx, "META_GRAPH_API_TOKEN_SECRET_ID", false)
+}
+
+func loadSecret(ctx context.Context, envVar string, required bool) (string, error) {
+	secretID := shared.Getenv(envVar, "")
 	if secretID == "" {
-		return "", fmt.Errorf("WEBHOOK_SECRET_SECRET_ID is required")
+		if required {
+			return "", fmt.Errorf("%s is required", envVar)
+		}
+		return "", nil
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx)
@@ -26,7 +37,7 @@ func loadWebhookSecret(ctx context.Context) (string, error) {
 		SecretId: aws.String(secretID),
 	})
 	if err != nil {
-		return "", fmt.Errorf("get secret value: %w", err)
+		return "", fmt.Errorf("get secret %q: %w", secretID, err)
 	}
 	if response.SecretString == nil || *response.SecretString == "" {
 		return "", fmt.Errorf("secret %q is empty", secretID)

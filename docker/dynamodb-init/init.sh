@@ -15,29 +15,7 @@ create_table() {
   $AWS create-table "$@" 2>&1 | grep -v "ResourceInUseException" || true
 }
 
-# messages table (existing — for AI conversation context)
-create_table \
-  --table-name emerbot-local-messages \
-  --attribute-definitions \
-    AttributeName=UserId,AttributeType=S \
-    AttributeName=Timestamp,AttributeType=S \
-  --key-schema \
-    AttributeName=UserId,KeyType=HASH \
-    AttributeName=Timestamp,KeyType=RANGE \
-  --billing-mode PAY_PER_REQUEST
-
-# memories table (existing — for AI long-term memory)
-create_table \
-  --table-name emerbot-local-memories \
-  --attribute-definitions \
-    AttributeName=UserId,AttributeType=S \
-    AttributeName=MemoryKey,AttributeType=S \
-  --key-schema \
-    AttributeName=UserId,KeyType=HASH \
-    AttributeName=MemoryKey,KeyType=RANGE \
-  --billing-mode PAY_PER_REQUEST
-
-# financial-entries table (new — single-table for entries + categories)
+# financial-entries table (single-table for entries + categories)
 create_table \
   --table-name emerbot-local-financial-entries \
   --attribute-definitions \

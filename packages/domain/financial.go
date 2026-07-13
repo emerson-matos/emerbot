@@ -37,6 +37,14 @@ func (e FinancialEntry) SK() string {
 	return "ENTRY#" + e.Date.Format("2006-01-02") + "#" + e.EntryID
 }
 
+// Goal represents a monthly financial target (faturamento/teto de despesa).
+type Goal struct {
+	UserID        string // "pai"
+	Month         string // "2026-07"
+	RevenueTarget int64  // centavos — meta de faturamento
+	ExpenseTarget int64  // centavos — teto de despesa
+}
+
 // AmountReais returns the amount formatted as a Brazilian real string.
 func (e FinancialEntry) AmountReais() string {
 	reais := e.Amount / 100

@@ -43,3 +43,9 @@ variable "gemini_api_key_value" {
   description = "API key do Gemini para parsing de mensagens do WhatsApp."
 }
 
+variable "meta_graph_api_token_value" {
+  type        = string
+  sensitive   = true
+  description = "Token da API do WhatsApp Business (Graph API)."
+}
+

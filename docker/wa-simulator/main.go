@@ -8,31 +8,99 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 )
 
 var (
-	webhookURL    = getenv("WEBHOOK_URL", "http://localhost:8080/webhook")
-	webhookSecret = getenv("WEBHOOK_SECRET", "local-secret")
+	webhookURL = getenv("WEBHOOK_URL", "http://localhost:8080/webhook")
 )
+
+// replyStore holds bot replies keyed by message ID.
+type replyStore struct {
+	mu   sync.Mutex
+	repl map[string]string
+}
+
+func (s *replyStore) set(msgID, reply string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repl[msgID] = reply
+}
+
+func (s *replyStore) get(msgID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.repl[msgID]
+	return r, ok
+}
+
+var replies = &replyStore{repl: make(map[string]string)}
 
 type sendRequest struct {
 	UserID string `json:"user_id"`
 	Text   string `json:"text"`
 }
 
-type webhookPayload struct {
-	UserID    string `json:"user_id"`
-	MessageID string `json:"message_id"`
-	Text      string `json:"text"`
-	Timestamp string `json:"timestamp"`
-	Signature string `json:"signature"`
-}
-
 type sendResult struct {
 	StatusCode int    `json:"status_code"`
 	Body       string `json:"body"`
 	Error      string `json:"error,omitempty"`
+}
+
+type waWebhookPayload struct {
+	Object string    `json:"object"`
+	Entry  []waEntry `json:"entry"`
+}
+
+type waEntry struct {
+	ID      string     `json:"id"`
+	Changes []waChange `json:"changes"`
+}
+
+type waChange struct {
+	Value waValue `json:"value"`
+	Field string  `json:"field"`
+}
+
+type waValue struct {
+	MessagingProduct string      `json:"messaging_product"`
+	Metadata         waMetadata  `json:"metadata"`
+	Contacts         []waContact `json:"contacts"`
+	Messages         []waMessage `json:"messages"`
+}
+
+type waMetadata struct {
+	DisplayPhoneNumber string `json:"display_phone_number"`
+	PhoneNumberID      string `json:"phone_number_id"`
+}
+
+type waContact struct {
+	Profile waProfile `json:"profile"`
+	WaID    string    `json:"wa_id"`
+}
+
+type waProfile struct {
+	Name string `json:"name"`
+}
+
+type waMessage struct {
+	From      string     `json:"from"`
+	ID        string     `json:"id"`
+	Timestamp string     `json:"timestamp"`
+	Type      string     `json:"type"`
+	Text      waTextBody `json:"text"`
+}
+
+type waTextBody struct {
+	Body string `json:"body"`
+}
+
+// replyPayload is what the webhook POSTs back to simulate Meta delivering the reply.
+type replyPayload struct {
+	To      string `json:"to"`
+	Message string `json:"message"`
 }
 
 func main() {
@@ -43,6 +111,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /", serveUI)
 	mux.HandleFunc("POST /send", handleSend)
+	mux.HandleFunc("POST /reply", handleReply)
 
 	addr := getenv("ADDR", ":9000")
 	log.Printf("wa-simulator listening on %s → forwarding to %s", addr, webhookURL)
@@ -58,28 +127,85 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 	if req.UserID == "" {
 		req.UserID = "pai"
 	}
-	payload := webhookPayload{
-		UserID:    req.UserID,
-		MessageID: fmt.Sprintf("sim-%d", time.Now().UnixNano()),
-		Text:      req.Text,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Signature: webhookSecret,
+
+	msgID := send(req.UserID, req.Text)
+	if msgID == "" {
+		json.NewEncoder(w).Encode(sendResult{Error: "failed to send"})
+		return
 	}
-	result := forward(payload)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result) //nolint:errcheck
+
+	// Poll for the reply (simulates async delivery via Meta).
+	reply := waitForReply(msgID, 8*time.Second)
+	json.NewEncoder(w).Encode(sendResult{StatusCode: 200, Body: reply})
 }
 
-func forward(payload webhookPayload) sendResult {
+func send(userID, text string) string {
+	now := time.Now().UTC()
+	ts := strconv.FormatInt(now.Unix(), 10)
+	msgID := fmt.Sprintf("wamid.sim.%d", now.UnixNano())
+
+	payload := waWebhookPayload{
+		Object: "whatsapp_business_account",
+		Entry: []waEntry{{
+			ID: "sim-account-id",
+			Changes: []waChange{{
+				Value: waValue{
+					MessagingProduct: "whatsapp",
+					Metadata: waMetadata{
+						DisplayPhoneNumber: "15550783881",
+						PhoneNumberID:      "sim-phone-id",
+					},
+					Contacts: []waContact{{
+						Profile: waProfile{Name: userID},
+						WaID:    userID,
+					}},
+					Messages: []waMessage{{
+						From:      userID,
+						ID:        msgID,
+						Timestamp: ts,
+						Type:      "text",
+						Text:      waTextBody{Body: text},
+					}},
+				},
+				Field: "messages",
+			}},
+		}},
+	}
+
 	body, _ := json.Marshal(payload)
 	resp, err := http.Post(webhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return sendResult{Error: err.Error()}
+		log.Printf("send: %v", err)
+		return ""
 	}
-	defer resp.Body.Close()
-	var buf bytes.Buffer
-	buf.ReadFrom(resp.Body) //nolint:errcheck
-	return sendResult{StatusCode: resp.StatusCode, Body: buf.String()}
+	resp.Body.Close()
+	return msgID
+}
+
+func waitForReply(msgID string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if reply, ok := replies.get(msgID); ok {
+			return reply
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return "(no reply received within timeout)"
+}
+
+// handleReply receives the bot's response as if delivered by Meta.
+func handleReply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p replyPayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	replies.set(p.To, p.Message)
+	w.WriteHeader(http.StatusOK)
 }
 
 func getenv(key, fallback string) string {
@@ -122,11 +248,14 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 
     <label>Exemplos rápidos</label>
     <div class="examples">
+      <span class="chip" onclick="fill('/resumo')">/resumo</span>
       <span class="chip" onclick="fill('/despesa 500 aluguel')">/despesa 500 aluguel</span>
       <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
       <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
       <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>
       <span class="chip" onclick="fill('/despesa 1500,50 fornecedor_medicamentos Distribuidora')">/despesa 1500,50 fornecedor</span>
+      <span class="chip" onclick="fill('/goal')">/goal</span>
+      <span class="chip" onclick="fill('/meta 80000 60000')">/meta 80000 60000</span>
     </div>
 
     <label>Mensagem</label>
@@ -183,5 +312,5 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 
 func serveUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	uiTmpl.Execute(w, nil) //nolint:errcheck
+	uiTmpl.Execute(w, nil)
 }

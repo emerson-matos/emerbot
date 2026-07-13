@@ -19,6 +19,7 @@ const (
 	pkPrefix    = "USER#"
 	entryPrefix = "ENTRY#"
 	catPrefix   = "CAT#"
+	goalPrefix  = "GOAL#"
 )
 
 // DynamoDBStore implements Store using AWS DynamoDB.
@@ -416,6 +417,63 @@ func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, day
 		})
 	}
 	return points, nil
+}
+
+// --- Goals ---
+
+type goalItem struct {
+	PK            string `dynamodbav:"PK"`
+	SK            string `dynamodbav:"SK"`
+	UserID        string `dynamodbav:"UserID"`
+	Month         string `dynamodbav:"Month"`
+	RevenueTarget int64  `dynamodbav:"RevenueTarget"`
+	ExpenseTarget int64  `dynamodbav:"ExpenseTarget"`
+}
+
+func (s *DynamoDBStore) SaveGoal(ctx context.Context, goal domain.Goal) error {
+	item := goalItem{
+		PK:            pkPrefix + goal.UserID,
+		SK:            goalPrefix + goal.Month,
+		UserID:        goal.UserID,
+		Month:         goal.Month,
+		RevenueTarget: goal.RevenueTarget,
+		ExpenseTarget: goal.ExpenseTarget,
+	}
+	av, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		return fmt.Errorf("marshal goal: %w", err)
+	}
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.tableName),
+		Item:      av,
+	})
+	return err
+}
+
+func (s *DynamoDBStore) GetGoal(ctx context.Context, userID, month string) (domain.Goal, error) {
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pkPrefix + userID},
+			"SK": &types.AttributeValueMemberS{Value: goalPrefix + month},
+		},
+	})
+	if err != nil {
+		return domain.Goal{}, fmt.Errorf("get goal: %w", err)
+	}
+	if out.Item == nil {
+		return domain.Goal{}, fmt.Errorf("goal not found for %s/%s", userID, month)
+	}
+	var item goalItem
+	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {
+		return domain.Goal{}, fmt.Errorf("unmarshal goal: %w", err)
+	}
+	return domain.Goal{
+		UserID:        item.UserID,
+		Month:         item.Month,
+		RevenueTarget: item.RevenueTarget,
+		ExpenseTarget: item.ExpenseTarget,
+	}, nil
 }
 
 // --- Categories ---

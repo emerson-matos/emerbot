@@ -9,11 +9,18 @@ import (
 )
 
 func main() {
-	secret, err := loadWebhookSecret(context.Background())
+	ctx := context.Background()
+
+	secret, err := loadWebhookSecret(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	application := app.NewDefault(secret)
+	metaToken, err := loadMetaToken(ctx)
+	if err != nil {
+		log.Printf("warn: no meta token: %v", err)
+	}
+
+	application := app.NewFromEnv(secret, metaToken)
 	lambda.Start(application.HandleLambda)
 }

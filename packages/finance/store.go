@@ -55,6 +55,10 @@ type Store interface {
 	CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error)
 	CashFlowForecast(ctx context.Context, userID string, days int) ([]CashFlowPoint, error)
 
+	// Goals
+	SaveGoal(ctx context.Context, goal domain.Goal) error
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+
 	// Categories
 	SaveCategory(ctx context.Context, cat domain.Category) error
 	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)

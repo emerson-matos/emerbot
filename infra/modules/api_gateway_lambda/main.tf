@@ -38,45 +38,6 @@ resource "aws_iam_role_policy" "read_webhook_secret" {
   })
 }
 
-resource "aws_dynamodb_table" "messages" {
-  name         = "${local.prefix}-messages"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "UserId"
-  range_key    = "Timestamp"
-
-  attribute {
-    name = "UserId"
-    type = "S"
-  }
-
-  attribute {
-    name = "Timestamp"
-    type = "S"
-  }
-
-  ttl {
-    attribute_name = "ExpiresAt"
-    enabled        = true
-  }
-}
-
-resource "aws_dynamodb_table" "memories" {
-  name         = "${local.prefix}-memories"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "UserId"
-  range_key    = "MemoryKey"
-
-  attribute {
-    name = "UserId"
-    type = "S"
-  }
-
-  attribute {
-    name = "MemoryKey"
-    type = "S"
-  }
-}
-
 resource "aws_dynamodb_table" "financial_entries" {
   name         = "${local.prefix}-financial-entries"
   billing_mode = "PAY_PER_REQUEST"
@@ -155,6 +116,15 @@ resource "aws_secretsmanager_secret_version" "gemini_api_key" {
   secret_string = var.gemini_api_key_value
 }
 
+resource "aws_secretsmanager_secret" "meta_graph_api_token" {
+  name = "${local.prefix}/meta/graph-api-token"
+}
+
+resource "aws_secretsmanager_secret_version" "meta_graph_api_token" {
+  secret_id     = aws_secretsmanager_secret.meta_graph_api_token.id
+  secret_string = var.meta_graph_api_token_value
+}
+
 resource "aws_lambda_function" "webhook" {
   function_name = "${local.prefix}-webhook"
   role          = aws_iam_role.lambda_exec.arn
@@ -167,11 +137,10 @@ resource "aws_lambda_function" "webhook" {
 
   environment {
     variables = {
-      MESSAGES_TABLE           = aws_dynamodb_table.messages.name
-      MEMORIES_TABLE           = aws_dynamodb_table.memories.name
-      WEBHOOK_SECRET_SECRET_ID = aws_secretsmanager_secret.webhook_secret.id
-      FINANCIAL_ENTRIES_TABLE  = aws_dynamodb_table.financial_entries.name
-      GEMINI_API_KEY_SECRET_ID = aws_secretsmanager_secret.gemini_api_key.id
+      WEBHOOK_SECRET_SECRET_ID       = aws_secretsmanager_secret.webhook_secret.id
+      FINANCIAL_ENTRIES_TABLE        = aws_dynamodb_table.financial_entries.name
+      META_GRAPH_API_TOKEN_SECRET_ID = aws_secretsmanager_secret.meta_graph_api_token.id
+      GEMINI_API_KEY_SECRET_ID       = aws_secretsmanager_secret.gemini_api_key.id
     }
   }
 }
@@ -228,8 +197,6 @@ resource "aws_iam_role_policy" "webhook_dynamodb" {
         "dynamodb:Scan",
       ]
       Resource = [
-        aws_dynamodb_table.messages.arn,
-        aws_dynamodb_table.memories.arn,
         aws_dynamodb_table.financial_entries.arn,
         "${aws_dynamodb_table.financial_entries.arn}/index/*",
       ]

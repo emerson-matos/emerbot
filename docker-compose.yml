@@ -10,8 +10,6 @@ x-aws-local: &aws-local
 
 x-dynamo-env: &dynamo-env
   DYNAMODB_ENDPOINT: http://dynamodb-local:8000
-  MESSAGES_TABLE: emerbot-local-messages
-  MEMORIES_TABLE: emerbot-local-memories
   FINANCIAL_ENTRIES_TABLE: emerbot-local-financial-entries
   USERS_TABLE: emerbot-local-users
   REFRESH_TOKENS_TABLE: emerbot-local-refresh-tokens
@@ -85,7 +83,7 @@ services:
       <<: [*aws-local, *dynamo-env]
       WEBHOOK_ADDR: :8080
       WEBHOOK_SECRET: local-secret
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REPLY_URL: http://wa-simulator:9000/reply
     ports:
       - "8080:8080"
     healthcheck:

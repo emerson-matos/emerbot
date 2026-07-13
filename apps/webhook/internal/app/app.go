@@ -14,18 +14,22 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/domain"
+	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/llm"
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
+	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
 type Request struct {
-	UserID    string `json:"user_id"`
-	MessageID string `json:"message_id"`
-	Text      string `json:"text"`
-	Timestamp string `json:"timestamp"`
-	Signature string `json:"signature"`
+	UserID        string `json:"user_id"`
+	MessageID     string `json:"message_id"`
+	PhoneNumberID string `json:"phone_number_id"`
+	Text          string `json:"text"`
+	Timestamp     string `json:"timestamp"`
+	Signature     string `json:"signature"`
 }
 
 type Response struct {
@@ -34,20 +38,55 @@ type Response struct {
 
 // financialCommands are prefixes that route to the financial handler instead
 // of the AI orchestrator.
-var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/resumo"}
+var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/resumo", "/goal", "/meta"}
 
 type App struct {
-	service           *orchestrator.Service
-	financialHandler  *financial.Handler
-	secret            string
+	service          *orchestrator.Service
+	financialHandler *financial.Handler
+	whatsappClient   whatsapp.Client
+	secret           string
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, secret string) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret string) *App {
 	return &App{
 		service:          service,
 		financialHandler: finHandler,
+		whatsappClient:   waClient,
 		secret:           secret,
 	}
+}
+
+func NewFromEnv(secret, graphAPIToken string) *App {
+	var finHandler *financial.Handler
+	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
+	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
+	if finTable != "" {
+		ctx := context.Background()
+		store, err := pkgfinance.NewDynamoDBStore(ctx, finTable, endpoint)
+		if err != nil {
+			log.Fatalf("NewFromEnv: finance store: %v", err)
+		}
+		parser := whatsapp.NewRegexParser()
+		finHandler = financial.NewHandler(parser, store)
+	}
+
+	stores := memory.NewInMemoryStores()
+	stores.Save(context.Background(), domain.Memory{
+		UserID: "demo-user",
+		Type:   "Preference",
+		ID:     "Language",
+		Value:  "pt-BR",
+	})
+
+	svc := orchestrator.NewService(
+		llm.StaticClient{},
+		stores, stores,
+		tools.NewRegistry(tools.EchoTool{}),
+	)
+
+	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
+
+	return New(svc, finHandler, waClient, secret)
 }
 
 // NewDefault builds an App with in-memory stores and a static LLM client.
@@ -72,6 +111,7 @@ func NewDefault(secret string) *App {
 			tools.NewRegistry(tools.EchoTool{}),
 		),
 		nil, // financial handler not wired in NewDefault; use New() directly
+		nil, // whatsapp client not wired in NewDefault
 		secret,
 	)
 }
@@ -93,11 +133,18 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		var err error
 		if strings.HasPrefix(strings.ToLower(text), "/resumo") {
 			reply, err = a.financialHandler.Resumo(ctx, message.UserID)
+		} else if strings.HasPrefix(strings.ToLower(text), "/goal") {
+			reply, err = a.financialHandler.Goal(ctx, message.UserID)
+		} else if strings.HasPrefix(strings.ToLower(text), "/meta") {
+			reply, err = a.financialHandler.SetGoal(ctx, message.UserID, text)
 		} else {
 			reply, err = a.financialHandler.Handle(ctx, message.UserID, text)
 		}
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
+		}
+		if reply != "" {
+			a.sendReply(ctx, req, reply)
 		}
 		return Response{Message: reply}, http.StatusOK, nil
 	}
@@ -107,7 +154,20 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		return Response{}, http.StatusInternalServerError, err
 	}
 
+	if response.Text != "" {
+		a.sendReply(ctx, req, response.Text)
+	}
+
 	return Response{Message: response.Text}, http.StatusOK, nil
+}
+
+func (a *App) sendReply(ctx context.Context, req Request, reply string) {
+	if a.whatsappClient == nil || req.MessageID == "" {
+		return
+	}
+	if err := a.whatsappClient.SendReply(ctx, req.PhoneNumberID, req.UserID, reply, req.MessageID); err != nil {
+		log.Printf("send reply: %v", err)
+	}
 }
 
 func isFinancialCommand(text string) bool {
@@ -164,6 +224,7 @@ func normalize(req Request) (domain.Message, error) {
 		MessageID: strings.TrimSpace(req.MessageID),
 	}, nil
 }
+
 
 func validSignature(signature, secret string) bool {
 	signature = strings.TrimSpace(signature)
