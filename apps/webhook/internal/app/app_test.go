@@ -124,5 +124,6 @@ func newTestApp() *App {
 		nil, // no financial handler in tests
 		nil, // no whatsapp client in tests
 		"test-secret",
+		"test-verify-token",
 	)
 }

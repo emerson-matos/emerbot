@@ -165,6 +165,7 @@ resource "aws_lambda_function" "webhook" {
   environment {
     variables = {
       WEBHOOK_SECRET_SECRET_ID       = aws_secretsmanager_secret.webhook_secret.id
+      WEBHOOK_VERIFY_TOKEN           = var.webhook_secret_value
       FINANCIAL_ENTRIES_TABLE        = aws_dynamodb_table.financial_entries.name
       META_GRAPH_API_TOKEN_SECRET_ID = aws_secretsmanager_secret.meta_graph_api_token.id
       GEMINI_API_KEY_SECRET_ID       = aws_secretsmanager_secret.gemini_api_key.id

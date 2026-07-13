@@ -45,14 +45,19 @@ type App struct {
 	financialHandler *financial.Handler
 	whatsappClient   whatsapp.Client
 	secret           string
+	verifyToken      string
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret string) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string) *App {
+	if verifyToken == "" {
+		verifyToken = secret
+	}
 	return &App{
 		service:          service,
 		financialHandler: finHandler,
 		whatsappClient:   waClient,
 		secret:           secret,
+		verifyToken:      verifyToken,
 	}
 }
 
@@ -85,8 +90,9 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	)
 
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
+	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, finHandler, waClient, secret)
+	return New(svc, finHandler, waClient, secret, verifyToken)
 }
 
 // NewDefault builds an App with in-memory stores and a static LLM client.
@@ -113,6 +119,7 @@ func NewDefault(secret string) *App {
 		nil, // financial handler not wired in NewDefault; use New() directly
 		nil, // whatsapp client not wired in NewDefault
 		secret,
+		"", // verify token will default to secret
 	)
 }
 
@@ -184,7 +191,7 @@ func (a *App) HandleVerification(mode, token, challenge string) events.APIGatewa
 	if mode != "subscribe" {
 		return jsonResponseOrDie(http.StatusBadRequest, map[string]string{"error": "invalid mode"})
 	}
-	if token != a.secret {
+	if token != a.verifyToken {
 		return jsonResponseOrDie(http.StatusForbidden, map[string]string{"error": "verify token mismatch"})
 	}
 	return events.APIGatewayV2HTTPResponse{

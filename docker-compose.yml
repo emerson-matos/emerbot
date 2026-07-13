@@ -83,6 +83,7 @@ services:
       <<: [*aws-local, *dynamo-env]
       WEBHOOK_ADDR: :8080
       WEBHOOK_SECRET: local-secret
+      WEBHOOK_VERIFY_TOKEN: local-secret
       REPLY_URL: http://wa-simulator:9000/reply
     ports:
       - "8080:8080"
