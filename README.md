@@ -1,6 +1,6 @@
-# WhatsApp AI Assistant
+# Emerbot — WhatsApp + Farmácia Financeira
 
-Assistente pessoal com IA via WhatsApp, construído para estudar AWS, System Design e arquiteturas orientadas a eventos mantendo custo mensal abaixo de `R$20`.
+Assistente IA via WhatsApp + painel financeiro para farmácia, construído para estudar AWS, System Design e arquiteturas serverless mantendo custo abaixo de `R$20/mês`.
 
 ## Princípios
 
@@ -9,7 +9,7 @@ Assistente pessoal com IA via WhatsApp, construído para estudar AWS, System Des
 - free tier sempre que possível
 - domínio desacoplado de AWS e do provider de IA
 - infraestrutura 100% versionada com OpenTofu
-- Cloudflare DNS opcional para domínios públicos
+- Cloudflare DNS gerenciado pelo tofu
 
 ## Estrutura
 
@@ -17,7 +17,9 @@ Assistente pessoal com IA via WhatsApp, construído para estudar AWS, System Des
 .
 ├── apps
 │   ├── cli
-│   ├── webhook
+│   ├── dashboard-api      # API REST do painel financeiro
+│   ├── web                # Frontend React + shadcn/ui
+│   ├── webhook            # Handler Lambda do WhatsApp
 │   └── worker
 ├── docs
 │   ├── adr
@@ -25,16 +27,19 @@ Assistente pessoal com IA via WhatsApp, construído para estudar AWS, System Des
 ├── infra
 │   ├── modules
 │   └── opentofu
-└── packages
-    ├── domain
-    ├── llm
-    ├── memory
-    ├── orchestrator
-    ├── shared
-    └── tools
+├── packages
+│   ├── auth               # JWT, login, refresh tokens
+│   ├── domain
+│   ├── finance            # Entries, goals, summaries, categories
+│   ├── llm
+│   ├── memory
+│   ├── orchestrator
+│   ├── shared
+│   └── tools
+└── docker-compose.yml      # Stack local com 7 containers
 ```
 
-## Fluxo
+## WhatsApp
 
 ```text
 WhatsApp -> API Gateway -> Lambda Webhook -> Orchestrator
@@ -43,54 +48,79 @@ WhatsApp -> API Gateway -> Lambda Webhook -> Orchestrator
                                         |-> LLM Client
 ```
 
-## Pacotes
+## Farmácia Financeira (PoC local)
 
-- `packages/domain`: contratos e regras centrais do domínio.
-- `packages/orchestrator`: coordena memória, tools e LLM.
-- `packages/llm`: abstrações do provider e adapter local de desenvolvimento.
-- `packages/memory`: contratos e implementações de memória.
-- `packages/tools`: registry e contratos de tools.
-- `apps/webhook`: handler Lambda e runner local para o webhook do WhatsApp.
-- `apps/worker`: entrypoint para processamento assíncrono futuro.
-- `apps/cli`: fluxo local para exercitar o orchestrator sem WhatsApp.
-- `infra/modules/cloudflare_dns`: módulo opcional para registros DNS no Cloudflare.
+Stack local para controle financeiro da farmácia via WhatsApp + dashboard web.
 
-## Estado atual
+### Stack
 
-Esta base entrega:
+| Serviço | Porta | Descrição |
+|---|---|---|
+| Webhook | `:8080` | Recebe comandos do WhatsApp |
+| Dashboard API | `:8081` | API REST (JWT) |
+| Frontend | `:5173` | React + shadcn + Recharts |
+| WA Simulator | `:9000` | Interface web simulando WhatsApp |
+| DynamoDB | `:8000` | Banco local |
+| DynamoDB Admin | `:8001` | UI do banco |
 
-- monorepo inicial em Go
-- contratos normalizados do domínio
-- orchestrator com fluxo explícito
-- adapters in-memory para memória e tools
-- handler Lambda com runner local de desenvolvimento
-- base inicial de OpenTofu para Lambda, API Gateway, DynamoDB e Secrets Manager
-- módulo opcional de Cloudflare DNS, desligado por padrão
-- ADRs iniciais
+### Comandos do WhatsApp
 
-## Ambiente local
+```
+/despesa 500 aluguel         → registrar despesa paga
+/receita 3000 cliente        → registrar receita recebida
+/pagar 1500 fornecedor       → registrar despesa pendente
+/receber 2000                → registrar receita a receber
+/resumo                      → balanço do mês + pendências
+/meta 80000 60000            → definir meta (faturamento / teto despesas)
+/goal                        → ver progresso das metas
+```
+
+### Credenciais
+
+```
+Login:    demo@user.com
+Senha:    fake123
+```
+
+### Ambiente local
 
 ```bash
 cp .env.example .env
-make build
-make run-webhook
+make up          # sobe stack completa
+make seed        # popula ~120 entries de exemplo
+make demo        # up + seed + mensagem de boas-vindas
 ```
 
-Para desenvolvimento local, `make run-webhook` sobe um servidor HTTP que reaproveita a mesma app do handler Lambda.
-Em produção, o entrypoint é `apps/webhook/cmd/lambda`.
+> NixOS: `flake.nix` disponível para instalar ferramentas (go, tofu, etc.) via `nix develop`.
 
-> NixOS: um `flake.nix` está disponível para instalar as ferramentas necessárias (go, tofu, etc.) via `nix develop`.
+## Infraestrutura
 
-## Cloudflare DNS
+Deploy via OpenTofu em `infra/opentofu/environments/dev/`. Provisiona:
 
-Quando você quiser um domínio público gerenciado via Cloudflare, habilite o módulo opcional em `infra/opentofu/environments/dev`.
-Ele fica desligado por padrão, então o fluxo AWS-only continua barato e simples.
+- Lambda (webhook + dashboard API)
+- API Gateway HTTP (rotas explícitas + `/{proxy+}`)
+- DynamoDB (single-table: entries, goals, categories, users, tokens)
+- Secrets Manager (webhook secret, JWT secret, Gemini key, Meta token)
+- Cloudflare DNS (CNAME apontando pro API Gateway)
 
-Detalhes estão em [docs/cloudflare-dns.md](/home/emerson/dev/emerbot/docs/cloudflare-dns.md:1).
+O DNS tem `lifecycle.ignore_changes` no content para não ser alterado acidentalmente se o gateway mudar.
 
-## Próximos passos
+```bash
+make tofu-plan
+make tofu-apply
+```
 
-1. Implementar adapter real do WhatsApp.
-2. Implementar adapter real do Gemini respeitando `llm.Client`.
-3. Persistir mensagens e memórias no DynamoDB.
-4. Empacotar `apps/webhook/cmd/lambda` para deploy via OpenTofu.
+## Pacotes
+
+- `packages/domain`: contratos e regras centrais do domínio.
+- `packages/finance`: entradas financeiras, metas mensais, summaries, categorias.
+- `packages/auth`: JWT, login, refresh tokens.
+- `packages/orchestrator`: coordena memória, tools e LLM.
+- `packages/llm`: abstrações do provider e adapter local.
+- `packages/memory`: contratos e implementações de memória.
+- `packages/tools`: registry e contratos de tools.
+- `apps/webhook`: handler Lambda e runner local para webhook do WhatsApp.
+- `apps/dashboard-api`: API REST do painel financeiro (Lambda + local).
+- `apps/web`: frontend React + shadcn/ui + Recharts.
+- `apps/worker`: entrypoint para processamento assíncrono futuro.
+- `apps/cli`: fluxo local para exercitar o orchestrator sem WhatsApp.

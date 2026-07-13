@@ -142,4 +142,4 @@ tofu-plan: build-lambdas
 
 tofu-apply: build-lambdas
 	eval "$$(aws configure export-credentials --format env)" && \
-	$(TOFU) -chdir=$(TOFU_DIR) apply
+	$(TOFU) -chdir=$(TOFU_DIR) apply -lock=false
