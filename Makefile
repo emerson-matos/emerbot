@@ -32,13 +32,13 @@ build:
 # ---------------------------------------------------------------------------
 $(LAMBDA_ZIP):
 	mkdir -p $(LAMBDA_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/webhook-bootstrap ./apps/webhook/cmd/lambda
-	cd $(LAMBDA_DIR) && zip -j webhook.zip webhook-bootstrap && rm webhook-bootstrap
+	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/webhook-bin ./apps/webhook/cmd/lambda
+	cd $(LAMBDA_DIR) && mv webhook-bin bootstrap && zip webhook.zip bootstrap && rm bootstrap
 
 $(DASHBOARD_ZIP):
 	mkdir -p $(LAMBDA_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/dashboard-bootstrap ./apps/dashboard-api/cmd/lambda
-	cd $(LAMBDA_DIR) && zip -j dashboard-api.zip dashboard-bootstrap && rm dashboard-bootstrap
+	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/dashboard-bin ./apps/dashboard-api/cmd/lambda
+	cd $(LAMBDA_DIR) && mv dashboard-bin bootstrap && zip dashboard-api.zip bootstrap && rm bootstrap
 
 build-lambda-webhook: $(LAMBDA_ZIP)
 build-lambda-dashboard-api: $(DASHBOARD_ZIP)
