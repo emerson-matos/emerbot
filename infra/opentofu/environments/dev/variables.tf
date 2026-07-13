@@ -27,18 +27,21 @@ variable "webhook_secret_value" {
   type        = string
   sensitive   = true
   description = "Valor do segredo usado para validar o webhook."
+  default     = "local-dev-webhook-secret"
 }
 
 variable "jwt_secret_value" {
   type        = string
   sensitive   = true
   description = "Segredo para assinar JWTs do dashboard."
+  default     = "local-dev-jwt-secret"
 }
 
 variable "gemini_api_key_value" {
   type        = string
   sensitive   = true
   description = "API key do Gemini para parsing de mensagens do WhatsApp."
+  default     = ""
 }
 
 variable "meta_graph_api_token_value" {
@@ -51,6 +54,7 @@ variable "meta_graph_api_token_value" {
 variable "cloudflare_zone_id" {
   type        = string
   description = "Zone ID do Cloudflare para os registros DNS."
+  default     = ""
 }
 
 variable "cloudflare_record_name" {
