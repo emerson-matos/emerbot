@@ -126,6 +126,11 @@ tofu-fmt:
 tofu-fmt-check:
 	$(TOFU) fmt -check -recursive infra
 
+TF_VAR_gemini_api_key_value       ?= $(GEMINI_API_KEY)
+export TF_VAR_gemini_api_key_value
+TF_VAR_meta_graph_api_token_value ?= $(META_GRAPH_API_TOKEN)
+export TF_VAR_meta_graph_api_token_value
+
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
 
