@@ -1,21 +1,48 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
+import {
+  Wallet, TrendingUp, TrendingDown, Clock, CalendarClock,
+  Flame, CalendarX, Info,
+} from 'lucide-react'
 import { api, formatBRL } from '../api/client'
 import type { Entry, MonthlySummary, CategorySummary, CashFlowPoint } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useToast } from '@/lib/toast'
+import { categoricalPalette } from '@/lib/chart'
+import AppLayout from '../components/AppLayout'
 import KpiCard from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
 import IncomeExpenseChart from '../components/IncomeExpenseChart'
 import CategoryDonut from '../components/CategoryDonut'
 import TransactionsTable from '../components/TransactionsTable'
+import EmptyState from '../components/EmptyState'
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-[104px] rounded-xl" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Skeleton className="h-[280px] rounded-xl lg:col-span-2" />
+        <Skeleton className="h-[280px] rounded-xl" />
+      </div>
+      <Skeleton className="h-[320px] rounded-xl" />
+    </div>
+  )
+}
 
 export default function Dashboard() {
+  const notify = useToast()
   const userName = localStorage.getItem('user_name') ?? 'você'
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
-  const monthLabel = format(now, 'MMMM yyyy', { locale: ptBR })
+  const monthLabel = format(now, "MMMM 'de' yyyy", { locale: ptBR })
   const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
 
@@ -29,6 +56,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function loadAll() {
@@ -60,6 +88,7 @@ export default function Dashboard() {
       })))
     } catch (err) {
       console.error('load dashboard:', err)
+      notify('Não foi possível carregar os dados. Verifique sua conexão.', 'error')
     } finally {
       setLoading(false)
     }
@@ -68,9 +97,11 @@ export default function Dashboard() {
   async function handleMarkPaid(entryID: string) {
     try {
       await api.entries.update(entryID, { payment_status: 'paid' })
+      notify('Transação marcada como paga.', 'success')
       await loadAll()
     } catch (err) {
       console.error('mark paid:', err)
+      notify('Não foi possível marcar como pago.', 'error')
     }
   }
 
@@ -111,101 +142,92 @@ export default function Dashboard() {
     ? { date: format(new Date(worstDayEntry[0]), 'dd/MM'), total: worstDayEntry[1] }
     : null
 
-  const colorDots = ['#ef4444', '#f97316', '#f59e0b', '#8b5cf6', '#3b82f6']
+  const balance = summary?.Balance ?? 0
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="bg-card border-b border-border px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">💊</span>
-          <div>
-            <h1 className="font-bold text-foreground leading-tight">Farmácia — Painel Financeiro</h1>
-            <p className="text-xs text-muted-foreground capitalize">{monthLabel}</p>
+    <AppLayout userName={userName} subtitle={monthLabel} onLogout={handleLogout}>
+      {loading ? (
+        <DashboardSkeleton />
+      ) : (
+        <div className="space-y-6">
+          {/* KPI row */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard title="Saldo do Mês" value={balance} icon={Wallet} tone={balance >= 0 ? 'positive' : 'negative'} subtitle="Receitas − Despesas" />
+            <KpiCard title="Total Receitas" value={summary?.TotalIncome ?? 0} icon={TrendingUp} tone="positive" subtitle="Este mês" />
+            <KpiCard title="Total Despesas" value={summary?.TotalExpense ?? 0} icon={TrendingDown} tone="negative" subtitle="Este mês" />
+            <KpiCard title="A Receber" value={totalReceivable} icon={Clock} tone="info" subtitle="Pendente" />
           </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-muted-foreground">Olá, <strong className="text-foreground">{userName}</strong></span>
-          <button onClick={handleLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Sair</button>
-        </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-muted-foreground text-sm animate-pulse">Carregando dados...</div>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-              <KpiCard title="Saldo do Mês" value={summary?.Balance ?? 0} icon="💰" color={(summary?.Balance ?? 0) >= 0 ? 'green' : 'red'} subtitle="Receitas − Despesas" />
-              <KpiCard title="Total Receitas" value={summary?.TotalIncome ?? 0} icon="📈" color="green" subtitle="Este mês" />
-              <KpiCard title="Total Despesas" value={summary?.TotalExpense ?? 0} icon="📉" color="red" subtitle="Este mês" />
-              <KpiCard title="A Receber" value={totalReceivable} icon="⏳" color="blue" subtitle="Pendente" />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              <KpiCard title="A Pagar Hoje" value={payableToday} icon="⚠️" color="yellow" subtitle="Vencimento hoje" />
-              {worstMonth && (
-                <Card>
-                  <CardContent className="p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
-                    <span className="text-2xl sm:text-3xl">📉</span>
-                    <div>
-                      <p className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior Mês</p>
-                      <p className="text-xs sm:text-sm text-foreground mt-0.5">
-                        <strong className="capitalize">{worstMonth.month}</strong> — saldo de {formatBRL(worstMonth.income - worstMonth.expense)}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              <GoalCard month={currentMonth} summary={summary} />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2"><CashFlowChart data={cashflow} /></div>
-              <div><IncomeExpenseChart data={monthlyData} /></div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card>
-                <CardContent className="p-5">
-                  <h3 className="text-sm font-semibold text-card-foreground mb-4">🔥 Maiores Gastos do Mês</h3>
-                  {topExpenses.length === 0 ? (
-                    <p className="text-muted-foreground text-sm text-center py-6">Sem dados</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {topExpenses.map((cat, i) => (
-                        <div key={cat.Category} className="flex items-center gap-3">
-                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorDots[i] }} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-foreground truncate">{cat.Category.replace(/_/g, ' ')}</p>
-                            <p className="text-xs text-muted-foreground">{cat.Count} registro(s)</p>
-                          </div>
-                          <span className="text-sm font-semibold text-foreground">{formatBRL(cat.Total)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {worstDay && (
-                    <div className="mt-4 pt-4 border-t border-border">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pior dia do mês</p>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className="text-sm text-foreground">{worstDay.date}</span>
-                        <span className="text-sm font-semibold text-destructive">{formatBRL(worstDay.total)}</span>
-                      </div>
-                    </div>
-                  )}
+          {/* Secondary strip */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <KpiCard title="A Pagar Hoje" value={payableToday} icon={CalendarClock} tone="warning" subtitle="Vencimento hoje" />
+            {worstMonth ? (
+              <Card className="relative overflow-hidden">
+                <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-destructive" />
+                <CardContent className="flex items-center gap-3 pl-5">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-destructive/15 text-destructive">
+                    <CalendarX className="size-[18px]" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pior Mês</p>
+                    <p className="mt-0.5 text-sm">
+                      <strong className="capitalize">{worstMonth.month}</strong>
+                      {' — '}
+                      <span className="tabular-nums">{formatBRL(worstMonth.income - worstMonth.expense)}</span>
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
-              <div><CategoryDonut data={categories} /></div>
-            </div>
+            ) : <div className="hidden lg:block" />}
+            <GoalCard month={currentMonth} summary={summary} />
+          </div>
 
-            <div className="w-full">
-              <TransactionsTable entries={displayEntries} onMarkPaid={handleMarkPaid} />
-            </div>
-          </>
-        )}
-      </main>
-    </div>
+          {/* Charts */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2"><CashFlowChart data={cashflow} /></div>
+            <IncomeExpenseChart data={monthlyData} />
+          </div>
+
+          {/* Breakdown */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card>
+              <CardContent className="space-y-4">
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <Flame className="size-4 text-primary" aria-hidden />
+                  Maiores Gastos do Mês
+                </h3>
+                {topExpenses.length === 0 ? (
+                  <EmptyState icon={Flame} message="Sem gastos registrados neste mês." />
+                ) : (
+                  <div className="space-y-3">
+                    {topExpenses.map((cat, i) => (
+                      <div key={cat.Category} className="flex items-center gap-3">
+                        <span className="size-2.5 shrink-0 rounded-full" style={{ background: categoricalPalette[i % categoricalPalette.length] }} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium capitalize">{cat.Category.replace(/_/g, ' ')}</p>
+                          <p className="text-xs text-muted-foreground">{cat.Count} registro(s)</p>
+                        </div>
+                        <span className="text-sm font-semibold tabular-nums">{formatBRL(cat.Total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {worstDay && (
+                  <div className="flex items-center justify-between border-t border-border pt-3">
+                    <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <Info className="size-3.5" /> Pior dia — {worstDay.date}
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-destructive">{formatBRL(worstDay.total)}</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            <CategoryDonut data={categories} />
+          </div>
+
+          <TransactionsTable entries={displayEntries} onMarkPaid={handleMarkPaid} />
+        </div>
+      )}
+    </AppLayout>
   )
 }

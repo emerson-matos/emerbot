@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Pill, AlertCircle, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -20,58 +23,77 @@ export default function Login() {
       localStorage.setItem('refresh_token', res.refresh_token)
       localStorage.setItem('user_name', res.name)
       navigate('/')
-    } catch (err: any) {
-      setError(err.message ?? 'Erro ao fazer login')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao fazer login')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="text-4xl mb-2">💊</div>
-          <h1 className="text-2xl font-bold text-gray-900">Farmácia</h1>
-          <p className="text-gray-500 text-sm mt-1">Painel Financeiro</p>
+    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background p-4">
+      {/* Apothecary atmosphere */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          backgroundImage:
+            'radial-gradient(40rem 30rem at 70% -10%, color-mix(in oklch, var(--primary) 18%, transparent), transparent), radial-gradient(36rem 30rem at 10% 110%, color-mix(in oklch, var(--info) 12%, transparent), transparent)',
+        }}
+      />
+
+      <div className="relative w-full max-w-sm">
+        <div className="rounded-2xl bg-card/80 p-8 shadow-xl ring-1 ring-foreground/10 backdrop-blur-md">
+          <div className="mb-8 text-center">
+            <span className="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+              <Pill className="size-7" />
+            </span>
+            <h1 className="font-heading text-2xl font-semibold tracking-tight">Farmácia</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Painel Financeiro</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label htmlFor="email" className="text-sm font-medium">Email</label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="seu@email.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="password" className="text-sm font-medium">Senha</label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="••••••••"
+              />
+            </div>
+
+            {error && (
+              <p className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <AlertCircle className="size-4 shrink-0" />
+                {error}
+              </p>
+            )}
+
+            <Button type="submit" disabled={loading} size="lg" className="w-full">
+              {loading && <Loader2 className="size-4 animate-spin" />}
+              {loading ? 'Entrando...' : 'Entrar'}
+            </Button>
+          </form>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="seu@email.com"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="••••••••"
-            />
-          </div>
-
-          {error && (
-            <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded-lg py-2.5 text-sm transition-colors"
-          >
-            {loading ? 'Entrando...' : 'Entrar'}
-          </button>
-        </form>
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          Emerbot · Farmácia Financeira
+        </p>
       </div>
     </div>
   )

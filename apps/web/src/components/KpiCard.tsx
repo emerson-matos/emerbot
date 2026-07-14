@@ -1,34 +1,51 @@
+import type { LucideIcon } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
 import { formatBRL } from '../api/client'
+
+export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral'
 
 interface KpiCardProps {
   title: string
   value: number
-  icon: string
-  color: 'green' | 'red' | 'blue' | 'yellow'
+  icon: LucideIcon
+  tone: KpiTone
   subtitle?: string
 }
 
-const colorMap = {
-  green: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  red: 'bg-red-50 text-red-700 border-red-200',
-  blue: 'bg-blue-50 text-blue-700 border-blue-200',
-  yellow: 'bg-amber-50 text-amber-700 border-amber-200',
+const toneVar: Record<KpiTone, string> = {
+  positive: 'var(--success)',
+  negative: 'var(--destructive)',
+  info: 'var(--info)',
+  warning: 'var(--warning)',
+  neutral: 'var(--muted-foreground)',
 }
 
-export default function KpiCard({ title, value, icon, color, subtitle }: KpiCardProps) {
+export default function KpiCard({ title, value, icon: Icon, tone, subtitle }: KpiCardProps) {
+  const c = toneVar[tone]
   return (
-    <Card className={cn('border', colorMap[color])}>
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide opacity-70">{title}</p>
-            <p className="text-2xl font-bold mt-1">{formatBRL(value)}</p>
-            {subtitle && <p className="text-xs mt-1 opacity-60">{subtitle}</p>}
-          </div>
-          <span className="text-2xl">{icon}</span>
+    <Card className="relative overflow-hidden">
+      {/* accent spine */}
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 w-1"
+        style={{ background: c }}
+      />
+      <CardContent className="flex items-start justify-between gap-3 pl-5">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {title}
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: c }}>
+            {formatBRL(value)}
+          </p>
+          {subtitle && <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>}
         </div>
+        <span
+          className="grid size-9 shrink-0 place-items-center rounded-lg"
+          style={{ background: `color-mix(in oklch, ${c} 14%, transparent)`, color: c }}
+        >
+          <Icon className="size-[18px]" />
+        </span>
       </CardContent>
     </Card>
   )

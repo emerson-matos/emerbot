@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Target } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { api, formatBRL } from '../api/client'
 import type { Goal, MonthlySummary } from '../api/client'
@@ -8,13 +9,24 @@ interface Props {
   summary: MonthlySummary | null
 }
 
+function ProgressBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div className="h-2 overflow-hidden rounded-full bg-muted">
+      <div
+        className="h-full rounded-full transition-[width] duration-500"
+        style={{ width: `${Math.min(100, pct)}%`, background: color }}
+      />
+    </div>
+  )
+}
+
 export default function GoalCard({ month, summary }: Props) {
   const [goal, setGoal] = useState<Goal | null>(null)
 
   useEffect(() => {
     api.goals.get(month).then(res => {
       if (res.goal) setGoal(res.goal)
-    })
+    }).catch(() => {})
   }, [month])
 
   const actualIncome = summary?.TotalIncome ?? 0
@@ -23,36 +35,38 @@ export default function GoalCard({ month, summary }: Props) {
     ? Math.min(100, (actualIncome / goal.RevenueTarget) * 100) : 0
   const expPct = goal?.ExpenseTarget && goal.ExpenseTarget > 0
     ? Math.min(100, (actualExpense / goal.ExpenseTarget) * 100) : 0
-  const revColor = revPct >= 100 ? 'bg-green-500' : 'bg-blue-500'
-  const expColor = expPct > 100 ? 'bg-red-500' : expPct >= 80 ? 'bg-yellow-500' : 'bg-blue-500'
+  const revColor = revPct >= 100 ? 'var(--success)' : 'var(--info)'
+  const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 
   return (
     <Card>
-      <CardContent className="p-4 sm:p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-card-foreground">🎯 Meta do Mês</h3>
+      <CardContent className="space-y-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <Target className="size-4 text-primary" aria-hidden />
+          Meta do Mês
+        </h3>
         {goal ? (
           <div className="space-y-3">
             <div>
-              <div className="flex justify-between text-xs mb-1">
+              <div className="mb-1 flex justify-between text-xs">
                 <span className="text-muted-foreground">Faturamento</span>
-                <span className="font-medium">{formatBRL(actualIncome)} / {formatBRL(goal.RevenueTarget)}</span>
+                <span className="font-medium tabular-nums">{formatBRL(actualIncome)} / {formatBRL(goal.RevenueTarget)}</span>
               </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${revColor}`} style={{ width: `${Math.min(100, revPct)}%` }} />
-              </div>
+              <ProgressBar pct={revPct} color={revColor} />
             </div>
             <div>
-              <div className="flex justify-between text-xs mb-1">
+              <div className="mb-1 flex justify-between text-xs">
                 <span className="text-muted-foreground">Despesas</span>
-                <span className="font-medium">{formatBRL(actualExpense)} / {formatBRL(goal.ExpenseTarget)}</span>
+                <span className="font-medium tabular-nums">{formatBRL(actualExpense)} / {formatBRL(goal.ExpenseTarget)}</span>
               </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${expColor}`} style={{ width: `${Math.min(100, expPct)}%` }} />
-              </div>
+              <ProgressBar pct={expPct} color={expColor} />
             </div>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground text-center py-2">Defina sua meta pelo WhatsApp com <span className="font-mono font-semibold text-foreground">/meta</span></p>
+          <p className="py-2 text-center text-xs text-muted-foreground">
+            Defina sua meta pelo WhatsApp com{' '}
+            <span className="rounded bg-muted px-1 py-0.5 font-mono font-semibold text-foreground">/meta</span>
+          </p>
         )}
       </CardContent>
     </Card>

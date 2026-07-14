@@ -1,9 +1,10 @@
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { PieChart } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '../api/client'
 import type { CategorySummary } from '../api/client'
-
-const COLORS = ['#ef4444', '#f97316', '#f59e0b', '#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899']
+import { categoricalPalette, chartColor, tooltipProps } from '@/lib/chart'
+import EmptyState from './EmptyState'
 
 interface Props {
   data: CategorySummary[]
@@ -18,11 +19,14 @@ export default function CategoryDonut({ data }: Props) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">📊 Despesas por Categoria</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <PieChart className="size-4 text-primary" aria-hidden />
+          Despesas por Categoria
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {expenses.length === 0 ? (
-          <p className="text-muted-foreground text-sm text-center py-8">Sem dados</p>
+          <EmptyState icon={PieChart} message="Sem despesas categorizadas neste período." />
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart
@@ -32,22 +36,30 @@ export default function CategoryDonut({ data }: Props) {
               barSize={20}
               barGap={4}
             >
-              <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `R$${(v / 100).toFixed(0)}`} />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 11, fill: chartColor.axis }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={v => `R$${(v / 100).toFixed(0)}`}
+              />
               <YAxis
                 type="category"
                 dataKey="Category"
-                tick={{ fontSize: 12, fill: '#6b7280' }}
+                tick={{ fontSize: 12, fill: chartColor.axis }}
+                tickLine={false}
+                axisLine={false}
                 width={120}
                 tickFormatter={v => v.replace(/_/g, ' ')}
               />
               <Tooltip
+                {...tooltipProps}
                 formatter={value => [formatBRL(Number(value)), 'Total']}
-                labelFormatter={label => label.replace(/_/g, ' ')}
-                contentStyle={{ fontSize: 13 }}
+                labelFormatter={label => String(label).replace(/_/g, ' ')}
               />
               <Bar dataKey="Total" radius={[0, 4, 4, 0]}>
                 {expenses.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  <Cell key={i} fill={categoricalPalette[i % categoricalPalette.length]} />
                 ))}
               </Bar>
             </BarChart>
