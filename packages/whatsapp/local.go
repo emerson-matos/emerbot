@@ -9,6 +9,8 @@ import (
 	"net/http"
 )
 
+var httpPost = http.Post
+
 type LocalClient struct {
 	replyURL string
 }
@@ -26,7 +28,7 @@ func (c *LocalClient) SendReply(_ context.Context, _ /*phoneNumberID*/ string, _
 	if err != nil {
 		return fmt.Errorf("local marshal: %w", err)
 	}
-	resp, err := http.Post(c.replyURL, "application/json", bytes.NewReader(body))
+	resp, err := httpPost(c.replyURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("local post: %w", err)
 	}

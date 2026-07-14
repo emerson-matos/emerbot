@@ -129,6 +129,51 @@ func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookHTTPVerification(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(&fakeWhatsAppClient{})
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodGet,
+		Query: map[string]string{
+			"hub.mode":         "subscribe",
+			"hub.verify_token": "test-verify-token",
+			"hub.challenge":    "12345",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if response.Body != "12345" {
+		t.Fatalf("expected challenge body, got %s", response.Body)
+	}
+}
+
+func TestHandleWebhookHTTPRejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(&fakeWhatsAppClient{})
+	body := []byte(`{"object":`)
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{
+			"X-Hub-Signature-256": signBytes(body, app.secret),
+		},
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", response.StatusCode)
+	}
+}
+
 func TestHandleWebhookHTTPAcceptsCanonicalHeaderCase(t *testing.T) {
 	t.Parallel()
 

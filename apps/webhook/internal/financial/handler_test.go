@@ -1,0 +1,189 @@
+package financial
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/emerson/emerbot/packages/domain"
+	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/whatsapp"
+)
+
+func TestHandleReturnsFriendlyMessageOnParseError(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(fakeParser{err: errors.New("bad command")}, pkgfinance.NewInMemoryStore())
+
+	msg, err := handler.Handle(context.Background(), "u1", "not a command")
+	if err != nil {
+		t.Fatalf("Handle returned unexpected error: %v", err)
+	}
+	if !strings.Contains(msg, "Não consegui entender") || !strings.Contains(msg, "bad command") {
+		t.Fatalf("unexpected parse failure message: %s", msg)
+	}
+}
+
+func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:        domain.EntryTypeExpense,
+			Amount:      12345,
+			Category:    "energia_agua",
+			Description: "Conta de luz",
+			DueDate:     ptrTime(mustDate("2026-07-20")),
+			IsPending:   true,
+		},
+	}, store)
+
+	msg, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if !strings.Contains(msg, "Despesa registrada") || !strings.Contains(msg, "A pagar") {
+		t.Fatalf("unexpected confirmation: %s", msg)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.PaymentStatus != domain.PaymentStatusPending {
+		t.Fatalf("expected pending status, got %s", entry.PaymentStatus)
+	}
+	if entry.Source != "whatsapp" {
+		t.Fatalf("expected whatsapp source, got %s", entry.Source)
+	}
+	if entry.Category != "energia_agua" || entry.Amount != 12345 {
+		t.Fatalf("unexpected saved entry: %+v", entry)
+	}
+}
+
+func TestSetGoalPersistsTargetsAndGoalReadsProgress(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{}, store)
+	ctx := context.Background()
+
+	for _, entry := range []domain.FinancialEntry{
+		testFinancialEntry("u1", "income", time.Now().UTC(), 50000, "venda_balcao", domain.EntryTypeIncome),
+		testFinancialEntry("u1", "expense", time.Now().UTC(), 20000, "aluguel", domain.EntryTypeExpense),
+	} {
+		if err := store.SaveEntry(ctx, entry); err != nil {
+			t.Fatalf("SaveEntry(%s): %v", entry.EntryID, err)
+		}
+	}
+
+	msg, err := handler.SetGoal(ctx, "u1", "/meta 80000 60000")
+	if err != nil {
+		t.Fatalf("SetGoal returned error: %v", err)
+	}
+	if !strings.Contains(msg, "Meta salva") || !strings.Contains(msg, "80.000,00") {
+		t.Fatalf("unexpected set goal message: %s", msg)
+	}
+
+	goalMsg, err := handler.Goal(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Goal returned error: %v", err)
+	}
+	if !strings.Contains(goalMsg, "Faturamento") || !strings.Contains(goalMsg, "1%") || !strings.Contains(goalMsg, "R$80.000,00") {
+		t.Fatalf("unexpected goal message: %s", goalMsg)
+	}
+}
+
+func TestGoalWithoutSavedTargetReturnsFriendlyMessage(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(fakeParser{}, pkgfinance.NewInMemoryStore())
+
+	msg, err := handler.Goal(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("Goal returned unexpected error: %v", err)
+	}
+	if msg != "Nenhuma meta definida para este mês." {
+		t.Fatalf("unexpected goal message: %s", msg)
+	}
+}
+
+func TestResumoIncludesPendingTotals(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{}, store)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+
+	income := testFinancialEntry("u1", "income", now, 90000, "venda_balcao", domain.EntryTypeIncome)
+	expense := testFinancialEntry("u1", "expense", now, 25000, "aluguel", domain.EntryTypeExpense)
+	pending := testFinancialEntry("u1", "pending", now, 7000, "energia_agua", domain.EntryTypeExpense)
+	pending.PaymentStatus = domain.PaymentStatusPending
+	pending.DueDate = &tomorrow
+
+	for _, entry := range []domain.FinancialEntry{income, expense, pending} {
+		if err := store.SaveEntry(ctx, entry); err != nil {
+			t.Fatalf("SaveEntry(%s): %v", entry.EntryID, err)
+		}
+	}
+
+	msg, err := handler.Resumo(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Resumo returned error: %v", err)
+	}
+	if !strings.Contains(msg, "Receitas:* R$900,00") {
+		t.Fatalf("expected income in summary, got %s", msg)
+	}
+	if !strings.Contains(msg, "A vencer amanhã:* R$70,00 (1 conta(s))") {
+		t.Fatalf("expected pending due summary, got %s", msg)
+	}
+}
+
+type fakeParser struct {
+	entry whatsapp.ParsedEntry
+	err   error
+}
+
+func (f fakeParser) Parse(context.Context, string) (whatsapp.ParsedEntry, error) {
+	if f.err != nil {
+		return whatsapp.ParsedEntry{}, f.err
+	}
+	return f.entry, nil
+}
+
+func testFinancialEntry(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
+	return domain.FinancialEntry{
+		UserID:        userID,
+		EntryID:       entryID,
+		Date:          date,
+		Amount:        amount,
+		Category:      category,
+		Type:          entryType,
+		Description:   category,
+		PaymentStatus: domain.PaymentStatusPaid,
+		CreatedAt:     date,
+		UpdatedAt:     date,
+	}
+}
+
+func mustDate(s string) time.Time {
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
+}

@@ -1,0 +1,82 @@
+package whatsapp
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/emerson/emerbot/packages/domain"
+)
+
+func TestRegexParserParsesPendingExpenseWithDueDate(t *testing.T) {
+	t.Parallel()
+
+	parser := NewRegexParser()
+	entry, err := parser.Parse(context.Background(), "/pagar 1500,50 fornecedor_medicamentos 20/07 compra mensal")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if entry.Type != domain.EntryTypeExpense || !entry.IsPending {
+		t.Fatalf("unexpected entry flags: %+v", entry)
+	}
+	if entry.Amount != 150050 || entry.Category != "fornecedor_medicamentos" {
+		t.Fatalf("unexpected parsed values: %+v", entry)
+	}
+	if entry.DueDate == nil || entry.DueDate.Day() != 20 || entry.DueDate.Month() != 7 {
+		t.Fatalf("expected due date in July 20, got %+v", entry.DueDate)
+	}
+	if entry.Description != "compra mensal" {
+		t.Fatalf("expected remaining text as description, got %q", entry.Description)
+	}
+}
+
+func TestRegexParserUsesDefaultCategoryAndHumanDescription(t *testing.T) {
+	t.Parallel()
+
+	parser := NewRegexParser()
+	entry, err := parser.Parse(context.Background(), "/receita 800")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if entry.Type != domain.EntryTypeIncome || entry.Category != "outros_receitas" {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	if entry.Description != "Outros" {
+		t.Fatalf("expected human default description, got %q", entry.Description)
+	}
+}
+
+func TestRegexParserRejectsInvalidCommand(t *testing.T) {
+	t.Parallel()
+
+	parser := NewRegexParser()
+	if _, err := parser.Parse(context.Background(), "despesa aluguel"); err == nil {
+		t.Fatal("expected parse error for invalid command")
+	}
+}
+
+func TestGeminiResponseToParsedValidatesAmountAndDueDate(t *testing.T) {
+	t.Parallel()
+
+	entry, err := geminiResponseToParsed(geminiResponse{
+		Type:        "income",
+		AmountCents: 9999,
+		Category:    "convenio",
+		Description: "repasse",
+		DueDate:     "2026-07-15",
+		IsPending:   true,
+	})
+	if err != nil {
+		t.Fatalf("geminiResponseToParsed returned error: %v", err)
+	}
+	if entry.Type != domain.EntryTypeIncome || !entry.IsPending {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	if entry.DueDate == nil || !entry.DueDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected due date: %+v", entry.DueDate)
+	}
+
+	if _, err := geminiResponseToParsed(geminiResponse{AmountCents: 0}); err == nil {
+		t.Fatal("expected invalid amount error")
+	}
+}
