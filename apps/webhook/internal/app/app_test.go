@@ -16,19 +16,19 @@ import (
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/tools"
-	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
 func TestHandleLambdaOK(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp()
-	body := testWebhook()
+	client := &fakeWhatsAppClient{}
+	app := newTestApp(client)
+	body := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		Body: body,
 		Headers: map[string]string{
-			"x-hub-signature-256": sign(body, app.secret),
+			"x-hub-signature-256": signString(body, app.secret),
 		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
@@ -41,6 +41,12 @@ func TestHandleLambdaOK(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if client.markAsReadCalls != 1 {
+		t.Fatalf("expected MarkAsRead to be called once, got %d", client.markAsReadCalls)
+	}
+	if client.sendReplyCalls != 1 {
+		t.Fatalf("expected SendReply to be called once, got %d", client.sendReplyCalls)
 	}
 
 	var payload Response
@@ -55,14 +61,14 @@ func TestHandleLambdaOK(t *testing.T) {
 func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp()
-	rawBody := testWebhook()
+	app := newTestApp(&fakeWhatsAppClient{})
+	rawBody := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		Body:            base64.StdEncoding.EncodeToString([]byte(rawBody)),
 		IsBase64Encoded: true,
 		Headers: map[string]string{
-			"x-hub-signature-256": sign(rawBody, "test-secre"),
+			"x-hub-signature-256": signString(rawBody, "test-secre"),
 		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
@@ -81,7 +87,7 @@ func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp()
+	app := newTestApp(&fakeWhatsAppClient{})
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
@@ -100,14 +106,14 @@ func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp()
-	rawBody := testWebhook()
+	app := newTestApp(&fakeWhatsAppClient{})
+	rawBody := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		Body:            base64.StdEncoding.EncodeToString([]byte(rawBody)),
 		IsBase64Encoded: true,
 		Headers: map[string]string{
-			"x-hub-signature-256": sign(rawBody, app.secret),
+			"x-hub-signature-256": signString(rawBody, app.secret),
 		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
@@ -123,7 +129,94 @@ func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 	}
 }
 
-func newTestApp() *App {
+func TestHandleWebhookHTTPAcceptsCanonicalHeaderCase(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeWhatsAppClient{}
+	app := newTestApp(client)
+	body := []byte(testTextWebhook())
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{
+			"X-Hub-Signature-256": signBytes(body, app.secret),
+		},
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if client.markAsReadCalls != 1 {
+		t.Fatalf("expected MarkAsRead to be called once, got %d", client.markAsReadCalls)
+	}
+}
+
+func TestHandleWebhookHTTPIgnoresStatusPayload(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeWhatsAppClient{}
+	app := newTestApp(client)
+	body := []byte(testStatusWebhook())
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{
+			"X-Hub-Signature-256": signBytes(body, app.secret),
+		},
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if response.Body != `{"ok":true}` {
+		t.Fatalf("expected ok response, got %s", response.Body)
+	}
+	if client.markAsReadCalls != 0 {
+		t.Fatalf("expected MarkAsRead not to be called, got %d", client.markAsReadCalls)
+	}
+	if client.sendReplyCalls != 0 {
+		t.Fatalf("expected SendReply not to be called, got %d", client.sendReplyCalls)
+	}
+}
+
+func TestHandleWebhookHTTPIgnoresUnsupportedMessageType(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeWhatsAppClient{}
+	app := newTestApp(client)
+	body := []byte(testImageWebhook())
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{
+			"X-Hub-Signature-256": signBytes(body, app.secret),
+		},
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if response.Body != `{"ok":true}` {
+		t.Fatalf("expected ok response, got %s", response.Body)
+	}
+	if client.markAsReadCalls != 0 {
+		t.Fatalf("expected MarkAsRead not to be called, got %d", client.markAsReadCalls)
+	}
+	if client.sendReplyCalls != 0 {
+		t.Fatalf("expected SendReply not to be called, got %d", client.sendReplyCalls)
+	}
+}
+
+func newTestApp(client *fakeWhatsAppClient) *App {
 	stores := memory.NewInMemoryStores()
 	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "u1",
@@ -141,36 +234,117 @@ func newTestApp() *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
-		nil,                         // no financial handler in tests
-		whatsapp.NewLocalClient(""), // no whatsapp client in tests
+		nil,
+		client,
 		"test-secret",
 		"test-verify-token",
 	)
 }
 
-func sign(body, secret string) string {
+type fakeWhatsAppClient struct {
+	markAsReadCalls int
+	sendReplyCalls  int
+}
+
+func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
+	f.markAsReadCalls++
+	return nil
+}
+
+func (f *fakeWhatsAppClient) SendReply(context.Context, string, string, string, string) error {
+	f.sendReplyCalls++
+	return nil
+}
+
+func signString(body, secret string) string {
+	return signBytes([]byte(body), secret)
+}
+
+func signBytes(body []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(body))
+	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func testWebhook() string {
+func testTextWebhook() string {
 	return `{
-      "object":"whatsapp_business_account",
-      "entry":[{
-        "changes":[{
-          "value":{
-            "metadata":{
-              "phone_number_id":"123"
-            },
-            "messages":[{
-              "from":"u1",
-              "id":"m1",
-              "timestamp":"1752465600",
-              "text":{"body":"oi"}
-            }]
-          }
-        }]
-      }]
-    }`
+	  "object": "whatsapp_business_account",
+	  "entry": [{
+	    "id": "123456789",
+	    "changes": [{
+	      "field": "messages",
+	      "value": {
+	        "messaging_product": "whatsapp",
+	        "metadata": {
+	          "display_phone_number": "15550783881",
+	          "phone_number_id": "123"
+	        },
+	        "contacts": [{
+	          "profile": {"name": "User One"},
+	          "wa_id": "u1"
+	        }],
+	        "messages": [{
+	          "from": "u1",
+	          "id": "wamid.HBgLMQ",
+	          "timestamp": "1752465600",
+	          "type": "text",
+	          "text": {"body": "oi"}
+	        }]
+	      }
+	    }]
+	  }]
+	}`
+}
+
+func testStatusWebhook() string {
+	return `{
+	  "object": "whatsapp_business_account",
+	  "entry": [{
+	    "id": "123456789",
+	    "changes": [{
+	      "field": "messages",
+	      "value": {
+	        "messaging_product": "whatsapp",
+	        "metadata": {
+	          "display_phone_number": "15550783881",
+	          "phone_number_id": "123"
+	        },
+	        "statuses": [{
+	          "id": "wamid.HBgLMQ",
+	          "status": "read"
+	        }]
+	      }
+	    }]
+	  }]
+	}`
+}
+
+func testImageWebhook() string {
+	return `{
+	  "object": "whatsapp_business_account",
+	  "entry": [{
+	    "id": "123456789",
+	    "changes": [{
+	      "field": "messages",
+	      "value": {
+	        "messaging_product": "whatsapp",
+	        "metadata": {
+	          "display_phone_number": "15550783881",
+	          "phone_number_id": "123"
+	        },
+	        "contacts": [{
+	          "profile": {"name": "User One"},
+	          "wa_id": "u1"
+	        }],
+	        "messages": [{
+	          "from": "u1",
+	          "id": "wamid.HBgLMQ",
+	          "timestamp": "1752465600",
+	          "type": "image",
+	          "image": {"mime_type": "image/jpeg", "sha256": "abc", "id": "media-1"}
+	        }]
+	      }
+	    }]
+	  }]
+	}`
 }

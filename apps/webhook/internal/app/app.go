@@ -58,6 +58,7 @@ type waValue struct {
 	Metadata         waMetadata  `json:"metadata"`
 	Contacts         []waContact `json:"contacts"`
 	Messages         []waMessage `json:"messages"`
+	Statuses         []waStatus  `json:"statuses"`
 }
 
 type waMetadata struct {
@@ -84,6 +85,11 @@ type waMessage struct {
 
 type waTextBody struct {
 	Body string `json:"body"`
+}
+
+type waStatus struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
 
 // financialCommands are prefixes that route to the financial handler instead
@@ -153,8 +159,10 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		return Response{}, http.StatusBadRequest, err
 	}
 
-	if err := a.whatsappClient.MarkAsRead(ctx, req.PhoneNumberID, req.MessageID); err != nil {
-		log.Printf("mark as read: %v", err)
+	if a.whatsappClient != nil {
+		if err := a.whatsappClient.MarkAsRead(ctx, req.PhoneNumberID, req.MessageID); err != nil {
+			log.Printf("mark as read: %v", err)
+		}
 	}
 
 	// Route financial commands to the financial handler.
@@ -259,62 +267,24 @@ func FromWAWebhook(body []byte) (*Request, error) {
 	if len(val.Contacts) > 0 {
 		req.UserID = val.Contacts[0].WaID
 	}
-	if len(val.Messages) > 0 {
-		req.MessageID = val.Messages[0].ID
-		req.UserID = val.Messages[0].From
-		req.Timestamp = waTimestamp(val.Messages[0].Timestamp)
-		req.Text = val.Messages[0].Text.Body
-	}
 	if len(val.Messages) == 0 {
+		if len(val.Statuses) > 0 {
+			log.Printf("ignoring whatsapp status event status=%s message_id=%s", val.Statuses[0].Status, val.Statuses[0].ID)
+		}
 		return nil, nil
 	}
+
+	msg := val.Messages[0]
+	if msg.Type != "" && msg.Type != "text" {
+		log.Printf("ignoring unsupported whatsapp message type=%s message_id=%s", msg.Type, msg.ID)
+		return nil, nil
+	}
+
+	req.MessageID = msg.ID
+	req.UserID = msg.From
+	req.Timestamp = waTimestamp(msg.Timestamp)
+	req.Text = msg.Text.Body
 	return &req, nil
-}
-
-func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	method := event.RequestContext.HTTP.Method
-
-	if method == http.MethodGet {
-		q := event.QueryStringParameters
-		return a.HandleVerification(q["hub.mode"], q["hub.verify_token"], q["hub.challenge"]), nil
-	}
-
-	if method != http.MethodPost {
-		return jsonResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-
-	body := []byte(event.Body)
-	if event.IsBase64Encoded {
-		decoded, err := base64.StdEncoding.DecodeString(event.Body)
-		if err != nil {
-			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid base64 body"})
-		}
-		body = decoded
-	}
-
-	payload, _ := json.Marshal(event)
-	log.Printf("event=%s rtsr s= %s", payload, a.secret)
-
-	vamver, _ := json.Marshal(body)
-	log.Printf("event=%s", vamver)
-	if !validSignature(body, event.Headers["x-hub-signature-256"], a.secret) {
-		return jsonResponse(http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
-	}
-
-	req, err := FromWAWebhook(body)
-	if req == nil {
-		return jsonResponse(http.StatusOK, map[string]bool{"ok": true})
-	}
-	if err != nil {
-		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
-	}
-
-	resp, status, err := a.Handle(ctx, *req)
-	if err != nil {
-		return jsonResponse(status, map[string]string{"error": err.Error()})
-	}
-
-	return jsonResponse(status, resp)
 }
 
 func normalize(req Request) (domain.Message, error) {
@@ -343,6 +313,10 @@ func validSignature(body []byte, signature, secret string) bool {
 	expected := hex.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(received), []byte(expected))
+}
+
+func decodeBase64Body(encoded string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(encoded)
 }
 
 func jsonResponse(statusCode int, payload any) (events.APIGatewayV2HTTPResponse, error) {

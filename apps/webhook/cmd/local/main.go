@@ -20,42 +20,53 @@ func main() {
 	})
 
 	http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			mode := r.URL.Query().Get("hub.mode")
-			token := r.URL.Query().Get("hub.verify_token")
-			challenge := r.URL.Query().Get("hub.challenge")
-			resp := application.HandleVerification(mode, token, challenge)
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(resp.StatusCode)
-			if _, err := w.Write([]byte(resp.Body)); err != nil {
-				log.Printf("write verification response: %v", err)
-			}
-			return
-		}
-
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		body, err := io.ReadAll(r.Body)
-		defer r.Body.Close()
 		if err != nil {
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
-		req, _ := app.FromWAWebhook(body)
-		_, status, err := application.Handle(r.Context(), *req)
+		if err := r.Body.Close(); err != nil {
+			log.Printf("close request body: %v", err)
+		}
+
+		resp, err := application.HandleWebhookHTTP(r.Context(), app.WebhookHTTPRequest{
+			Method: r.Method,
+			Query: map[string]string{
+				"hub.mode":         r.URL.Query().Get("hub.mode"),
+				"hub.verify_token": r.URL.Query().Get("hub.verify_token"),
+				"hub.challenge":    r.URL.Query().Get("hub.challenge"),
+			},
+			Header: flattenHeaders(r.Header),
+			Body:   body,
+		})
 		if err != nil {
-			log.Printf("handle error: %v", err)
-			w.WriteHeader(status)
+			log.Printf("handle webhook: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
+		for key, value := range resp.Headers {
+			w.Header().Set(key, value)
+		}
+		w.WriteHeader(resp.StatusCode)
+		if _, err := w.Write([]byte(resp.Body)); err != nil {
+			log.Printf("write webhook response: %v", err)
+		}
 	})
 
 	log.Printf("local webhook listening on %s", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func flattenHeaders(headers http.Header) map[string]string {
+	flat := make(map[string]string, len(headers))
+	for key, values := range headers {
+		if len(values) == 0 {
+			continue
+		}
+		flat[key] = values[0]
+	}
+	return flat
 }

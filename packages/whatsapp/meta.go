@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 )
 
@@ -43,79 +42,64 @@ func NewMetaClientWithClient(token string) *MetaClient {
 }
 
 func (c *MetaClient) MarkAsRead(ctx context.Context, phoneNumberID, messageID string) error {
-	url := fmt.Sprintf("%s/%s/messages", whatsappBaseURL, phoneNumberID)
-
 	payload := metaReadPayload{
 		MessagingProduct: "whatsapp",
 		Status:           "read",
 		MessageID:        messageID,
 	}
 
-	body, err := json.Marshal(payload)
+	_, err := c.postJSON(ctx, phoneNumberID, payload, http.StatusOK)
 	if err != nil {
-		return fmt.Errorf("meta marshal: %w", err)
+		return fmt.Errorf("meta mark as read: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("meta new request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("meta post: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf(
-			"meta mark as read: status=%d body=%s",
-			resp.StatusCode,
-			respBody,
-		)
-	}
-
 	return nil
 }
 
-func (c *MetaClient) SendReply(_ context.Context, phoneNumberID, to, messageBody, replyToMessageID string) error {
-	url := fmt.Sprintf("%s/%s/messages", whatsappBaseURL, phoneNumberID)
+func (c *MetaClient) SendReply(ctx context.Context, phoneNumberID, to, messageBody, replyToMessageID string) error {
 	payload := metaReplyPayload{
 		MessagingProduct: "whatsapp",
 		To:               to,
 		Text:             metaTextBody{Body: messageBody},
 		Context:          metaContext{MessageID: replyToMessageID},
 	}
+
+	_, err := c.postJSON(ctx, phoneNumberID, payload, http.StatusOK, http.StatusCreated)
+	if err != nil {
+		return fmt.Errorf("meta send reply: %w", err)
+	}
+	return nil
+}
+
+func (c *MetaClient) postJSON(ctx context.Context, phoneNumberID string, payload any, expectedStatus ...int) ([]byte, error) {
+	url := fmt.Sprintf("%s/%s/messages", whatsappBaseURL, phoneNumberID)
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("meta marshal: %w", err)
+		return nil, fmt.Errorf("meta marshal: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("meta new request: %w", err)
+		return nil, fmt.Errorf("meta new request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
-	defer func() { _ = resp.Body.Close() }()
 	if err != nil {
-		return fmt.Errorf("meta post: %w", err)
+		return nil, fmt.Errorf("meta post: %w", err)
 	}
-	respBody, _ := io.ReadAll(resp.Body)
+	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf(
-			"meta status=%d body=%s",
-			resp.StatusCode,
-			respBody,
-		)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("meta read response: %w", readErr)
 	}
-	return nil
+
+	for _, status := range expectedStatus {
+		if resp.StatusCode == status {
+			return respBody, nil
+		}
+	}
+
+	return nil, fmt.Errorf("status=%d body=%s", resp.StatusCode, string(respBody))
 }

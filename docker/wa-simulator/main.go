@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -14,7 +17,8 @@ import (
 )
 
 var (
-	webhookURL = getenv("WEBHOOK_URL", "http://localhost:8080/webhook")
+	webhookURL    = getenv("WEBHOOK_URL", "http://localhost:8080/webhook")
+	webhookSecret = getenv("WEBHOOK_SECRET", "local-secret")
 )
 
 // replyStore holds bot replies keyed by message ID.
@@ -177,7 +181,15 @@ func send(userID, text string) string {
 	}
 
 	body, _ := json.Marshal(payload)
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("new webhook request: %v", err)
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", sign(body, webhookSecret))
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("send: %v", err)
 		return ""
@@ -186,6 +198,12 @@ func send(userID, text string) string {
 		log.Printf("close send response body: %v", err)
 	}
 	return msgID
+}
+
+func sign(body []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func waitForReply(msgID string, timeout time.Duration) string {
