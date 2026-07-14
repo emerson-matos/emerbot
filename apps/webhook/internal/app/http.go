@@ -38,19 +38,33 @@ func (a *App) HandleWebhookHTTP(ctx context.Context, req WebhookHTTPRequest) (We
 			return httpJSONResponse(http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
 		}
 
-		webhookReq, err := FromWAWebhook(req.Body)
-		if webhookReq == nil {
-			return httpJSONResponse(http.StatusOK, map[string]bool{"ok": true})
-		}
+		messages, err := FromWAWebhook(req.Body)
 		if err != nil {
 			return httpJSONResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		}
 
-		resp, status, err := a.Handle(ctx, *webhookReq)
-		if err != nil {
-			return httpJSONResponse(status, map[string]string{"error": err.Error()})
+		// Process every batched message and answer Meta with a single status.
+		// 200 for success and for permanent (4xx) errors — a malformed message
+		// won't parse differently on retry, so we don't want Meta hammering it
+		// for 7 days. But a transient (5xx) failure returns a non-200 so Meta
+		// redelivers instead of silently dropping the message.
+		//
+		// NOTE: a real inbound notification carries a single message, so a
+		// batch-level retry effectively never reprocesses a sibling. Per-message
+		// idempotency (for larger batches) is a tracked follow-up.
+		retryStatus := 0
+		for i := range messages {
+			if _, status, herr := a.Handle(ctx, messages[i]); herr != nil {
+				log.Printf("handling webhook message %s: %v", messages[i].MessageID, herr)
+				if status >= http.StatusInternalServerError {
+					retryStatus = status
+				}
+			}
 		}
-		return httpJSONResponse(status, resp)
+		if retryStatus != 0 {
+			return httpJSONResponse(retryStatus, map[string]string{"error": "temporary failure, please retry"})
+		}
+		return httpJSONResponse(http.StatusOK, map[string]bool{"ok": true})
 	default:
 		return httpJSONResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
