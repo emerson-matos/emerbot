@@ -33,7 +33,7 @@ export default function IncomeExpenseChart({ data }: Props) {
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="name" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-            <Tooltip formatter={(v: number) => formatBRL(v * 100)} />
+            <Tooltip formatter={v => formatBRL(Number(v) * 100)} />
             <Legend />
             <Bar dataKey="Receitas" fill="#10b981" radius={[4, 4, 0, 0]} />
             <Bar dataKey="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} />

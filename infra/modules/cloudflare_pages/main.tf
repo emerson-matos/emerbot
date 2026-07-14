@@ -26,8 +26,21 @@ resource "cloudflare_pages_project" "this" {
     }
   }
 
+  # production and preview must agree on fail_open (Cloudflare API code 8000066),
+  # so both are defined explicitly with the same value and the same build-time
+  # VITE_API_URL.
   deployment_configs = {
     production = {
+      fail_open = true
+      env_vars = {
+        VITE_API_URL = {
+          type  = "plain_text"
+          value = var.api_url
+        }
+      }
+    }
+    preview = {
+      fail_open = true
       env_vars = {
         VITE_API_URL = {
           type  = "plain_text"

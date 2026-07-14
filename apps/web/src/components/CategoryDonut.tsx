@@ -41,7 +41,7 @@ export default function CategoryDonut({ data }: Props) {
                 tickFormatter={v => v.replace(/_/g, ' ')}
               />
               <Tooltip
-                formatter={(value: number) => [formatBRL(value), 'Total']}
+                formatter={value => [formatBRL(Number(value)), 'Total']}
                 labelFormatter={label => label.replace(/_/g, ' ')}
                 contentStyle={{ fontSize: 13 }}
               />
