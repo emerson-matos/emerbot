@@ -311,6 +311,26 @@ func TestHandleWebhookHTTPIgnoresUnsupportedMessageType(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookHTTPRetriesOnTransientFailure(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeWhatsAppClient{}
+	app := newFailingApp(client)
+	body := []byte(testWebhookWithTexts("oi")) // non-command → orchestrator → failing LLM
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
+		Body:   body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 so Meta retries a transient failure, got %d", response.StatusCode)
+	}
+}
+
 func newTestApp(client *fakeWhatsAppClient) *App {
 	stores := memory.NewInMemoryStores()
 	if err := stores.Save(context.Background(), domain.Memory{
@@ -329,6 +349,25 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
+		nil,
+		client,
+		"test-secret",
+		"test-verify-token",
+	)
+}
+
+// failingLLM makes orchestrator.HandleMessage return an error, so App.Handle
+// surfaces a 5xx (a transient failure Meta should retry).
+type failingLLM struct{}
+
+func (failingLLM) Generate(context.Context, llm.Input) (llm.Output, error) {
+	return llm.Output{}, fmt.Errorf("llm unavailable")
+}
+
+func newFailingApp(client *fakeWhatsAppClient) *App {
+	stores := memory.NewInMemoryStores()
+	return New(
+		orchestrator.NewService(failingLLM{}, stores, stores, tools.NewRegistry(tools.EchoTool{})),
 		nil,
 		client,
 		"test-secret",
