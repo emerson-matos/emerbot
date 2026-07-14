@@ -66,8 +66,8 @@ Stack local para controle financeiro da farmácia via WhatsApp + dashboard web.
 ### Comandos do WhatsApp
 
 ```
-/despesa 500 aluguel         → registrar despesa paga
-/receita 3000 cliente        → registrar receita recebida
+/despesa 500 aluguel 10/07   → registrar despesa paga (data opcional)
+/receita 3000 cliente        → registrar receita recebida (data opcional)
 /pagar 1500 fornecedor       → registrar despesa pendente
 /receber 2000                → registrar receita a receber
 /resumo                      → balanço do mês + pendências

@@ -20,8 +20,13 @@ type ParsedEntry struct {
 	Amount      int64 // centavos
 	Category    string
 	Description string
-	DueDate     *time.Time
-	IsPending   bool // true if entry should be PaymentStatusPending
+	// Date is the transaction date the user specified for an already-occurred
+	// entry (/despesa, /receita). Nil means "today".
+	Date *time.Time
+	// DueDate is the due date for a pending entry (/pagar, /receber). Nil
+	// means "today" (the entry is due immediately / date wasn't given).
+	DueDate   *time.Time
+	IsPending bool // true if entry should be PaymentStatusPending
 }
 
 // Parser extracts financial entries from WhatsApp messages.
@@ -53,12 +58,14 @@ Extraia informações da mensagem e retorne JSON com os campos:
 - amount_cents: valor em centavos. R$500,00 = 50000. R$500,10 = 50010. "500" = 50000. "500,1" = 50010. "1500,50" = 150050.
 - category: uma de [aluguel, folha_pagamento, fornecedor_medicamentos, fornecedor_geral, impostos, emprestimo, cartao_credito, energia_agua, telefone_internet, manutencao, venda_balcao, convenio, delivery, outros_despesas, outros_receitas]
 - description: descrição curta em português
-- due_date: data no formato YYYY-MM-DD ou null (hoje se não especificado e o comando for /pagar ou /receber)
+- due_date: data no formato YYYY-MM-DD ou null.
+  - Se o comando for /pagar ou /receber: é a data de vencimento (hoje se não especificada).
+  - Se o comando for /despesa ou /receita: é a data em que a transação realmente ocorreu, se mencionada na mensagem (null se não mencionada — assume-se hoje).
 - is_pending: true se for /pagar ou /receber (a pagar/a receber), false se for /despesa ou /receita (já ocorreu)
 
 Comandos reconhecidos:
-/despesa <valor> <categoria> [descrição]  → despesa já paga
-/receita <valor> <categoria> [descrição]  → receita já recebida
+/despesa <valor> <categoria> [data] [descrição]  → despesa já paga
+/receita <valor> <categoria> [data] [descrição]  → receita já recebida
 /pagar <valor> <categoria> [data] [descrição]   → despesa a pagar (pending)
 /receber <valor> <categoria> [data] [descrição] → receita a receber (pending)
 
@@ -117,11 +124,11 @@ func geminiResponseToParsed(gr geminiResponse) (ParsedEntry, error) {
 		entryType = domain.EntryTypeIncome
 	}
 
-	var dueDate *time.Time
+	var parsedDate *time.Time
 	if gr.DueDate != "" {
 		t, err := time.Parse("2006-01-02", gr.DueDate)
 		if err == nil {
-			dueDate = &t
+			parsedDate = &t
 		}
 	}
 
@@ -129,14 +136,21 @@ func geminiResponseToParsed(gr geminiResponse) (ParsedEntry, error) {
 		return ParsedEntry{}, fmt.Errorf("invalid amount: %d", gr.AmountCents)
 	}
 
-	return ParsedEntry{
+	entry := ParsedEntry{
 		Type:        entryType,
 		Amount:      gr.AmountCents,
 		Category:    gr.Category,
 		Description: gr.Description,
-		DueDate:     dueDate,
 		IsPending:   gr.IsPending,
-	}, nil
+	}
+	// The date Gemini extracts means different things depending on the
+	// command: a due date for pending entries, the transaction date otherwise.
+	if gr.IsPending {
+		entry.DueDate = parsedDate
+	} else {
+		entry.Date = parsedDate
+	}
+	return entry, nil
 }
 
 // RegexParser implements Parser using only regex (no Gemini API key needed).
@@ -199,8 +213,10 @@ func parseRegex(text string) (ParsedEntry, bool) {
 		category = defaultCategory(entryType)
 	}
 
-	// Try to extract a date from the rest of the string.
-	var dueDate *time.Time
+	// Try to extract a date from the rest of the string. For pending commands
+	// (/pagar, /receber) this is the due date; for already-occurred ones
+	// (/despesa, /receita) it's the actual transaction date.
+	var parsedDate *time.Time
 	desc := rest
 	if dm := datePattern.FindStringSubmatch(rest); dm != nil {
 		day, _ := strconv.Atoi(dm[1])
@@ -216,7 +232,7 @@ func parseRegex(text string) (ParsedEntry, bool) {
 			}
 		}
 		t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-		dueDate = &t
+		parsedDate = &t
 		desc = strings.TrimSpace(strings.Replace(rest, dm[0], "", 1))
 	}
 
@@ -224,14 +240,19 @@ func parseRegex(text string) (ParsedEntry, bool) {
 		desc = humanCategory(category)
 	}
 
-	return ParsedEntry{
+	entry := ParsedEntry{
 		Type:        entryType,
 		Amount:      amount,
 		Category:    category,
 		Description: desc,
-		DueDate:     dueDate,
 		IsPending:   isPending,
-	}, true
+	}
+	if isPending {
+		entry.DueDate = parsedDate
+	} else {
+		entry.Date = parsedDate
+	}
+	return entry, true
 }
 
 // parseAmount converts "500", "500.10", "1500.50" → centavos.

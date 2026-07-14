@@ -100,8 +100,8 @@ var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "
 // commandHelp is the user-facing catalog shown by /help. Kept next to
 // financialCommands so the two stay in sync.
 var commandHelp = []struct{ usage, desc string }{
-	{"/despesa <valor> <categoria> [descrição]", "registra uma despesa já paga"},
-	{"/receita <valor> <categoria> [descrição]", "registra uma receita já recebida"},
+	{"/despesa <valor> <categoria> [data] [descrição]", "registra uma despesa já paga"},
+	{"/receita <valor> <categoria> [data] [descrição]", "registra uma receita já recebida"},
 	{"/pagar <valor> <categoria> [data] [descrição]", "agenda uma despesa a pagar"},
 	{"/receber <valor> <categoria> [data] [descrição]", "agenda uma receita a receber"},
 	{"/resumo", "resumo financeiro do mês"},

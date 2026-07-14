@@ -30,9 +30,10 @@ func NewHandler(parser whatsapp.Parser, store pkgfinance.Store) *Handler {
 func commandTutorial(cmd string) string {
 	switch strings.ToLower(cmd) {
 	case "/despesa":
-		return "*/despesa <valor> <categoria> [descrição]*\n" +
-			"Registra uma despesa *já paga*.\n" +
-			"Ex: /despesa 500 aluguel Aluguel da loja\n\n" +
+		return "*/despesa <valor> <categoria> [data] [descrição]*\n" +
+			"Registra uma despesa *já paga*. A data (dd/mm) é opcional — use quando a despesa não foi hoje.\n" +
+			"Ex: /despesa 500 aluguel Aluguel da loja\n" +
+			"Ex: /despesa 500 aluguel 10/07 Aluguel da loja\n\n" +
 			"💡 Para uma despesa *ainda não paga*, use */pagar* — ela fica pendente até você quitar.\n" +
 			"Ex: /pagar 300 luz 20/07"
 	case "/pagar":
@@ -40,9 +41,10 @@ func commandTutorial(cmd string) string {
 			"Agenda uma despesa *a pagar* (fica pendente). A data de vencimento (dd/mm) é opcional.\n" +
 			"Ex: /pagar 300 luz 20/07 Conta de luz"
 	case "/receita":
-		return "*/receita <valor> <categoria> [descrição]*\n" +
-			"Registra uma receita *já recebida*.\n" +
-			"Ex: /receita 800 venda_balcao\n\n" +
+		return "*/receita <valor> <categoria> [data] [descrição]*\n" +
+			"Registra uma receita *já recebida*. A data (dd/mm) é opcional — use quando a receita não foi hoje.\n" +
+			"Ex: /receita 800 venda_balcao\n" +
+			"Ex: /receita 800 venda_balcao 10/07\n\n" +
 			"💡 Para algo *a receber*, use */receber*."
 	case "/receber":
 		return "*/receber <valor> <categoria> [data] [descrição]*\n" +
@@ -79,7 +81,7 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 
 	parsed, err := h.parser.Parse(ctx, text)
 	if err != nil {
-		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
+		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel 10/07\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
 	}
 
 	status := domain.PaymentStatusPaid
@@ -88,10 +90,14 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 	}
 
 	now := time.Now().UTC()
+	date := now
+	if parsed.Date != nil {
+		date = *parsed.Date
+	}
 	entry := domain.FinancialEntry{
 		UserID:        userID,
 		EntryID:       uuid.New().String(),
-		Date:          now,
+		Date:          date,
 		Amount:        parsed.Amount,
 		Category:      parsed.Category,
 		Type:          parsed.Type,

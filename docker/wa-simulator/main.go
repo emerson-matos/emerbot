@@ -274,6 +274,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     <div class="examples">
       <span class="chip" onclick="fill('/resumo')">/resumo</span>
       <span class="chip" onclick="fill('/despesa 500 aluguel')">/despesa 500 aluguel</span>
+      <span class="chip" onclick="fill('/despesa 500 aluguel 10/07')">/despesa 500 aluguel 10/07</span>
       <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
       <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
       <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>

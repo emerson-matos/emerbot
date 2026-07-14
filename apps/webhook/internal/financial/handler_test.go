@@ -97,6 +97,73 @@ func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
 	}
 }
 
+func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:        domain.EntryTypeExpense,
+			Amount:      50000,
+			Category:    "aluguel",
+			Description: "Aluguel de julho",
+			Date:        ptrTime(mustDate("2026-07-10")),
+			IsPending:   false,
+		},
+	}, store)
+
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	if got := entries[0].Date; !got.Equal(mustDate("2026-07-10")) {
+		t.Fatalf("expected entry.Date to use parsed date 2026-07-10, got %v", got)
+	}
+	if entries[0].DueDate != nil {
+		t.Fatalf("expected no due date for non-pending entry, got %+v", entries[0].DueDate)
+	}
+}
+
+func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:     domain.EntryTypeExpense,
+			Amount:   50000,
+			Category: "aluguel",
+		},
+	}, store)
+
+	before := time.Now().UTC()
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	after := time.Now().UTC()
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	got := entries[0].Date
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("expected entry.Date to default to now (between %v and %v), got %v", before, after, got)
+	}
+}
+
 func TestSetGoalTeachesUsageWhenArgsMissing(t *testing.T) {
 	t.Parallel()
 
