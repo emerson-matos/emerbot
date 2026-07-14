@@ -17,8 +17,8 @@ type responseRecorder struct {
 	statusCode int
 }
 
-func (r *responseRecorder) Header() http.Header        { return r.headers }
-func (r *responseRecorder) WriteHeader(code int)       { r.statusCode = code }
+func (r *responseRecorder) Header() http.Header         { return r.headers }
+func (r *responseRecorder) WriteHeader(code int)        { r.statusCode = code }
 func (r *responseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
 
 func (r *responseRecorder) toAPIGWResponse() events.APIGatewayV2HTTPResponse {

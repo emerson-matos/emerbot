@@ -53,26 +53,26 @@ func NewDynamoDBStore(ctx context.Context, tableName, endpoint string) (*DynamoD
 // --- DynamoDB item shapes ---
 
 type entryItem struct {
-	PK            string  `dynamodbav:"PK"`
-	SK            string  `dynamodbav:"SK"`
-	GSI1PK        string  `dynamodbav:"GSI1PK"`
-	GSI1SK        string  `dynamodbav:"GSI1SK"`
-	GSI2PK        string  `dynamodbav:"GSI2PK"`
-	GSI2SK        string  `dynamodbav:"GSI2SK"`
-	EntryID       string  `dynamodbav:"EntryID"`
-	UserID        string  `dynamodbav:"UserID"`
-	Date          string  `dynamodbav:"Date"`          // RFC3339
-	Amount        int64   `dynamodbav:"Amount"`
-	Category      string  `dynamodbav:"Category"`
-	Type          string  `dynamodbav:"Type"`
-	Description   string  `dynamodbav:"Description"`
-	DueDate       string  `dynamodbav:"DueDate"`       // RFC3339 or ""
-	PaymentStatus string  `dynamodbav:"PaymentStatus"`
-	PaymentDate   string  `dynamodbav:"PaymentDate"`   // RFC3339 or ""
-	Supplier      string  `dynamodbav:"Supplier"`
-	Source        string  `dynamodbav:"Source"`
-	CreatedAt     string  `dynamodbav:"CreatedAt"`
-	UpdatedAt     string  `dynamodbav:"UpdatedAt"`
+	PK            string `dynamodbav:"PK"`
+	SK            string `dynamodbav:"SK"`
+	GSI1PK        string `dynamodbav:"GSI1PK"`
+	GSI1SK        string `dynamodbav:"GSI1SK"`
+	GSI2PK        string `dynamodbav:"GSI2PK"`
+	GSI2SK        string `dynamodbav:"GSI2SK"`
+	EntryID       string `dynamodbav:"EntryID"`
+	UserID        string `dynamodbav:"UserID"`
+	Date          string `dynamodbav:"Date"` // RFC3339
+	Amount        int64  `dynamodbav:"Amount"`
+	Category      string `dynamodbav:"Category"`
+	Type          string `dynamodbav:"Type"`
+	Description   string `dynamodbav:"Description"`
+	DueDate       string `dynamodbav:"DueDate"` // RFC3339 or ""
+	PaymentStatus string `dynamodbav:"PaymentStatus"`
+	PaymentDate   string `dynamodbav:"PaymentDate"` // RFC3339 or ""
+	Supplier      string `dynamodbav:"Supplier"`
+	Source        string `dynamodbav:"Source"`
+	CreatedAt     string `dynamodbav:"CreatedAt"`
+	UpdatedAt     string `dynamodbav:"UpdatedAt"`
 }
 
 type categoryItem struct {

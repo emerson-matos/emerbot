@@ -24,9 +24,59 @@ func NewHandler(parser whatsapp.Parser, store pkgfinance.Store) *Handler {
 	return &Handler{parser: parser, store: store}
 }
 
+// commandTutorial returns a PT-BR, tutorial-style usage guide for a single
+// command, or "" for an unknown one. It is the single source of the per-command
+// "como usar" text — shown when a command is sent without (enough) arguments.
+func commandTutorial(cmd string) string {
+	switch strings.ToLower(cmd) {
+	case "/despesa":
+		return "*/despesa <valor> <categoria> [descrição]*\n" +
+			"Registra uma despesa *já paga*.\n" +
+			"Ex: /despesa 500 aluguel Aluguel da loja\n\n" +
+			"💡 Para uma despesa *ainda não paga*, use */pagar* — ela fica pendente até você quitar.\n" +
+			"Ex: /pagar 300 luz 20/07"
+	case "/pagar":
+		return "*/pagar <valor> <categoria> [data] [descrição]*\n" +
+			"Agenda uma despesa *a pagar* (fica pendente). A data de vencimento (dd/mm) é opcional.\n" +
+			"Ex: /pagar 300 luz 20/07 Conta de luz"
+	case "/receita":
+		return "*/receita <valor> <categoria> [descrição]*\n" +
+			"Registra uma receita *já recebida*.\n" +
+			"Ex: /receita 800 venda_balcao\n\n" +
+			"💡 Para algo *a receber*, use */receber*."
+	case "/receber":
+		return "*/receber <valor> <categoria> [data] [descrição]*\n" +
+			"Agenda uma receita *a receber* (fica pendente). A data (dd/mm) é opcional.\n" +
+			"Ex: /receber 800 cliente_x 25/07"
+	case "/meta":
+		return "*/meta <faturamento> <despesa>*\n" +
+			"Define as metas do mês (valores sem R$).\n" +
+			"Ex: /meta 80000 60000"
+	default:
+		return ""
+	}
+}
+
+// bareCommandUsage returns the command tutorial when text is only the command
+// word (e.g. "/despesa" with no arguments), or "" when the text carries
+// arguments so normal parsing proceeds.
+func bareCommandUsage(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) != 1 {
+		return ""
+	}
+	return commandTutorial(fields[0])
+}
+
 // Handle parses a WhatsApp command, saves the entry, and returns
 // a confirmation message in Portuguese for the bot to reply with.
 func (h *Handler) Handle(ctx context.Context, userID, text string) (string, error) {
+	// A bare command (just the verb, no arguments) is treated as a request for
+	// help — teach the syntax instead of failing to parse it.
+	if usage := bareCommandUsage(text); usage != "" {
+		return usage, nil
+	}
+
 	parsed, err := h.parser.Parse(ctx, text)
 	if err != nil {
 		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
@@ -150,7 +200,7 @@ func progressBar(pct float64) string {
 func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, error) {
 	parts := strings.Fields(text)
 	if len(parts) < 3 {
-		return "Use: /meta <faturamento> <despesa>\nEx: /meta 80000 60000", nil
+		return commandTutorial("/meta"), nil
 	}
 
 	rev, err := parseAmount(parts[1])

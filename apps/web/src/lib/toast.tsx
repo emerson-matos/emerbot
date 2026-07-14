@@ -1,15 +1,25 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, CheckCircle2, Info, X } from 'lucide-react'
 
 type ToastTone = 'success' | 'error' | 'info'
+type Notify = (message: string, tone?: ToastTone) => void
 interface Toast {
   id: number
   tone: ToastTone
   message: string
 }
 
-const ToastContext = createContext<(message: string, tone?: ToastTone) => void>(() => {})
+const ToastContext = createContext<Notify>(() => {})
+
+// Module-level bridge so code outside the React tree (the TanStack Query
+// client, created once at module load) can surface a toast without needing
+// the useToast() hook.
+let globalNotify: Notify = () => {}
+
+export function notifyError(message: string) {
+  globalNotify(message, 'error')
+}
 
 const toneStyles: Record<ToastTone, { icon: typeof Info; className: string }> = {
   success: { icon: CheckCircle2, className: 'text-success' },
@@ -30,6 +40,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts(t => [...t, { id, tone, message }])
     setTimeout(() => dismiss(id), 5000)
   }, [dismiss])
+
+  useEffect(() => {
+    globalNotify = notify
+    return () => {
+      globalNotify = () => {}
+    }
+  }, [notify])
 
   return (
     <ToastContext value={notify}>

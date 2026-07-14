@@ -17,7 +17,7 @@ import (
 // ParsedEntry is the result of parsing a WhatsApp message into financial data.
 type ParsedEntry struct {
 	Type        domain.EntryType
-	Amount      int64  // centavos
+	Amount      int64 // centavos
 	Category    string
 	Description string
 	DueDate     *time.Time
@@ -159,9 +159,10 @@ func (p *RegexParser) Parse(_ context.Context, text string) (ParsedEntry, error)
 
 // commandPattern matches: /command amount [category] [rest]
 // Examples:
-//   /despesa 500 aluguel julho
-//   /pagar 1500,50 fornecedor_medicamentos 20/07
-//   /receita 800 venda_balcao
+//
+//	/despesa 500 aluguel julho
+//	/pagar 1500,50 fornecedor_medicamentos 20/07
+//	/receita 800 venda_balcao
 var commandPattern = regexp.MustCompile(
 	`(?i)^/(despesa|receita|pagar|receber)\s+(\d+(?:[,.]\d{1,2})?)\s*(\S+)?(.*)$`,
 )

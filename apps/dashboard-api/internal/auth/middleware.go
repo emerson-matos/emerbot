@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	pkgauth "github.com/emerson/emerbot/packages/auth"
+	"github.com/emerson/emerbot/packages/shared"
 )
 
 type contextKey string
@@ -28,6 +29,10 @@ func Middleware(jwt *pkgauth.JWT) func(http.Handler) http.Handler {
 				jsonError(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
+			// TODO(mock): all authenticated users share one finance ledger until
+			// phone→account linking exists. Override the storage identity only;
+			// claims.Email/Name stay real.
+			claims.UserID = shared.FinanceLedgerID
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

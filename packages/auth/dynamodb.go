@@ -16,8 +16,8 @@ import (
 // DynamoDBStore implements Store using DynamoDB.
 // Uses the users table (separate from the financial-entries table).
 type DynamoDBStore struct {
-	client     *dynamodb.Client
-	usersTable string
+	client      *dynamodb.Client
+	usersTable  string
 	tokensTable string
 }
 

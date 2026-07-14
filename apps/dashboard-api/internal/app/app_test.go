@@ -229,3 +229,55 @@ func TestCORSPreflight(t *testing.T) {
 		t.Fatal("expected CORS Access-Control-Allow-Origin header")
 	}
 }
+
+func TestFinanceLedgerSharedAcrossUsers(t *testing.T) {
+	t.Parallel()
+
+	authStore := pkgauth.NewInMemoryStore()
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	for _, u := range []domain.User{
+		{UserID: "u1", Email: "a@user.com", PasswordHash: string(hash), Name: "A"},
+		{UserID: "u2", Email: "b@user.com", PasswordHash: string(hash), Name: "B"},
+	} {
+		if err := authStore.SaveUser(context.Background(), u); err != nil {
+			t.Fatalf("seed user %s: %v", u.Email, err)
+		}
+	}
+	app := New(authStore, pkgfinance.NewInMemoryStore(), "test-secret")
+
+	// User A creates an entry.
+	tokenA := loginAs(t, app, "a@user.com", testPassword)
+	rec := do(t, app, http.MethodPost, "/entries", tokenA, map[string]any{
+		"date": "2026-07-10", "amount": 50000, "category": "aluguel",
+		"type": "expense", "description": "Aluguel", "payment_status": "paid",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// User B — a DIFFERENT account — must see the same shared ledger.
+	tokenB := loginAs(t, app, "b@user.com", testPassword)
+	if got := listCount(t, app, tokenB); got != 1 {
+		t.Fatalf("expected user B to see 1 shared entry, got %d", got)
+	}
+}
+
+func loginAs(t *testing.T, app *App, email, password string) string {
+	t.Helper()
+	rec := do(t, app, http.MethodPost, "/auth/login", "", map[string]string{
+		"email": email, "password": password,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login %s: expected 200, got %d (%s)", email, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	return resp.AccessToken
+}
