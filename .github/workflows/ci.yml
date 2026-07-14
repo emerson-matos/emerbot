@@ -37,3 +37,25 @@ jobs:
 
       - name: Lint
         run: make lint
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm --prefix apps/web ci
+
+      - name: Lint
+        run: npm --prefix apps/web run lint
+
+      - name: Build
+        run: npm --prefix apps/web run build
