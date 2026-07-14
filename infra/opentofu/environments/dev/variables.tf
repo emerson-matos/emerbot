@@ -62,3 +62,15 @@ variable "cloudflare_record_name" {
   default     = "webhook"
   description = "Nome do registro DNS que apontará para o API Gateway."
 }
+
+variable "cloudflare_zone_name" {
+  type        = string
+  description = <<-EOT
+    Domínio apex correspondente a cloudflare_zone_id (ex: "emerson.abc.br").
+    Quando definido, provisiona um custom domain no API Gateway com
+    certificado ACM (validado via DNS no próprio Cloudflare) em vez de
+    apontar o CNAME direto para o hostname bruto do execute-api. Deixe em
+    branco para manter o comportamento anterior (CNAME direto + SSL/TLS
+    "full").
+  EOT
+}
