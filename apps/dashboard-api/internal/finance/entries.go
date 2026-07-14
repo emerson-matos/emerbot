@@ -57,15 +57,15 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 type createEntryRequest struct {
-	Date          string  `json:"date"`           // "YYYY-MM-DD"
-	Amount        int64   `json:"amount"`         // centavos
-	Category      string  `json:"category"`
-	Type          string  `json:"type"`           // "expense" | "income"
-	Description   string  `json:"description"`
-	DueDate       string  `json:"due_date"`       // "YYYY-MM-DD" or ""
-	PaymentStatus string  `json:"payment_status"` // "pending" | "paid"
-	Supplier      string  `json:"supplier"`
-	Source        string  `json:"source"`
+	Date          string `json:"date"`   // "YYYY-MM-DD"
+	Amount        int64  `json:"amount"` // centavos
+	Category      string `json:"category"`
+	Type          string `json:"type"` // "expense" | "income"
+	Description   string `json:"description"`
+	DueDate       string `json:"due_date"`       // "YYYY-MM-DD" or ""
+	PaymentStatus string `json:"payment_status"` // "pending" | "paid"
+	Supplier      string `json:"supplier"`
+	Source        string `json:"source"`
 }
 
 // Create handles POST /entries

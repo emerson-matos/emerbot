@@ -100,8 +100,8 @@ var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "
 // commandHelp is the user-facing catalog shown by /help. Kept next to
 // financialCommands so the two stay in sync.
 var commandHelp = []struct{ usage, desc string }{
-	{"/despesa <valor> <categoria> [descrição]", "registra uma despesa já paga"},
-	{"/receita <valor> <categoria> [descrição]", "registra uma receita já recebida"},
+	{"/despesa <valor> <categoria> [data] [descrição]", "registra uma despesa já paga"},
+	{"/receita <valor> <categoria> [data] [descrição]", "registra uma receita já recebida"},
 	{"/pagar <valor> <categoria> [data] [descrição]", "agenda uma despesa a pagar"},
 	{"/receber <valor> <categoria> [data] [descrição]", "agenda uma receita a receber"},
 	{"/resumo", "resumo financeiro do mês"},
@@ -116,7 +116,8 @@ func helpText() string {
 	for _, c := range commandHelp {
 		fmt.Fprintf(&b, "*%s*\n%s\n\n", c.usage, c.desc)
 	}
-	b.WriteString("Ex: /despesa 500 aluguel Aluguel da loja")
+	b.WriteString("Ex: /despesa 500 aluguel Aluguel da loja\n\n")
+	b.WriteString("💡 Envie um comando sozinho (ex: /despesa) para ver o passo a passo.")
 	return b.String()
 }
 
@@ -211,14 +212,17 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	if a.financialHandler != nil && isFinancialCommand(text) {
 		var reply string
 		var err error
+		// TODO(mock): all senders write/read one shared finance ledger until
+		// phone→account linking exists. Replies still route to req.UserID.
+		ledgerID := shared.FinanceLedgerID
 		if strings.HasPrefix(strings.ToLower(text), "/resumo") {
-			reply, err = a.financialHandler.Resumo(ctx, message.UserID)
+			reply, err = a.financialHandler.Resumo(ctx, ledgerID)
 		} else if strings.HasPrefix(strings.ToLower(text), "/goal") {
-			reply, err = a.financialHandler.Goal(ctx, message.UserID)
+			reply, err = a.financialHandler.Goal(ctx, ledgerID)
 		} else if strings.HasPrefix(strings.ToLower(text), "/meta") {
-			reply, err = a.financialHandler.SetGoal(ctx, message.UserID, text)
+			reply, err = a.financialHandler.SetGoal(ctx, ledgerID, text)
 		} else {
-			reply, err = a.financialHandler.Handle(ctx, message.UserID, text)
+			reply, err = a.financialHandler.Handle(ctx, ledgerID, text)
 		}
 		if err != nil {
 			log.Printf("financial handler error: %v", err)

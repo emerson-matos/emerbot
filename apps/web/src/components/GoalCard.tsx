@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
 import { Target } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
-import { api, formatBRL } from '../api/client'
-import type { Goal, MonthlySummary } from '../api/client'
+import { formatBRL } from '../api/client'
+import type { MonthlySummary } from '../api/client'
+import { useGoal } from '../api/queries'
 
 interface Props {
   month: string
@@ -21,13 +21,7 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function GoalCard({ month, summary }: Props) {
-  const [goal, setGoal] = useState<Goal | null>(null)
-
-  useEffect(() => {
-    api.goals.get(month).then(res => {
-      if (res.goal) setGoal(res.goal)
-    }).catch(() => {})
-  }, [month])
+  const goal = useGoal(month).data?.goal ?? null
 
   const actualIncome = summary?.TotalIncome ?? 0
   const actualExpense = summary?.TotalExpense ?? 0

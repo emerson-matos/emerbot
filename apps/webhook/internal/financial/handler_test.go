@@ -26,6 +26,35 @@ func TestHandleReturnsFriendlyMessageOnParseError(t *testing.T) {
 	}
 }
 
+func TestHandleTeachesUsageForBareCommand(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	// A parser that would error proves the usage path short-circuits before parsing.
+	handler := NewHandler(fakeParser{err: errors.New("should not be called")}, store)
+
+	msg, err := handler.Handle(context.Background(), "u1", "/despesa")
+	if err != nil {
+		t.Fatalf("Handle returned unexpected error: %v", err)
+	}
+	// Teaches /despesa syntax and points to /pagar for unpaid expenses.
+	if !strings.Contains(msg, "/despesa <valor>") || !strings.Contains(msg, "/pagar") {
+		t.Fatalf("expected usage teaching /despesa and /pagar, got: %s", msg)
+	}
+	if strings.Contains(msg, "should not be called") {
+		t.Fatalf("parser was invoked for a bare command: %s", msg)
+	}
+
+	// A bare command must not persist anything.
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("bare command saved %d entries, expected 0", len(entries))
+	}
+}
+
 func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
 	t.Parallel()
 
@@ -65,6 +94,89 @@ func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
 	}
 	if entry.Category != "energia_agua" || entry.Amount != 12345 {
 		t.Fatalf("unexpected saved entry: %+v", entry)
+	}
+}
+
+func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:        domain.EntryTypeExpense,
+			Amount:      50000,
+			Category:    "aluguel",
+			Description: "Aluguel de julho",
+			Date:        ptrTime(mustDate("2026-07-10")),
+			IsPending:   false,
+		},
+	}, store)
+
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	if got := entries[0].Date; !got.Equal(mustDate("2026-07-10")) {
+		t.Fatalf("expected entry.Date to use parsed date 2026-07-10, got %v", got)
+	}
+	if entries[0].DueDate != nil {
+		t.Fatalf("expected no due date for non-pending entry, got %+v", entries[0].DueDate)
+	}
+}
+
+func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:     domain.EntryTypeExpense,
+			Amount:   50000,
+			Category: "aluguel",
+		},
+	}, store)
+
+	before := time.Now().UTC()
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	after := time.Now().UTC()
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	got := entries[0].Date
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("expected entry.Date to default to now (between %v and %v), got %v", before, after, got)
+	}
+}
+
+func TestSetGoalTeachesUsageWhenArgsMissing(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(fakeParser{}, pkgfinance.NewInMemoryStore())
+
+	for _, text := range []string{"/meta", "/meta 80000"} {
+		msg, err := handler.SetGoal(context.Background(), "u1", text)
+		if err != nil {
+			t.Fatalf("SetGoal(%q) error: %v", text, err)
+		}
+		if !strings.Contains(msg, "/meta <faturamento>") {
+			t.Fatalf("SetGoal(%q) expected tutorial, got: %s", text, msg)
+		}
 	}
 }
 

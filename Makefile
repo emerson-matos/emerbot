@@ -97,7 +97,6 @@ seed:
 	$(GO) run ./scripts/seed \
 		--endpoint http://localhost:8000 \
 		--table emerbot-local-financial-entries \
-		--user-id demo \
 		--months 3
 
 demo: up

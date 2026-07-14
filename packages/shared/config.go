@@ -5,6 +5,12 @@ import (
 	"strconv"
 )
 
+// FinanceLedgerID is a TEMPORARY shared finance partition key: the WhatsApp bot
+// and every dashboard user read/write this single ledger. It is a hardcoded
+// constant (not env-driven) so local and Lambda cannot diverge.
+// TODO: replace with real phone→account linking.
+const FinanceLedgerID = "shared-ledger"
+
 func Getenv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value

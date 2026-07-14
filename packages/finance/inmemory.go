@@ -28,8 +28,8 @@ func NewInMemoryStore() *InMemoryStore {
 }
 
 func entryKey(userID, entryID string) string { return userID + "#" + entryID }
-func catKey(userID, slug string) string       { return userID + "#" + slug }
-func goalKey(userID, month string) string     { return userID + "#" + month }
+func catKey(userID, slug string) string      { return userID + "#" + slug }
+func goalKey(userID, month string) string    { return userID + "#" + month }
 
 // --- Entries ---
 

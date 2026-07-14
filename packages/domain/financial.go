@@ -2,8 +2,10 @@ package domain
 
 import "time"
 
-type EntryType string
-type PaymentStatus string
+type (
+	EntryType     string
+	PaymentStatus string
+)
 
 const (
 	EntryTypeExpense EntryType = "expense"
