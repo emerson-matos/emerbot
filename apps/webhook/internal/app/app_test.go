@@ -6,8 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -48,13 +49,62 @@ func TestHandleLambdaOK(t *testing.T) {
 	if client.sendReplyCalls != 1 {
 		t.Fatalf("expected SendReply to be called once, got %d", client.sendReplyCalls)
 	}
-
-	var payload Response
-	if err := json.Unmarshal([]byte(response.Body), &payload); err != nil {
-		t.Fatalf("unmarshal response body: %v", err)
+	if response.Body != `{"ok":true}` {
+		t.Fatalf("expected ok response body, got %s", response.Body)
 	}
-	if payload.Message == "" {
-		t.Fatal("expected non-empty response message")
+}
+
+func TestHandleWebhookHTTPProcessesBatchedMessages(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeWhatsAppClient{}
+	app := newTestApp(client)
+	body := []byte(testWebhookWithTexts("oi", "olá"))
+
+	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
+		Body:   body,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if client.markAsReadCalls != 2 {
+		t.Fatalf("expected MarkAsRead for both messages, got %d", client.markAsReadCalls)
+	}
+	if client.sendReplyCalls != 2 {
+		t.Fatalf("expected SendReply for both messages, got %d", client.sendReplyCalls)
+	}
+}
+
+func TestHandleWebhookHTTPHelpCommand(t *testing.T) {
+	t.Parallel()
+
+	for _, cmd := range []string{"/help", "/ajuda"} {
+		client := &fakeWhatsAppClient{}
+		app := newTestApp(client) // nil financial handler — /help must still work
+		body := []byte(testWebhookWithTexts(cmd))
+
+		response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+			Method: http.MethodPost,
+			Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
+			Body:   body,
+		})
+		if err != nil {
+			t.Fatalf("%s: HandleWebhookHTTP returned error: %v", cmd, err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s: expected status 200, got %d", cmd, response.StatusCode)
+		}
+		if client.sendReplyCalls != 1 {
+			t.Fatalf("%s: expected one help reply, got %d", cmd, client.sendReplyCalls)
+		}
+		if !strings.Contains(client.lastReply, "/despesa") || !strings.Contains(client.lastReply, "/resumo") {
+			t.Fatalf("%s: expected reply to list commands, got %q", cmd, client.lastReply)
+		}
 	}
 }
 
@@ -289,6 +339,7 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 type fakeWhatsAppClient struct {
 	markAsReadCalls int
 	sendReplyCalls  int
+	lastReply       string
 }
 
 func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
@@ -296,9 +347,20 @@ func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
 	return nil
 }
 
-func (f *fakeWhatsAppClient) SendReply(context.Context, string, string, string, string) error {
+func (f *fakeWhatsAppClient) SendReply(_ context.Context, _, _, messageBody, _ string) error {
 	f.sendReplyCalls++
+	f.lastReply = messageBody
 	return nil
+}
+
+// testWebhookWithTexts builds a Meta envelope carrying one text message per
+// argument (all in a single entry/change) — used for batching and /help tests.
+func testWebhookWithTexts(texts ...string) string {
+	msgs := make([]string, len(texts))
+	for i, txt := range texts {
+		msgs[i] = fmt.Sprintf(`{"from":"u1","id":"wamid.%d","timestamp":"1752465600","type":"text","text":{"body":%q}}`, i, txt)
+	}
+	return fmt.Sprintf(`{"object":"whatsapp_business_account","entry":[{"id":"1","changes":[{"field":"messages","value":{"messaging_product":"whatsapp","metadata":{"phone_number_id":"123"},"messages":[%s]}}]}]}`, strings.Join(msgs, ","))
 }
 
 func signString(body, secret string) string {

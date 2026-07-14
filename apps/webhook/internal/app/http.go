@@ -38,19 +38,19 @@ func (a *App) HandleWebhookHTTP(ctx context.Context, req WebhookHTTPRequest) (We
 			return httpJSONResponse(http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
 		}
 
-		webhookReq, err := FromWAWebhook(req.Body)
-		if webhookReq == nil {
-			return httpJSONResponse(http.StatusOK, map[string]bool{"ok": true})
-		}
+		messages, err := FromWAWebhook(req.Body)
 		if err != nil {
 			return httpJSONResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		}
 
-		resp, status, err := a.Handle(ctx, *webhookReq)
-		if err != nil {
-			return httpJSONResponse(status, map[string]string{"error": err.Error()})
+		// Process every batched message, but always answer Meta with a single
+		// 200 — a non-200 makes Meta retry the whole batch for up to 7 days.
+		for i := range messages {
+			if _, _, herr := a.Handle(ctx, messages[i]); herr != nil {
+				log.Printf("handling webhook message %s: %v", messages[i].MessageID, herr)
+			}
 		}
-		return httpJSONResponse(status, resp)
+		return httpJSONResponse(http.StatusOK, map[string]bool{"ok": true})
 	default:
 		return httpJSONResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}

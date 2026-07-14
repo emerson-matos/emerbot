@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -96,6 +97,37 @@ type waStatus struct {
 // of the AI orchestrator.
 var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/resumo", "/goal", "/meta"}
 
+// commandHelp is the user-facing catalog shown by /help. Kept next to
+// financialCommands so the two stay in sync.
+var commandHelp = []struct{ usage, desc string }{
+	{"/despesa <valor> <categoria> [descrição]", "registra uma despesa já paga"},
+	{"/receita <valor> <categoria> [descrição]", "registra uma receita já recebida"},
+	{"/pagar <valor> <categoria> [data] [descrição]", "agenda uma despesa a pagar"},
+	{"/receber <valor> <categoria> [data] [descrição]", "agenda uma receita a receber"},
+	{"/resumo", "resumo financeiro do mês"},
+	{"/goal", "progresso das metas do mês"},
+	{"/meta <faturamento> <despesa>", "define as metas do mês"},
+	{"/help", "mostra esta ajuda"},
+}
+
+func helpText() string {
+	var b strings.Builder
+	b.WriteString("🤖 *Comandos disponíveis:*\n\n")
+	for _, c := range commandHelp {
+		fmt.Fprintf(&b, "*%s*\n%s\n\n", c.usage, c.desc)
+	}
+	b.WriteString("Ex: /despesa 500 aluguel Aluguel da loja")
+	return b.String()
+}
+
+// firstToken returns the text up to the first space (the command word).
+func firstToken(s string) string {
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 type App struct {
 	service          *orchestrator.Service
 	financialHandler *financial.Handler
@@ -165,8 +197,17 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		}
 	}
 
-	// Route financial commands to the financial handler.
 	text := strings.TrimSpace(message.Text)
+
+	// /help (and pt-BR alias /ajuda) — handled before financial routing so it
+	// works even when no financial handler is wired.
+	if cmd := firstToken(text); strings.EqualFold(cmd, "/help") || strings.EqualFold(cmd, "/ajuda") {
+		reply := helpText()
+		a.sendReply(ctx, req, reply)
+		return Response{Message: reply}, http.StatusOK, nil
+	}
+
+	// Route financial commands to the financial handler.
 	if a.financialHandler != nil && isFinancialCommand(text) {
 		var reply string
 		var err error
@@ -250,41 +291,39 @@ func waTimestamp(ts string) string {
 	return time.Unix(sec, 0).UTC().Format(time.RFC3339)
 }
 
-func FromWAWebhook(body []byte) (*Request, error) {
+// FromWAWebhook parses a Meta webhook envelope into one Request per inbound text
+// message. A single POST can batch multiple entries/changes/messages, so all are
+// iterated; status callbacks and non-text messages are skipped. An envelope with
+// no text messages yields an empty slice (not an error); malformed JSON errors.
+func FromWAWebhook(body []byte) ([]Request, error) {
 	var wa waWebhook
 	if err := json.Unmarshal(body, &wa); err != nil {
-		return &Request{}, err
+		return nil, err
 	}
 
-	req := Request{
-		MessageID: "unknown",
-	}
-	if len(wa.Entry) == 0 || len(wa.Entry[0].Changes) == 0 {
-		return &req, nil
-	}
-	val := wa.Entry[0].Changes[0].Value
-	req.PhoneNumberID = val.Metadata.PhoneNumberID
-	if len(val.Contacts) > 0 {
-		req.UserID = val.Contacts[0].WaID
-	}
-	if len(val.Messages) == 0 {
-		if len(val.Statuses) > 0 {
-			log.Printf("ignoring whatsapp status event status=%s message_id=%s", val.Statuses[0].Status, val.Statuses[0].ID)
+	var reqs []Request
+	for _, entry := range wa.Entry {
+		for _, change := range entry.Changes {
+			val := change.Value
+			for _, st := range val.Statuses {
+				log.Printf("ignoring whatsapp status event status=%s message_id=%s", st.Status, st.ID)
+			}
+			for _, msg := range val.Messages {
+				if msg.Type != "" && msg.Type != "text" {
+					log.Printf("ignoring unsupported whatsapp message type=%s message_id=%s", msg.Type, msg.ID)
+					continue
+				}
+				reqs = append(reqs, Request{
+					UserID:        msg.From,
+					MessageID:     msg.ID,
+					PhoneNumberID: val.Metadata.PhoneNumberID,
+					Text:          msg.Text.Body,
+					Timestamp:     waTimestamp(msg.Timestamp),
+				})
+			}
 		}
-		return nil, nil
 	}
-
-	msg := val.Messages[0]
-	if msg.Type != "" && msg.Type != "text" {
-		log.Printf("ignoring unsupported whatsapp message type=%s message_id=%s", msg.Type, msg.ID)
-		return nil, nil
-	}
-
-	req.MessageID = msg.ID
-	req.UserID = msg.From
-	req.Timestamp = waTimestamp(msg.Timestamp)
-	req.Text = msg.Text.Body
-	return &req, nil
+	return reqs, nil
 }
 
 func normalize(req Request) (domain.Message, error) {
