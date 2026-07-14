@@ -40,6 +40,18 @@ func (s *InMemoryStore) SaveEntry(_ context.Context, entry domain.FinancialEntry
 	return nil
 }
 
+// SaveEntries writes all entries under a single lock, so readers never
+// observe a partial series (mirrors the atomicity DynamoDBStore gets from
+// TransactWriteItems).
+func (s *InMemoryStore) SaveEntries(_ context.Context, entries []domain.FinancialEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range entries {
+		s.entries[entryKey(e.UserID, e.EntryID)] = e
+	}
+	return nil
+}
+
 func (s *InMemoryStore) GetEntry(_ context.Context, userID, entryID string) (domain.FinancialEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

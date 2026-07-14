@@ -53,26 +53,29 @@ func NewDynamoDBStore(ctx context.Context, tableName, endpoint string) (*DynamoD
 // --- DynamoDB item shapes ---
 
 type entryItem struct {
-	PK            string `dynamodbav:"PK"`
-	SK            string `dynamodbav:"SK"`
-	GSI1PK        string `dynamodbav:"GSI1PK"`
-	GSI1SK        string `dynamodbav:"GSI1SK"`
-	GSI2PK        string `dynamodbav:"GSI2PK"`
-	GSI2SK        string `dynamodbav:"GSI2SK"`
-	EntryID       string `dynamodbav:"EntryID"`
-	UserID        string `dynamodbav:"UserID"`
-	Date          string `dynamodbav:"Date"` // RFC3339
-	Amount        int64  `dynamodbav:"Amount"`
-	Category      string `dynamodbav:"Category"`
-	Type          string `dynamodbav:"Type"`
-	Description   string `dynamodbav:"Description"`
-	DueDate       string `dynamodbav:"DueDate"` // RFC3339 or ""
-	PaymentStatus string `dynamodbav:"PaymentStatus"`
-	PaymentDate   string `dynamodbav:"PaymentDate"` // RFC3339 or ""
-	Supplier      string `dynamodbav:"Supplier"`
-	Source        string `dynamodbav:"Source"`
-	CreatedAt     string `dynamodbav:"CreatedAt"`
-	UpdatedAt     string `dynamodbav:"UpdatedAt"`
+	PK              string `dynamodbav:"PK"`
+	SK              string `dynamodbav:"SK"`
+	GSI1PK          string `dynamodbav:"GSI1PK"`
+	GSI1SK          string `dynamodbav:"GSI1SK"`
+	GSI2PK          string `dynamodbav:"GSI2PK"`
+	GSI2SK          string `dynamodbav:"GSI2SK"`
+	EntryID         string `dynamodbav:"EntryID"`
+	UserID          string `dynamodbav:"UserID"`
+	Date            string `dynamodbav:"Date"` // RFC3339
+	Amount          int64  `dynamodbav:"Amount"`
+	Category        string `dynamodbav:"Category"`
+	Type            string `dynamodbav:"Type"`
+	Description     string `dynamodbav:"Description"`
+	DueDate         string `dynamodbav:"DueDate"` // RFC3339 or ""
+	PaymentStatus   string `dynamodbav:"PaymentStatus"`
+	PaymentDate     string `dynamodbav:"PaymentDate"` // RFC3339 or ""
+	Supplier        string `dynamodbav:"Supplier"`
+	Source          string `dynamodbav:"Source"`
+	CreatedAt       string `dynamodbav:"CreatedAt"`
+	UpdatedAt       string `dynamodbav:"UpdatedAt"`
+	RecurrenceID    string `dynamodbav:"RecurrenceID,omitempty"`
+	RecurrenceIndex int    `dynamodbav:"RecurrenceIndex,omitempty"`
+	RecurrenceTotal int    `dynamodbav:"RecurrenceTotal,omitempty"`
 }
 
 type categoryItem struct {
@@ -98,26 +101,29 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 	status := string(e.PaymentStatus)
 
 	return entryItem{
-		PK:            pkPrefix + e.UserID,
-		SK:            entryPrefix + dateStr + "#" + e.EntryID,
-		GSI1PK:        pkPrefix + e.UserID,
-		GSI1SK:        e.Category + "#" + dateStr,
-		GSI2PK:        pkPrefix + e.UserID,
-		GSI2SK:        status + "#" + dueDate,
-		EntryID:       e.EntryID,
-		UserID:        e.UserID,
-		Date:          e.Date.UTC().Format(time.RFC3339),
-		Amount:        e.Amount,
-		Category:      e.Category,
-		Type:          string(e.Type),
-		Description:   e.Description,
-		DueDate:       dueDate,
-		PaymentStatus: status,
-		PaymentDate:   payDate,
-		Supplier:      e.Supplier,
-		Source:        e.Source,
-		CreatedAt:     e.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:     e.UpdatedAt.UTC().Format(time.RFC3339),
+		PK:              pkPrefix + e.UserID,
+		SK:              entryPrefix + dateStr + "#" + e.EntryID,
+		GSI1PK:          pkPrefix + e.UserID,
+		GSI1SK:          e.Category + "#" + dateStr,
+		GSI2PK:          pkPrefix + e.UserID,
+		GSI2SK:          status + "#" + dueDate,
+		EntryID:         e.EntryID,
+		UserID:          e.UserID,
+		Date:            e.Date.UTC().Format(time.RFC3339),
+		Amount:          e.Amount,
+		Category:        e.Category,
+		Type:            string(e.Type),
+		Description:     e.Description,
+		DueDate:         dueDate,
+		PaymentStatus:   status,
+		PaymentDate:     payDate,
+		Supplier:        e.Supplier,
+		Source:          e.Source,
+		CreatedAt:       e.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:       e.UpdatedAt.UTC().Format(time.RFC3339),
+		RecurrenceID:    e.RecurrenceID,
+		RecurrenceIndex: e.RecurrenceIndex,
+		RecurrenceTotal: e.RecurrenceTotal,
 	}
 }
 
@@ -145,20 +151,23 @@ func itemToEntry(item entryItem) (domain.FinancialEntry, error) {
 	}
 
 	return domain.FinancialEntry{
-		UserID:        item.UserID,
-		EntryID:       item.EntryID,
-		Date:          date,
-		Amount:        item.Amount,
-		Category:      item.Category,
-		Type:          domain.EntryType(item.Type),
-		Description:   item.Description,
-		DueDate:       dueDate,
-		PaymentStatus: domain.PaymentStatus(item.PaymentStatus),
-		PaymentDate:   payDate,
-		Supplier:      item.Supplier,
-		Source:        item.Source,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		UserID:          item.UserID,
+		EntryID:         item.EntryID,
+		Date:            date,
+		Amount:          item.Amount,
+		Category:        item.Category,
+		Type:            domain.EntryType(item.Type),
+		Description:     item.Description,
+		DueDate:         dueDate,
+		PaymentStatus:   domain.PaymentStatus(item.PaymentStatus),
+		PaymentDate:     payDate,
+		Supplier:        item.Supplier,
+		Source:          item.Source,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+		RecurrenceID:    item.RecurrenceID,
+		RecurrenceIndex: item.RecurrenceIndex,
+		RecurrenceTotal: item.RecurrenceTotal,
 	}, nil
 }
 
@@ -175,6 +184,43 @@ func (s *DynamoDBStore) SaveEntry(ctx context.Context, entry domain.FinancialEnt
 		Item:      av,
 	})
 	return err
+}
+
+// maxTransactWriteItems is DynamoDB's hard per-call limit for
+// TransactWriteItems — the only atomic multi-item write DynamoDB offers.
+const maxTransactWriteItems = 100
+
+// SaveEntries writes entries in atomic chunks of at most
+// maxTransactWriteItems each (a whole chunk succeeds or fails together).
+// Series larger than that are split across multiple transactions with no
+// cross-chunk rollback: if a later chunk fails, earlier chunks remain
+// committed and the error names which chunk failed.
+func (s *DynamoDBStore) SaveEntries(ctx context.Context, entries []domain.FinancialEntry) error {
+	for start := 0; start < len(entries); start += maxTransactWriteItems {
+		end := min(start+maxTransactWriteItems, len(entries))
+		chunk := entries[start:end]
+
+		items := make([]types.TransactWriteItem, 0, len(chunk))
+		for _, e := range chunk {
+			av, err := attributevalue.MarshalMap(entryToItem(e))
+			if err != nil {
+				return fmt.Errorf("marshal entry: %w", err)
+			}
+			items = append(items, types.TransactWriteItem{
+				Put: &types.Put{
+					TableName: aws.String(s.tableName),
+					Item:      av,
+				},
+			})
+		}
+
+		if _, err := s.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: items,
+		}); err != nil {
+			return fmt.Errorf("transact write entries %d-%d: %w", start, end, err)
+		}
+	}
+	return nil
 }
 
 func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error) {

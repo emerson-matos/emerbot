@@ -195,7 +195,7 @@ func parseRegex(text string) (ParsedEntry, bool) {
 	category := strings.ToLower(m[3])
 	rest := strings.TrimSpace(m[4])
 
-	amount, err := parseAmount(amountStr)
+	amount, err := ParseAmount(amountStr)
 	if err != nil || amount <= 0 {
 		return ParsedEntry{}, false
 	}
@@ -255,9 +255,9 @@ func parseRegex(text string) (ParsedEntry, bool) {
 	return entry, true
 }
 
-// parseAmount converts "500", "500.10", "1500.50" → centavos.
+// ParseAmount converts "500", "500.10", "1500.50" → centavos.
 // "500" → 50000, "500.1" → 50010, "500.10" → 50010, "1500.50" → 150050.
-func parseAmount(s string) (int64, error) {
+func ParseAmount(s string) (int64, error) {
 	parts := strings.SplitN(s, ".", 2)
 	reais, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {

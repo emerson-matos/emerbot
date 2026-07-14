@@ -45,6 +45,10 @@ type CashFlowPoint struct {
 type Store interface {
 	// Entries
 	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
+	// SaveEntries persists multiple entries as one or more atomic writes (see
+	// DynamoDBStore.SaveEntries for the chunking caveat above 100 entries).
+	// Used by /recorrente to create a whole recurrence series together.
+	SaveEntries(ctx context.Context, entries []domain.FinancialEntry) error
 	GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
 	ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error)
 	UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error

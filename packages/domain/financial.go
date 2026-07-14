@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type (
 	EntryType     string
@@ -32,11 +35,85 @@ type FinancialEntry struct {
 	Source        string // "whatsapp" | "manual"
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+
+	// RecurrenceID groups occurrences generated together by /recorrente.
+	// Empty for one-off entries.
+	RecurrenceID    string
+	RecurrenceIndex int // 1-based position within the series
+	RecurrenceTotal int // total occurrences in the series
 }
 
 // SK returns the DynamoDB sort key: ENTRY#<date>#<entryID>
 func (e FinancialEntry) SK() string {
 	return "ENTRY#" + e.Date.Format("2006-01-02") + "#" + e.EntryID
+}
+
+// MarshalJSON serializes Date, DueDate, and PaymentDate as plain
+// "YYYY-MM-DD" calendar dates instead of full RFC3339 timestamps. These
+// fields represent the day a transaction happened or is due, not a specific
+// instant — emitting a time-of-day and "Z"/offset invites API consumers to
+// round-trip them through a timezone-aware Date object, which silently
+// shifts the displayed day for any viewer behind UTC. CreatedAt/UpdatedAt
+// are genuine instants and keep their normal RFC3339 encoding.
+func (e FinancialEntry) MarshalJSON() ([]byte, error) {
+	type alias FinancialEntry
+	return json.Marshal(struct {
+		alias
+		Date        string  `json:"Date"`
+		DueDate     *string `json:"DueDate,omitempty"`
+		PaymentDate *string `json:"PaymentDate,omitempty"`
+	}{
+		alias:       alias(e),
+		Date:        e.Date.Format("2006-01-02"),
+		DueDate:     formatCalendarDate(e.DueDate),
+		PaymentDate: formatCalendarDate(e.PaymentDate),
+	})
+}
+
+func formatCalendarDate(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format("2006-01-02")
+	return &s
+}
+
+// UnmarshalJSON is the inverse of MarshalJSON: it reads Date, DueDate, and
+// PaymentDate as plain "YYYY-MM-DD" calendar dates.
+func (e *FinancialEntry) UnmarshalJSON(data []byte) error {
+	type alias FinancialEntry
+	aux := struct {
+		*alias
+		Date        string  `json:"Date"`
+		DueDate     *string `json:"DueDate,omitempty"`
+		PaymentDate *string `json:"PaymentDate,omitempty"`
+	}{alias: (*alias)(e)}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if aux.Date != "" {
+		t, err := time.Parse("2006-01-02", aux.Date)
+		if err != nil {
+			return err
+		}
+		e.Date = t
+	}
+	e.DueDate = parseCalendarDate(aux.DueDate)
+	e.PaymentDate = parseCalendarDate(aux.PaymentDate)
+	return nil
+}
+
+func parseCalendarDate(s *string) *time.Time {
+	if s == nil || *s == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", *s)
+	if err != nil {
+		return nil
+	}
+	return &t
 }
 
 // Goal represents a monthly financial target (faturamento/teto de despesa).

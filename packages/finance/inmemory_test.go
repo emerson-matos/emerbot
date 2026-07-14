@@ -45,6 +45,30 @@ func TestInMemoryStoreListEntriesAppliesFiltersAndSortsDesc(t *testing.T) {
 	}
 }
 
+func TestInMemoryStoreSaveEntriesPersistsWholeBatch(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	batch := []domain.FinancialEntry{
+		testEntry("u1", "e1", "2026-07-01", 10000, "aluguel", domain.EntryTypeExpense),
+		testEntry("u1", "e2", "2026-08-01", 10000, "aluguel", domain.EntryTypeExpense),
+		testEntry("u1", "e3", "2026-09-01", 10000, "aluguel", domain.EntryTypeExpense),
+	}
+	if err := store.SaveEntries(ctx, batch); err != nil {
+		t.Fatalf("SaveEntries: %v", err)
+	}
+
+	entries, err := store.ListEntries(ctx, "u1", EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+}
+
 func TestInMemoryStoreMonthlySummaryAndCategorySummary(t *testing.T) {
 	t.Parallel()
 

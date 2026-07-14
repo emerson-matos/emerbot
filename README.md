@@ -70,6 +70,7 @@ Stack local para controle financeiro da farmácia via WhatsApp + dashboard web.
 /receita 3000 cliente        → registrar receita recebida (data opcional)
 /pagar 1500 fornecedor       → registrar despesa pendente
 /receber 2000                → registrar receita a receber
+/recorrente pagar 350 aluguel mensal 12  → série de N lançamentos pendentes
 /resumo                      → balanço do mês + pendências
 /meta 80000 60000            → definir meta (faturamento / teto despesas)
 /goal                        → ver progresso das metas

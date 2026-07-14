@@ -278,6 +278,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
       <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
       <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>
+      <span class="chip" onclick="fill('/recorrente pagar 350 aluguel mensal 12')">/recorrente pagar 350 aluguel mensal 12</span>
       <span class="chip" onclick="fill('/despesa 1500,50 fornecedor_medicamentos Distribuidora')">/despesa 1500,50 fornecedor</span>
       <span class="chip" onclick="fill('/goal')">/goal</span>
       <span class="chip" onclick="fill('/meta 80000 60000')">/meta 80000 60000</span>

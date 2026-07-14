@@ -95,7 +95,7 @@ type waStatus struct {
 
 // financialCommands are prefixes that route to the financial handler instead
 // of the AI orchestrator.
-var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/resumo", "/goal", "/meta"}
+var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/recorrente", "/resumo", "/goal", "/meta"}
 
 // commandHelp is the user-facing catalog shown by /help. Kept next to
 // financialCommands so the two stay in sync.
@@ -104,6 +104,7 @@ var commandHelp = []struct{ usage, desc string }{
 	{"/receita <valor> <categoria> [data] [descrição]", "registra uma receita já recebida"},
 	{"/pagar <valor> <categoria> [data] [descrição]", "agenda uma despesa a pagar"},
 	{"/receber <valor> <categoria> [data] [descrição]", "agenda uma receita a receber"},
+	{"/recorrente <pagar|receber> <valor> <categoria> <periodo> <n> [data] [descrição]", "cria uma série de N lançamentos pendentes (ex: aluguel mensal por 12 meses)"},
 	{"/resumo", "resumo financeiro do mês"},
 	{"/goal", "progresso das metas do mês"},
 	{"/meta <faturamento> <despesa>", "define as metas do mês"},
@@ -221,6 +222,8 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 			reply, err = a.financialHandler.Goal(ctx, ledgerID)
 		} else if strings.HasPrefix(strings.ToLower(text), "/meta") {
 			reply, err = a.financialHandler.SetGoal(ctx, ledgerID, text)
+		} else if strings.HasPrefix(strings.ToLower(text), "/recorrente") {
+			reply, err = a.financialHandler.Recorrente(ctx, ledgerID, text)
 		} else {
 			reply, err = a.financialHandler.Handle(ctx, ledgerID, text)
 		}

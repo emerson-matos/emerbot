@@ -164,6 +164,82 @@ func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
 	}
 }
 
+func TestRecorrenteSavesWholeSeriesWithSharedRecurrenceID(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{}, store)
+
+	msg, err := handler.Recorrente(context.Background(), "u1", "/recorrente pagar 350 aluguel mensal 12 Aluguel anual")
+	if err != nil {
+		t.Fatalf("Recorrente returned error: %v", err)
+	}
+	if !strings.Contains(msg, "Despesa recorrente registrada") || !strings.Contains(msg, "x 12") {
+		t.Fatalf("unexpected confirmation: %s", msg)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 12 {
+		t.Fatalf("expected 12 saved entries, got %d", len(entries))
+	}
+
+	byIndex := make(map[int]domain.FinancialEntry, len(entries))
+	recurrenceID := entries[0].RecurrenceID
+	if recurrenceID == "" {
+		t.Fatal("expected a non-empty RecurrenceID")
+	}
+	for _, e := range entries {
+		if e.RecurrenceID != recurrenceID {
+			t.Fatalf("expected all entries to share RecurrenceID %q, got %q", recurrenceID, e.RecurrenceID)
+		}
+		if e.RecurrenceTotal != 12 {
+			t.Fatalf("expected RecurrenceTotal 12, got %d", e.RecurrenceTotal)
+		}
+		if e.PaymentStatus != domain.PaymentStatusPending {
+			t.Fatalf("expected pending status, got %s", e.PaymentStatus)
+		}
+		if e.DueDate == nil {
+			t.Fatal("expected a due date on every occurrence")
+		}
+		byIndex[e.RecurrenceIndex] = e
+	}
+	if len(byIndex) != 12 {
+		t.Fatalf("expected 12 distinct RecurrenceIndex values, got %d", len(byIndex))
+	}
+
+	first, twelfth := byIndex[1], byIndex[12]
+	monthsApart := (twelfth.DueDate.Year()-first.DueDate.Year())*12 + int(twelfth.DueDate.Month()-first.DueDate.Month())
+	if monthsApart != 11 {
+		t.Fatalf("expected occurrence 12 to be 11 months after occurrence 1, got %d months", monthsApart)
+	}
+}
+
+func TestRecorrenteReturnsFriendlyMessageOnInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{}, store)
+
+	msg, err := handler.Recorrente(context.Background(), "u1", "/recorrente pagar aluguel mensal 12")
+	if err != nil {
+		t.Fatalf("Recorrente returned unexpected error: %v", err)
+	}
+	if !strings.Contains(msg, "Não consegui entender") {
+		t.Fatalf("expected friendly parse-error message, got: %s", msg)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("invalid /recorrente saved %d entries, expected 0", len(entries))
+	}
+}
+
 func TestSetGoalTeachesUsageWhenArgsMissing(t *testing.T) {
 	t.Parallel()
 

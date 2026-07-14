@@ -52,7 +52,7 @@ via `.env`.
 
 ## Comandos suportados
 
-`/despesa`, `/receita`, `/pagar`, `/receber`, `/resumo`, `/goal`, `/meta` e
+`/despesa`, `/receita`, `/pagar`, `/receber`, `/recorrente`, `/resumo`, `/goal`, `/meta` e
 **`/help`** (alias `/ajuda`), que lista todos os comandos. O `/help` é a fonte
 única da lista — veja `commandHelp` em `apps/webhook/internal/app/app.go`.
 

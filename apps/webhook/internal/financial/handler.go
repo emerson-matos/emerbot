@@ -54,6 +54,10 @@ func commandTutorial(cmd string) string {
 		return "*/meta <faturamento> <despesa>*\n" +
 			"Define as metas do mês (valores sem R$).\n" +
 			"Ex: /meta 80000 60000"
+	case "/recorrente":
+		return "*/recorrente <pagar|receber> <valor> <categoria> <periodo> <n> [data] [descrição]*\n" +
+			"Cria uma série de N lançamentos pendentes, um por período (diario, semanal, quinzenal, mensal, anual).\n" +
+			"Ex: /recorrente pagar 350 aluguel mensal 12 Aluguel anual"
 	default:
 		return ""
 	}
@@ -114,6 +118,50 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 	}
 
 	return formatConfirmation(entry), nil
+}
+
+// Recorrente creates a whole series of pending entries (a shortcut for
+// repeating /pagar or /receber N times, one per period) as a single atomic
+// batch write.
+func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, error) {
+	if usage := bareCommandUsage(text); usage != "" {
+		return usage, nil
+	}
+
+	req, err := parseRecorrente(text)
+	if err != nil {
+		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/recorrente pagar 350 aluguel mensal 12 Aluguel anual\n\nErro: %s", err.Error()), nil
+	}
+
+	now := time.Now().UTC()
+	recurrenceID := uuid.New().String()
+	entries := make([]domain.FinancialEntry, req.Occurrences)
+	for i := range entries {
+		due := addPeriod(req.StartDate, req.Period, i)
+		entries[i] = domain.FinancialEntry{
+			UserID:          userID,
+			EntryID:         uuid.New().String(),
+			Date:            now,
+			Amount:          req.Amount,
+			Category:        req.Category,
+			Type:            req.Type,
+			Description:     req.Description,
+			DueDate:         &due,
+			PaymentStatus:   domain.PaymentStatusPending,
+			Source:          "whatsapp",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			RecurrenceID:    recurrenceID,
+			RecurrenceIndex: i + 1,
+			RecurrenceTotal: req.Occurrences,
+		}
+	}
+
+	if err := h.store.SaveEntries(ctx, entries); err != nil {
+		return "❌ Não consegui salvar a recorrência. Tente novamente.", err
+	}
+
+	return formatRecurrenceConfirmation(req, entries), nil
 }
 
 func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
@@ -281,6 +329,26 @@ func formatConfirmation(e domain.FinancialEntry) string {
 		msg += fmt.Sprintf("\nVencimento: %s", e.DueDate.Format("02/01/2006"))
 	}
 
+	msg += "\n\nDigite /resumo para ver o saldo."
+	return msg
+}
+
+func formatRecurrenceConfirmation(req recurrenceRequest, entries []domain.FinancialEntry) string {
+	typeEmoji, typeLabel, statusLabel := "💸", "Despesa", "A pagar ⏳"
+	if req.Type == domain.EntryTypeIncome {
+		typeEmoji, typeLabel, statusLabel = "💰", "Receita", "A receber ⏳"
+	}
+
+	first, last := entries[0], entries[len(entries)-1]
+
+	msg := fmt.Sprintf("%s *%s recorrente registrada:*\n", typeEmoji, typeLabel)
+	msg += fmt.Sprintf("💵 R$%s x %d (%s)\n", first.AmountReais(), req.Occurrences, periodLabel(req.Period))
+	msg += fmt.Sprintf("📂 %s\n", req.Category)
+	if req.Description != "" {
+		msg += fmt.Sprintf("📝 %s\n", req.Description)
+	}
+	msg += fmt.Sprintf("📅 %s até %s\n", first.DueDate.Format("02/01/2006"), last.DueDate.Format("02/01/2006"))
+	msg += "Status: " + statusLabel
 	msg += "\n\nDigite /resumo para ver o saldo."
 	return msg
 }
