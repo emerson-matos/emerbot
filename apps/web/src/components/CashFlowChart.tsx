@@ -51,7 +51,7 @@ export default function CashFlowChart({ data }: Props) {
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} interval={4} />
             <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-            <Tooltip formatter={(value: number) => [formatBRL(value * 100), 'Saldo']} labelStyle={{ fontSize: 12 }} />
+            <Tooltip formatter={value => [formatBRL(Number(value) * 100), 'Saldo']} labelStyle={{ fontSize: 12 }} />
             {refLines}
             <Line type="monotone" dataKey="balance" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
           </LineChart>
