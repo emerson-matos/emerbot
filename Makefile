@@ -112,6 +112,19 @@ demo: up
 	@echo "   Login:           demo@user.com / fake123"
 
 # ---------------------------------------------------------------------------
+# Users (dashboard auth)
+# ---------------------------------------------------------------------------
+# Create one user in the deployed dev users table. Password is generated and
+# printed once unless PASSWORD is supplied.
+#   make create-user EMAIL=someone@example.com [NAME="Someone"] [PASSWORD=...]
+create-user:
+	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com"; exit 1; }
+	eval "$$(aws configure export-credentials --format env)" && \
+	USERS_TABLE=emerbot-dev-users \
+	REFRESH_TOKENS_TABLE=emerbot-dev-refresh-tokens \
+	$(GO) run ./scripts/create-user -email "$(EMAIL)" -name "$(NAME)" $(if $(PASSWORD),-password "$(PASSWORD)",)
+
+# ---------------------------------------------------------------------------
 # Frontend
 # ---------------------------------------------------------------------------
 web-dev:
@@ -128,6 +141,8 @@ tofu-fmt-check:
 
 TF_VAR_gemini_api_key_value        ?= $(GEMINI_API_KEY)
 export TF_VAR_gemini_api_key_value
+TF_VAR_cloudflare_account_id       ?= $(CLOUDFLARE_ACCOUNT_ID)
+export TF_VAR_cloudflare_account_id
 TF_VAR_meta_graph_api_token_value  ?= $(META_GRAPH_API_TOKEN)
 export TF_VAR_meta_graph_api_token_value
 TF_VAR_cloudflare_zone_id          ?= $(CLOUDFLARE_ZONE_ID)
