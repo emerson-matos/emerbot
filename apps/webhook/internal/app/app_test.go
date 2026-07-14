@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -13,14 +16,20 @@ import (
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
 func TestHandleLambdaOK(t *testing.T) {
 	t.Parallel()
 
 	app := newTestApp()
+	body := testWebhook()
+
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
-		Body: `{"user_id":"u1","message_id":"m1","text":"oi","timestamp":"2026-07-11T00:00:00Z","signature":"test-secret"}`,
+		Body: body,
+		Headers: map[string]string{
+			"x-hub-signature-256": sign(body, app.secret),
+		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
 				Method: http.MethodPost,
@@ -47,8 +56,14 @@ func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 	t.Parallel()
 
 	app := newTestApp()
+	rawBody := testWebhook()
+
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
-		Body: `{"user_id":"u1","message_id":"m1","text":"oi","signature":"wrong"}`,
+		Body:            base64.StdEncoding.EncodeToString([]byte(rawBody)),
+		IsBase64Encoded: true,
+		Headers: map[string]string{
+			"x-hub-signature-256": sign(rawBody, "test-secre"),
+		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
 				Method: http.MethodPost,
@@ -86,9 +101,14 @@ func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 	t.Parallel()
 
 	app := newTestApp()
+	rawBody := testWebhook()
+
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
-		Body:            base64.StdEncoding.EncodeToString([]byte(`{"user_id":"u1","message_id":"m1","text":"oi","signature":"test-secret"}`)),
+		Body:            base64.StdEncoding.EncodeToString([]byte(rawBody)),
 		IsBase64Encoded: true,
+		Headers: map[string]string{
+			"x-hub-signature-256": sign(rawBody, app.secret),
+		},
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
 				Method: http.MethodPost,
@@ -121,9 +141,36 @@ func newTestApp() *App {
 			stores,
 			tools.NewRegistry(tools.EchoTool{}),
 		),
-		nil, // no financial handler in tests
-		nil, // no whatsapp client in tests
+		nil,                         // no financial handler in tests
+		whatsapp.NewLocalClient(""), // no whatsapp client in tests
 		"test-secret",
 		"test-verify-token",
 	)
+}
+
+func sign(body, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func testWebhook() string {
+	return `{
+      "object":"whatsapp_business_account",
+      "entry":[{
+        "changes":[{
+          "value":{
+            "metadata":{
+              "phone_number_id":"123"
+            },
+            "messages":[{
+              "from":"u1",
+              "id":"m1",
+              "timestamp":"1752465600",
+              "text":{"body":"oi"}
+            }]
+          }
+        }]
+      }]
+    }`
 }

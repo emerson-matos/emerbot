@@ -2,12 +2,14 @@ package whatsapp
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 
 	"github.com/emerson/emerbot/packages/shared"
 )
 
 type Client interface {
+	MarkAsRead(ctx context.Context, phoneNumberID, messageID string) error
 	SendReply(ctx context.Context, phoneNumberID, to, messageBody, replyToMessageID string) error
 }
 
@@ -16,7 +18,7 @@ func NewLocalClient(replyURL string) Client {
 }
 
 func NewMetaClient(graphAPIToken string) Client {
-	return &MetaClient{token: graphAPIToken}
+	return &MetaClient{token: graphAPIToken, client: http.DefaultClient}
 }
 
 func NewClientFromEnv(graphAPIToken string) Client {

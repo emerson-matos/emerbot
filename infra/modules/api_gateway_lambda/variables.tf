@@ -26,6 +26,11 @@ variable "lambda_runtime" {
   default = "provided.al2023"
 }
 
+variable "webhook_secret" {
+  type      = string
+  sensitive = true
+}
+
 variable "webhook_secret_value" {
   type      = string
   sensitive = true

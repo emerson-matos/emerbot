@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,11 +31,59 @@ type Request struct {
 	PhoneNumberID string `json:"phone_number_id"`
 	Text          string `json:"text"`
 	Timestamp     string `json:"timestamp"`
-	Signature     string `json:"signature"`
 }
 
 type Response struct {
 	Message string `json:"message"`
+}
+
+// waWebhook matches the real WhatsApp Business Platform webhook payload.
+type waWebhook struct {
+	Object string    `json:"object"`
+	Entry  []waEntry `json:"entry"`
+}
+
+type waEntry struct {
+	ID      string     `json:"id"`
+	Changes []waChange `json:"changes"`
+}
+
+type waChange struct {
+	Value waValue `json:"value"`
+	Field string  `json:"field"`
+}
+
+type waValue struct {
+	MessagingProduct string      `json:"messaging_product"`
+	Metadata         waMetadata  `json:"metadata"`
+	Contacts         []waContact `json:"contacts"`
+	Messages         []waMessage `json:"messages"`
+}
+
+type waMetadata struct {
+	DisplayPhoneNumber string `json:"display_phone_number"`
+	PhoneNumberID      string `json:"phone_number_id"`
+}
+
+type waContact struct {
+	Profile waProfile `json:"profile"`
+	WaID    string    `json:"wa_id"`
+}
+
+type waProfile struct {
+	Name string `json:"name"`
+}
+
+type waMessage struct {
+	From      string     `json:"from"`
+	ID        string     `json:"id"`
+	Timestamp string     `json:"timestamp"`
+	Type      string     `json:"type"`
+	Text      waTextBody `json:"text"`
+}
+
+type waTextBody struct {
+	Body string `json:"body"`
 }
 
 // financialCommands are prefixes that route to the financial handler instead
@@ -97,42 +147,14 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	return New(svc, finHandler, waClient, secret, verifyToken)
 }
 
-// NewDefault builds an App with in-memory stores and a static LLM client.
-// Used for local development without Docker. The financial handler uses a
-// nil store (no-op) unless DYNAMODB_ENDPOINT is set — see cmd/local for wiring.
-func NewDefault(secret string) *App {
-	stores := memory.NewInMemoryStores()
-	if err := stores.Save(context.Background(), domain.Memory{
-		UserID: "demo-user",
-		Type:   "Preference",
-		ID:     "Language",
-		Value:  "pt-BR",
-	}); err != nil {
-		log.Printf("failed to seed default memory: %v", err)
-	}
-
-	return New(
-		orchestrator.NewService(
-			llm.StaticClient{},
-			stores,
-			stores,
-			tools.NewRegistry(tools.EchoTool{}),
-		),
-		nil, // financial handler not wired in NewDefault; use New() directly
-		nil, // whatsapp client not wired in NewDefault
-		secret,
-		"", // verify token will default to secret
-	)
-}
-
 func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
-	if !validSignature(req.Signature, a.secret) {
-		return Response{}, http.StatusUnauthorized, fmt.Errorf("invalid signature")
-	}
-
 	message, err := normalize(req)
 	if err != nil {
 		return Response{}, http.StatusBadRequest, err
+	}
+
+	if err := a.whatsappClient.MarkAsRead(ctx, req.PhoneNumberID, req.MessageID); err != nil {
+		log.Printf("mark as read: %v", err)
 	}
 
 	// Route financial commands to the financial handler.
@@ -212,6 +234,43 @@ func jsonResponseOrDie(statusCode int, payload any) events.APIGatewayV2HTTPRespo
 	return resp
 }
 
+func waTimestamp(ts string) string {
+	sec, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return ts
+	}
+	return time.Unix(sec, 0).UTC().Format(time.RFC3339)
+}
+
+func FromWAWebhook(body []byte) (*Request, error) {
+	var wa waWebhook
+	if err := json.Unmarshal(body, &wa); err != nil {
+		return &Request{}, err
+	}
+
+	req := Request{
+		MessageID: "unknown",
+	}
+	if len(wa.Entry) == 0 || len(wa.Entry[0].Changes) == 0 {
+		return &req, nil
+	}
+	val := wa.Entry[0].Changes[0].Value
+	req.PhoneNumberID = val.Metadata.PhoneNumberID
+	if len(val.Contacts) > 0 {
+		req.UserID = val.Contacts[0].WaID
+	}
+	if len(val.Messages) > 0 {
+		req.MessageID = val.Messages[0].ID
+		req.UserID = val.Messages[0].From
+		req.Timestamp = waTimestamp(val.Messages[0].Timestamp)
+		req.Text = val.Messages[0].Text.Body
+	}
+	if len(val.Messages) == 0 {
+		return nil, nil
+	}
+	return &req, nil
+}
+
 func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	method := event.RequestContext.HTTP.Method
 
@@ -233,12 +292,24 @@ func (a *App) HandleLambda(ctx context.Context, event events.APIGatewayV2HTTPReq
 		body = decoded
 	}
 
-	var req Request
-	if err := json.Unmarshal(body, &req); err != nil {
+	payload, _ := json.Marshal(event)
+	log.Printf("event=%s rtsr s= %s", payload, a.secret)
+
+	vamver, _ := json.Marshal(body)
+	log.Printf("event=%s", vamver)
+	if !validSignature(body, event.Headers["x-hub-signature-256"], a.secret) {
+		return jsonResponse(http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
+	}
+
+	req, err := FromWAWebhook(body)
+	if req == nil {
+		return jsonResponse(http.StatusOK, map[string]bool{"ok": true})
+	}
+	if err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
 	}
 
-	resp, status, err := a.Handle(ctx, req)
+	resp, status, err := a.Handle(ctx, *req)
 	if err != nil {
 		return jsonResponse(status, map[string]string{"error": err.Error()})
 	}
@@ -264,15 +335,14 @@ func normalize(req Request) (domain.Message, error) {
 	}, nil
 }
 
+func validSignature(body []byte, signature, secret string) bool {
+	received := strings.TrimPrefix(signature, "sha256=")
 
-func validSignature(signature, secret string) bool {
-	signature = strings.TrimSpace(signature)
-	secret = strings.TrimSpace(secret)
-	if signature == "" || secret == "" {
-		return false
-	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
 
-	return subtle.ConstantTimeCompare([]byte(signature), []byte(secret)) == 1
+	return hmac.Equal([]byte(received), []byte(expected))
 }
 
 func jsonResponse(statusCode int, payload any) (events.APIGatewayV2HTTPResponse, error) {

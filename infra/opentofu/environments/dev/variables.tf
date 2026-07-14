@@ -23,6 +23,13 @@ variable "dashboard_api_zip_path" {
   description = "Caminho do artefato zip do dashboard-api Lambda."
 }
 
+variable "webhook_secret" {
+  type        = string
+  sensitive   = true
+  description = "Valor do segredo usado para validar o payload."
+  default     = "local-dev-webhook-secret"
+}
+
 variable "webhook_secret_value" {
   type        = string
   sensitive   = true

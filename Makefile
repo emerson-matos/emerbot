@@ -139,6 +139,8 @@ tofu-fmt:
 tofu-fmt-check:
 	$(TOFU) fmt -check -recursive infra
 
+TF_VAR_webhook_secret              ?= $(WEBHOOK_SECRET)
+export TF_VAR_webhook_secret
 TF_VAR_gemini_api_key_value        ?= $(GEMINI_API_KEY)
 export TF_VAR_gemini_api_key_value
 TF_VAR_cloudflare_account_id       ?= $(CLOUDFLARE_ACCOUNT_ID)

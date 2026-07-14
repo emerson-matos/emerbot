@@ -13,6 +13,10 @@ type LocalClient struct {
 	replyURL string
 }
 
+func (c *LocalClient) MarkAsRead(ctx context.Context, phoneNumberID string, messageID string) error {
+	return nil
+}
+
 func (c *LocalClient) SendReply(_ context.Context, _ /*phoneNumberID*/ string, _ /*to*/ string, messageBody string, replyToMessageID string) error {
 	payload := map[string]string{
 		"to":      replyToMessageID,

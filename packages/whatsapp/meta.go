@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 )
@@ -12,10 +13,10 @@ import (
 const whatsappBaseURL = "https://graph.facebook.com/v25.0"
 
 type metaReplyPayload struct {
-	MessagingProduct string             `json:"messaging_product"`
-	To               string             `json:"to"`
-	Text             metaTextBody       `json:"text"`
-	Context          metaContext        `json:"context,omitempty"`
+	MessagingProduct string       `json:"messaging_product"`
+	To               string       `json:"to"`
+	Text             metaTextBody `json:"text"`
+	Context          metaContext  `json:"context,omitempty"`
 }
 
 type metaTextBody struct {
@@ -31,11 +32,55 @@ type MetaClient struct {
 	client *http.Client
 }
 
-func NewMetaClientWithClient(token string, client *http.Client) *MetaClient {
-	if client == nil {
-		client = http.DefaultClient
+type metaReadPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	Status           string `json:"status"`
+	MessageID        string `json:"message_id"`
+}
+
+func NewMetaClientWithClient(token string) *MetaClient {
+	return &MetaClient{token: token, client: http.DefaultClient}
+}
+
+func (c *MetaClient) MarkAsRead(ctx context.Context, phoneNumberID, messageID string) error {
+	url := fmt.Sprintf("%s/%s/messages", whatsappBaseURL, phoneNumberID)
+
+	payload := metaReadPayload{
+		MessagingProduct: "whatsapp",
+		Status:           "read",
+		MessageID:        messageID,
 	}
-	return &MetaClient{token: token, client: client}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("meta marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("meta new request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("meta post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf(
+			"meta mark as read: status=%d body=%s",
+			resp.StatusCode,
+			respBody,
+		)
+	}
+
+	return nil
 }
 
 func (c *MetaClient) SendReply(_ context.Context, phoneNumberID, to, messageBody, replyToMessageID string) error {
@@ -59,13 +104,18 @@ func (c *MetaClient) SendReply(_ context.Context, phoneNumberID, to, messageBody
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
+	defer func() { _ = resp.Body.Close() }()
 	if err != nil {
 		return fmt.Errorf("meta post: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("meta client: unexpected status %d", resp.StatusCode)
+		log.Printf(
+			"meta status=%d body=%s",
+			resp.StatusCode,
+			respBody,
+		)
 	}
 	return nil
 }

@@ -73,6 +73,7 @@ module "assistant" {
   environment                = var.environment
   lambda_zip_path            = var.lambda_zip_path
   dashboard_api_zip_path     = var.dashboard_api_zip_path
+  webhook_secret             = var.webhook_secret
   webhook_secret_value       = var.webhook_secret_value
   jwt_secret_value           = var.jwt_secret_value
   gemini_api_key_value       = var.gemini_api_key_value
