@@ -6,7 +6,7 @@ import { useToast } from '@/lib/toast'
 export const queryKeys = {
   summaryMonthly: (month: string) => ['summary', 'monthly', month] as const,
   summaryCategories: (from?: string, to?: string) => ['summary', 'categories', from, to] as const,
-  cashflow: (days: number) => ['summary', 'cashflow', days] as const,
+  cashflow: (month: string) => ['summary', 'cashflow', month] as const,
   entries: (from: string, to: string) => ['entries', from, to] as const,
   goal: (month: string) => ['goal', month] as const,
 }
@@ -34,10 +34,10 @@ export function useCategorySummary(from?: string, to?: string) {
   })
 }
 
-export function useCashFlow(days = 30) {
+export function useCashFlow(month: string) {
   return useQuery({
-    queryKey: queryKeys.cashflow(days),
-    queryFn: () => api.summary.cashflow(days),
+    queryKey: queryKeys.cashflow(month),
+    queryFn: () => api.summary.cashflow(month),
   })
 }
 

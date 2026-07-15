@@ -401,21 +401,28 @@ func (s *DynamoDBStore) CategorySummary(ctx context.Context, userID string, from
 	return result, nil
 }
 
-func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, days int) ([]CashFlowPoint, error) {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	past := days / 2
-	future := days - past
-
-	from := today.AddDate(0, 0, -past)
-	to := today.AddDate(0, 0, future-1)
+// CashFlowForecast projects daily running balance across the given calendar
+// month (day 1 through the last day), not a rolling window centered on
+// today — the dashboard always shows the current month.
+func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]CashFlowPoint, error) {
+	from, err := time.Parse("2006-01", yearMonth)
+	if err != nil {
+		return nil, fmt.Errorf("invalid yearMonth %q: %w", yearMonth, err)
+	}
+	to := from.AddDate(0, 1, -1) // last day of the month
+	days := int(to.Sub(from).Hours()/24) + 1
 
 	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
 	if err != nil {
 		return nil, err
 	}
 
-	// Compute starting balance: sum all entries before "from"
-	startEntries, err := s.ListEntries(ctx, userID, EntryFilter{To: &from})
+	// Starting balance: sum everything strictly before the 1st of the
+	// month. EntryFilter.To is inclusive, so bound it at the day before
+	// "from" — otherwise day 1's entries would be counted twice (once here,
+	// once in byDay below).
+	dayBeforeFrom := from.AddDate(0, 0, -1)
+	startEntries, err := s.ListEntries(ctx, userID, EntryFilter{To: &dayBeforeFrom})
 	if err != nil {
 		return nil, err
 	}

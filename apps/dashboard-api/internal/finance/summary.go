@@ -3,7 +3,6 @@ package finance
 import (
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
@@ -71,7 +70,7 @@ func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"categories": cats, "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02")})
 }
 
-// CashFlow handles GET /summary/cashflow?days=30
+// CashFlow handles GET /summary/cashflow?month=2026-07
 func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
@@ -79,17 +78,15 @@ func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	days := 30
-	if d := r.URL.Query().Get("days"); d != "" {
-		if n, err := strconv.Atoi(d); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
+	month := r.URL.Query().Get("month")
+	if month == "" {
+		month = time.Now().Format("2006-01")
 	}
 
-	points, err := h.store.CashFlowForecast(r.Context(), claims.UserID, days)
+	points, err := h.store.CashFlowForecast(r.Context(), claims.UserID, month)
 	if err != nil {
 		jsonError(w, "failed to get cash flow forecast", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"points": points, "days": days})
+	jsonOK(w, map[string]any{"points": points, "month": month})
 }

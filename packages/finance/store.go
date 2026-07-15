@@ -72,7 +72,7 @@ type Store interface {
 	// Summaries
 	MonthlySummary(ctx context.Context, userID, yearMonth string) (MonthlySummary, error)
 	CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error)
-	CashFlowForecast(ctx context.Context, userID string, days int) ([]CashFlowPoint, error)
+	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]CashFlowPoint, error)
 
 	// Goals
 	SaveGoal(ctx context.Context, goal domain.Goal) error

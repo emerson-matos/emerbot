@@ -32,7 +32,7 @@ export default function CashFlowChart({ data }: Props) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           <LineChartIcon className="size-4 text-primary" aria-hidden />
-          Fluxo de Caixa — 30 dias
+          Fluxo de Caixa do Mês
         </CardTitle>
       </CardHeader>
       <CardContent>

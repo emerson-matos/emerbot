@@ -62,8 +62,8 @@ export const api = {
       if (to) qs.set('to', to)
       return request<{ categories: CategorySummary[] }>(`/summary/categories?${qs}`)
     },
-    cashflow: (days = 30) =>
-      request<{ points: CashFlowPoint[] }>(`/summary/cashflow?days=${days}`),
+    cashflow: (month: string) =>
+      request<{ points: CashFlowPoint[] }>(`/summary/cashflow?month=${month}`),
   },
 
   categories: {

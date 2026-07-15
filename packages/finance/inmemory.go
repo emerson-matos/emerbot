@@ -171,18 +171,21 @@ func (s *InMemoryStore) CategorySummary(_ context.Context, userID string, from, 
 	return result, nil
 }
 
-func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID string, days int) ([]CashFlowPoint, error) {
+// CashFlowForecast projects daily running balance across the given calendar
+// month (day 1 through the last day), not a rolling window centered on
+// today — the dashboard always shows the current month.
+func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID, yearMonth string) ([]CashFlowPoint, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	past := days / 2
-	future := days - past
+	from, err := time.Parse("2006-01", yearMonth)
+	if err != nil {
+		return nil, fmt.Errorf("invalid yearMonth %q: %w", yearMonth, err)
+	}
+	to := from.AddDate(0, 1, -1) // last day of the month
+	days := int(to.Sub(from).Hours()/24) + 1
 
-	from := today.AddDate(0, 0, -past)
-	to := today.AddDate(0, 0, future-1)
-
-	// Aggregate pending entries by due date
+	// Aggregate entries by effective date
 	type dayTotals struct {
 		income  int64
 		expense int64

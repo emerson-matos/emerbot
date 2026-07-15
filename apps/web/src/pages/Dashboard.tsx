@@ -34,7 +34,7 @@ export default function Dashboard() {
 
   const summaryQuery = useMonthlySummary(currentMonth)
   const categoriesQuery = useCategorySummary()
-  const cashflowQuery = useCashFlow(30)
+  const cashflowQuery = useCashFlow(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
   const trendQueries = useMonthlyTrend(months3)
   const markPaid = useMarkPaidMutation(firstDay, lastDay)

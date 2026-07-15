@@ -150,54 +150,47 @@ func TestInMemoryStoreMonthlySummaryBucketsByDueDateNotRegistrationDate(t *testi
 	}
 }
 
-func TestInMemoryStoreCashFlowForecastUsesDueDateAndRunningBalance(t *testing.T) {
+func TestInMemoryStoreCashFlowForecastCoversWholeCalendarMonth(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
 	ctx := context.Background()
 
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	pastDate := today.AddDate(0, 0, -2)
-	incomeDue := today
-	expenseDue := today.AddDate(0, 0, 1)
+	beforeMonth := mustDate("2026-06-28")
+	day1Due := mustDate("2026-07-01")
+	day2Due := mustDate("2026-07-02")
 
-	pastIncome := testEntryAt("u1", "past-income", pastDate, 50000, "venda_balcao", domain.EntryTypeIncome)
-	futureIncome := testEntryAt("u1", "future-income", today, 15000, "venda_balcao", domain.EntryTypeIncome)
-	futureIncome.DueDate = &incomeDue
-	futureExpense := testEntryAt("u1", "future-expense", today, 7000, "energia_agua", domain.EntryTypeExpense)
-	futureExpense.DueDate = &expenseDue
+	pastIncome := testEntryAt("u1", "past-income", beforeMonth, 50000, "venda_balcao", domain.EntryTypeIncome)
+	day1Income := testEntryAt("u1", "day1-income", mustDate("2026-07-01"), 15000, "venda_balcao", domain.EntryTypeIncome)
+	day1Income.DueDate = &day1Due
+	day2Expense := testEntryAt("u1", "day2-expense", mustDate("2026-07-01"), 7000, "energia_agua", domain.EntryTypeExpense)
+	day2Expense.DueDate = &day2Due
 
-	for _, entry := range []domain.FinancialEntry{pastIncome, futureIncome, futureExpense} {
+	for _, entry := range []domain.FinancialEntry{pastIncome, day1Income, day2Expense} {
 		if err := store.SaveEntry(ctx, entry); err != nil {
 			t.Fatalf("SaveEntry(%s): %v", entry.EntryID, err)
 		}
 	}
 
-	points, err := store.CashFlowForecast(ctx, "u1", 4)
+	points, err := store.CashFlowForecast(ctx, "u1", "2026-07")
 	if err != nil {
 		t.Fatalf("CashFlowForecast: %v", err)
 	}
-	if len(points) != 4 {
-		t.Fatalf("expected 4 points, got %d", len(points))
+	if len(points) != 31 {
+		t.Fatalf("expected 31 points (July has 31 days), got %d", len(points))
+	}
+	if points[0].Date != "2026-07-01" || points[len(points)-1].Date != "2026-07-31" {
+		t.Fatalf("expected points to span the full month, got %s..%s", points[0].Date, points[len(points)-1].Date)
 	}
 
-	var todayPoint, tomorrowPoint *CashFlowPoint
-	for i := range points {
-		switch points[i].Date {
-		case today.Format("2006-01-02"):
-			todayPoint = &points[i]
-		case today.AddDate(0, 0, 1).Format("2006-01-02"):
-			tomorrowPoint = &points[i]
-		}
+	day1, day2 := points[0], points[1]
+	// The pre-month entry seeds the starting balance exactly once — it must
+	// not also land in (or double-count against) day 1's own totals.
+	if day1.ProjectedIncome != 15000 || day1.RunningBalance != 65000 {
+		t.Fatalf("unexpected day 1 point: %+v", day1)
 	}
-	if todayPoint == nil || tomorrowPoint == nil {
-		t.Fatalf("expected points for today and tomorrow, got %+v", points)
-	}
-	if todayPoint.ProjectedIncome != 15000 || todayPoint.RunningBalance != 65000 {
-		t.Fatalf("unexpected today point: %+v", *todayPoint)
-	}
-	if tomorrowPoint.ProjectedExpense != 7000 || tomorrowPoint.RunningBalance != 58000 {
-		t.Fatalf("unexpected tomorrow point: %+v", *tomorrowPoint)
+	if day2.ProjectedExpense != 7000 || day2.RunningBalance != 58000 {
+		t.Fatalf("unexpected day 2 point: %+v", day2)
 	}
 }
 
