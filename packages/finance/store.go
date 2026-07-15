@@ -8,12 +8,27 @@ import (
 )
 
 // EntryFilter constrains ListEntries queries. Zero-value fields are ignored.
+// From/To bound an entry's effectiveDate (see below), not necessarily its
+// registration Date.
 type EntryFilter struct {
 	From     *time.Time
 	To       *time.Time
 	Category string
 	Status   domain.PaymentStatus
 	Type     domain.EntryType
+}
+
+// effectiveDate is the date an entry counts toward for monthly/period views
+// (ListEntries date range, MonthlySummary, CategorySummary, CashFlowForecast):
+// DueDate when set, since a pending bill or receivable belongs to the month
+// it's due — whether or not that day has passed — not the month it happened
+// to be registered in. Falls back to Date for already-settled entries, which
+// have no DueDate.
+func effectiveDate(e domain.FinancialEntry) time.Time {
+	if e.DueDate != nil {
+		return *e.DueDate
+	}
+	return e.Date
 }
 
 // MonthlySummary aggregates income and expense totals for a calendar month.

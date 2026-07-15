@@ -111,6 +111,45 @@ func TestInMemoryStoreMonthlySummaryAndCategorySummary(t *testing.T) {
 	}
 }
 
+func TestInMemoryStoreMonthlySummaryBucketsByDueDateNotRegistrationDate(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	// A /recorrente-style pending expense: registered in July but due in
+	// September — it must count toward September's totals, not July's.
+	dueInSeptember := mustDate("2026-09-10")
+	installment := testEntry("u1", "e1", "2026-07-14", 35000, "aluguel", domain.EntryTypeExpense)
+	installment.PaymentStatus = domain.PaymentStatusPending
+	installment.DueDate = &dueInSeptember
+
+	// An already-settled July expense (no DueDate) still counts toward July.
+	settled := testEntry("u1", "e2", "2026-07-05", 5000, "aluguel", domain.EntryTypeExpense)
+
+	for _, entry := range []domain.FinancialEntry{installment, settled} {
+		if err := store.SaveEntry(ctx, entry); err != nil {
+			t.Fatalf("SaveEntry(%s): %v", entry.EntryID, err)
+		}
+	}
+
+	july, err := store.MonthlySummary(ctx, "u1", "2026-07")
+	if err != nil {
+		t.Fatalf("MonthlySummary(2026-07): %v", err)
+	}
+	if july.TotalExpense != 5000 {
+		t.Fatalf("expected July expense to exclude the September-due installment, got %+v", july)
+	}
+
+	september, err := store.MonthlySummary(ctx, "u1", "2026-09")
+	if err != nil {
+		t.Fatalf("MonthlySummary(2026-09): %v", err)
+	}
+	if september.TotalExpense != 35000 {
+		t.Fatalf("expected September expense to include the pending installment (regardless of it not being due yet), got %+v", september)
+	}
+}
+
 func TestInMemoryStoreCashFlowForecastUsesDueDateAndRunningBalance(t *testing.T) {
 	t.Parallel()
 

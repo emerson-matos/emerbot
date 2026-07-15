@@ -20,6 +20,12 @@ const (
 	entryPrefix = "ENTRY#"
 	catPrefix   = "CAT#"
 	goalPrefix  = "GOAL#"
+
+	// gsi2IndexName is the GSI (hash: GSI2PK, range: GSI2SK, declared in
+	// infra/modules/api_gateway_lambda/main.tf) that ListEntries queries by
+	// effectiveDate. Only entryItem sets GSI2PK/GSI2SK, so this index never
+	// contains goal or category items.
+	gsi2IndexName = "GSI2-Status"
 )
 
 // DynamoDBStore implements Store using AWS DynamoDB.
@@ -101,12 +107,16 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 	status := string(e.PaymentStatus)
 
 	return entryItem{
-		PK:              pkPrefix + e.UserID,
-		SK:              entryPrefix + dateStr + "#" + e.EntryID,
-		GSI1PK:          pkPrefix + e.UserID,
-		GSI1SK:          e.Category + "#" + dateStr,
-		GSI2PK:          pkPrefix + e.UserID,
-		GSI2SK:          status + "#" + dueDate,
+		PK:     pkPrefix + e.UserID,
+		SK:     entryPrefix + dateStr + "#" + e.EntryID,
+		GSI1PK: pkPrefix + e.UserID,
+		GSI1SK: e.Category + "#" + dateStr,
+		GSI2PK: pkPrefix + e.UserID,
+		// GSI2SK orders entries by effectiveDate (DueDate when set, else
+		// Date) — see effectiveDate's doc comment in store.go for why this,
+		// not registration Date, is the field callers actually want to
+		// query and bucket by.
+		GSI2SK:          effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID,
 		EntryID:         e.EntryID,
 		UserID:          e.UserID,
 		Date:            e.Date.UTC().Format(time.RFC3339),
@@ -238,35 +248,28 @@ func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (d
 	return domain.FinancialEntry{}, fmt.Errorf("entry %q not found", entryID)
 }
 
+// ListEntries queries the GSI2-Status index (hash: GSI2PK, range: GSI2SK —
+// see gsi2IndexName), which orders entries by effectiveDate rather than
+// registration Date. filter.From/To push down directly into a GSI2SK range
+// condition: a /recorrente installment registered in July but due in
+// December is stored with GSI2SK="2026-12-.../..." and so is only returned
+// when querying December, not July.
 func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error) {
-	keyCondition := "PK = :pk AND begins_with(SK, :prefix)"
+	keyCondition := "GSI2PK = :pk"
 	exprValues := map[string]types.AttributeValue{
-		":pk":     &types.AttributeValueMemberS{Value: pkPrefix + userID},
-		":prefix": &types.AttributeValueMemberS{Value: entryPrefix},
+		":pk": &types.AttributeValueMemberS{Value: pkPrefix + userID},
 	}
 
-	// Date range on SK
 	if filter.From != nil && filter.To != nil {
-		keyCondition = "PK = :pk AND SK BETWEEN :from AND :to"
-		delete(exprValues, ":prefix")
-		exprValues[":from"] = &types.AttributeValueMemberS{
-			Value: entryPrefix + filter.From.Format("2006-01-02"),
-		}
-		exprValues[":to"] = &types.AttributeValueMemberS{
-			Value: entryPrefix + filter.To.Format("2006-01-02") + "#\xff",
-		}
+		keyCondition = "GSI2PK = :pk AND GSI2SK BETWEEN :from AND :to"
+		exprValues[":from"] = &types.AttributeValueMemberS{Value: filter.From.Format("2006-01-02")}
+		exprValues[":to"] = &types.AttributeValueMemberS{Value: filter.To.Format("2006-01-02") + "#\xff"}
 	} else if filter.From != nil {
-		keyCondition = "PK = :pk AND SK >= :from"
-		delete(exprValues, ":prefix")
-		exprValues[":from"] = &types.AttributeValueMemberS{
-			Value: entryPrefix + filter.From.Format("2006-01-02"),
-		}
+		keyCondition = "GSI2PK = :pk AND GSI2SK >= :from"
+		exprValues[":from"] = &types.AttributeValueMemberS{Value: filter.From.Format("2006-01-02")}
 	} else if filter.To != nil {
-		keyCondition = "PK = :pk AND SK <= :to"
-		delete(exprValues, ":prefix")
-		exprValues[":to"] = &types.AttributeValueMemberS{
-			Value: entryPrefix + filter.To.Format("2006-01-02") + "#\xff",
-		}
+		keyCondition = "GSI2PK = :pk AND GSI2SK <= :to"
+		exprValues[":to"] = &types.AttributeValueMemberS{Value: filter.To.Format("2006-01-02") + "#\xff"}
 	}
 
 	var filterExpr *string
@@ -293,6 +296,7 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 
 	input := &dynamodb.QueryInput{
 		TableName:                 aws.String(s.tableName),
+		IndexName:                 aws.String(gsi2IndexName),
 		KeyConditionExpression:    aws.String(keyCondition),
 		ExpressionAttributeValues: exprValues,
 		FilterExpression:          filterExpr,
@@ -322,7 +326,7 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Date.After(entries[j].Date)
+		return effectiveDate(entries[i]).After(effectiveDate(entries[j]))
 	})
 	return entries, nil
 }
@@ -427,15 +431,7 @@ func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID string, day
 	type dayTotals struct{ income, expense int64 }
 	byDay := make(map[string]*dayTotals)
 	for _, e := range entries {
-		dueDate := e.DueDate
-		if dueDate == nil {
-			d := e.Date
-			dueDate = &d
-		}
-		if dueDate.Before(from) || dueDate.After(to) {
-			continue
-		}
-		day := dueDate.Format("2006-01-02")
+		day := effectiveDate(e).Format("2006-01-02")
 		if _, ok := byDay[day]; !ok {
 			byDay[day] = &dayTotals{}
 		}

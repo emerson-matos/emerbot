@@ -71,10 +71,10 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 		if e.UserID != userID {
 			continue
 		}
-		if filter.From != nil && e.Date.Before(*filter.From) {
+		if filter.From != nil && effectiveDate(e).Before(*filter.From) {
 			continue
 		}
-		if filter.To != nil && e.Date.After(*filter.To) {
+		if filter.To != nil && effectiveDate(e).After(*filter.To) {
 			continue
 		}
 		if filter.Category != "" && e.Category != filter.Category {
@@ -90,7 +90,7 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].Date.After(result[j].Date)
+		return effectiveDate(result[i]).After(effectiveDate(result[j]))
 	})
 	return result, nil
 }
@@ -128,7 +128,7 @@ func (s *InMemoryStore) MonthlySummary(_ context.Context, userID, yearMonth stri
 		if e.UserID != userID {
 			continue
 		}
-		if !strings.HasPrefix(e.Date.Format("2006-01"), yearMonth) {
+		if !strings.HasPrefix(effectiveDate(e).Format("2006-01"), yearMonth) {
 			continue
 		}
 		if e.Type == domain.EntryTypeIncome {
@@ -150,7 +150,7 @@ func (s *InMemoryStore) CategorySummary(_ context.Context, userID string, from, 
 		if e.UserID != userID {
 			continue
 		}
-		if e.Date.Before(from) || e.Date.After(to) {
+		if effectiveDate(e).Before(from) || effectiveDate(e).After(to) {
 			continue
 		}
 		key := e.Category
@@ -193,15 +193,11 @@ func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID string, days 
 		if e.UserID != userID {
 			continue
 		}
-		dueDate := e.DueDate
-		if dueDate == nil {
-			d := e.Date
-			dueDate = &d
-		}
-		if dueDate.Before(from) || dueDate.After(to) {
+		d := effectiveDate(e)
+		if d.Before(from) || d.After(to) {
 			continue
 		}
-		day := dueDate.Format("2006-01-02")
+		day := d.Format("2006-01-02")
 		if _, ok := byDay[day]; !ok {
 			byDay[day] = &dayTotals{}
 		}
@@ -218,8 +214,7 @@ func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID string, days 
 		if e.UserID != userID {
 			continue
 		}
-		d := e.Date
-		if !d.Before(from) {
+		if !effectiveDate(e).Before(from) {
 			continue
 		}
 		if e.Type == domain.EntryTypeIncome {
