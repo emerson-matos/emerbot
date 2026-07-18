@@ -20,7 +20,17 @@ type App struct {
 
 func New(authStore pkgauth.Store, finStore pkgfinance.Store, jwtSecret string) *App {
 	jwt := pkgauth.NewJWT(jwtSecret)
-	authMw := apiauth.Middleware(jwt)
+	return newApp(authStore, finStore, jwt, apiauth.Middleware(jwt))
+}
+
+// NewGateway is used by the deployed Lambda behind API Gateway's Cognito JWT
+// authorizer. Legacy login routes remain available during the web migration.
+func NewGateway(authStore pkgauth.Store, finStore pkgfinance.Store, jwtSecret string) *App {
+	jwt := pkgauth.NewJWT(jwtSecret)
+	return newApp(authStore, finStore, jwt, apiauth.GatewayMiddleware)
+}
+
+func newApp(authStore pkgauth.Store, finStore pkgfinance.Store, jwt *pkgauth.JWT, authMw func(http.Handler) http.Handler) *App {
 
 	authHandler := apiauth.NewHandler(authStore, jwt)
 	entriesHandler := apifinance.NewEntriesHandler(finStore)

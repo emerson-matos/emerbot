@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
+	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	pkgauth "github.com/emerson/emerbot/packages/auth"
 )
 
 // responseRecorder captures the response written by the http.Handler so we
@@ -49,8 +51,19 @@ func apiGWEventToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPR
 	for k, v := range event.Headers {
 		req.Header.Set(k, v)
 	}
+	if claims := gatewayClaims(event); claims.UserID != "" {
+		req = req.WithContext(apiauth.WithClaims(req.Context(), claims))
+	}
 	if q := event.RawQueryString; q != "" {
 		req.URL.RawQuery = q
 	}
 	return req, nil
+}
+
+func gatewayClaims(event events.APIGatewayV2HTTPRequest) pkgauth.Claims {
+	if event.RequestContext.Authorizer == nil || event.RequestContext.Authorizer.JWT == nil {
+		return pkgauth.Claims{}
+	}
+	claims := event.RequestContext.Authorizer.JWT.Claims
+	return pkgauth.Claims{UserID: claims["sub"], Email: claims["email"], Name: claims["username"]}
 }

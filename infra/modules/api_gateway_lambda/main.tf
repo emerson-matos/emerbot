@@ -174,11 +174,12 @@ resource "aws_apigatewayv2_route" "webhook_post" {
 
 locals {
   route_config = jsonencode({
-    webhook_get   = aws_apigatewayv2_route.webhook_get.route_key
-    webhook_post  = aws_apigatewayv2_route.webhook_post.route_key
-    dashboard     = aws_apigatewayv2_route.dashboard_api.route_key
-    webhook_int   = aws_apigatewayv2_integration.webhook.id
-    dashboard_int = aws_apigatewayv2_integration.dashboard_api.id
+    webhook_get      = aws_apigatewayv2_route.webhook_get.route_key
+    webhook_post     = aws_apigatewayv2_route.webhook_post.route_key
+    dashboard        = [for route in aws_apigatewayv2_route.dashboard_protected : route.route_key]
+    dashboard_public = [for route in aws_apigatewayv2_route.dashboard_public : route.route_key]
+    webhook_int      = aws_apigatewayv2_integration.webhook.id
+    dashboard_int    = aws_apigatewayv2_integration.dashboard_api.id
   })
 }
 
@@ -315,9 +316,42 @@ resource "aws_apigatewayv2_integration" "dashboard_api" {
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_route" "dashboard_api" {
+resource "aws_apigatewayv2_authorizer" "dashboard_jwt" {
+  api_id           = aws_apigatewayv2_api.http.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${local.prefix}-dashboard-cognito"
+  jwt_configuration {
+    audience = [var.cognito_app_client_id]
+    issuer   = var.cognito_user_pool_issuer
+  }
+}
+
+locals {
+  dashboard_protected_routes = toset([
+    "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
+    "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
+    "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
+  ])
+  dashboard_public_routes = toset([
+    "GET /health", "POST /auth/login", "POST /auth/refresh", "OPTIONS /{proxy+}",
+  ])
+}
+
+resource "aws_apigatewayv2_route" "dashboard_protected" {
+  for_each             = local.dashboard_protected_routes
+  api_id               = aws_apigatewayv2_api.http.id
+  route_key            = each.value
+  target               = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
+  authorizer_id        = aws_apigatewayv2_authorizer.dashboard_jwt.id
+  authorization_type   = "JWT"
+  authorization_scopes = ["aws.cognito.signin.user.admin"]
+}
+
+resource "aws_apigatewayv2_route" "dashboard_public" {
+  for_each  = local.dashboard_public_routes
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /{proxy+}"
+  route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
 }
 

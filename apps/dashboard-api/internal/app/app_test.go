@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aws/aws-lambda-go/events"
 	"golang.org/x/crypto/bcrypt"
 
 	pkgauth "github.com/emerson/emerbot/packages/auth"
@@ -227,6 +228,39 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") == "" {
 		t.Fatal("expected CORS Access-Control-Allow-Origin header")
+	}
+}
+
+func TestGatewayClaimsBridgeProtectsFinanceRoutes(t *testing.T) {
+	t.Parallel()
+	app := NewGateway(pkgauth.NewInMemoryStore(), pkgfinance.NewInMemoryStore(), "test-secret")
+	event := events.APIGatewayV2HTTPRequest{
+		Version: "2.0",
+		RawPath: "/entries",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: http.MethodGet, Path: "/entries"},
+		},
+	}
+
+	withoutClaims, err := app.HandleLambda(context.Background(), event)
+	if err != nil {
+		t.Fatalf("handle event without claims: %v", err)
+	}
+	if withoutClaims.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without gateway claims, got %d", withoutClaims.StatusCode)
+	}
+
+	event.RequestContext.Authorizer = &events.APIGatewayV2HTTPRequestContextAuthorizerDescription{
+		JWT: &events.APIGatewayV2HTTPRequestContextAuthorizerJWTDescription{Claims: map[string]string{
+			"sub": "cognito-user-id", "email": "demo@user.com", "username": "Demo",
+		}},
+	}
+	withClaims, err := app.HandleLambda(context.Background(), event)
+	if err != nil {
+		t.Fatalf("handle event with claims: %v", err)
+	}
+	if withClaims.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 with gateway claims, got %d (%s)", withClaims.StatusCode, withClaims.Body)
 	}
 }
 

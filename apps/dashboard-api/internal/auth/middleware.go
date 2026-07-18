@@ -13,6 +13,11 @@ type contextKey string
 
 const claimsKey contextKey = "claims"
 
+// WithClaims attaches trusted authentication claims to a request context.
+func WithClaims(ctx context.Context, claims pkgauth.Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 // Middleware validates the Authorization: Bearer <token> header.
 // On success it injects the claims into the request context.
 func Middleware(jwt *pkgauth.JWT) func(http.Handler) http.Handler {
@@ -33,10 +38,24 @@ func Middleware(jwt *pkgauth.JWT) func(http.Handler) http.Handler {
 			// phone→account linking exists. Override the storage identity only;
 			// claims.Email/Name stay real.
 			claims.UserID = shared.FinanceLedgerID
-			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			ctx := WithClaims(r.Context(), claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// GatewayMiddleware accepts only claims API Gateway has validated with the
+// configured Cognito JWT authorizer.
+func GatewayMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := ClaimsFromContext(r.Context())
+		if !ok || claims.UserID == "" {
+			jsonError(w, "missing authenticated identity", http.StatusUnauthorized)
+			return
+		}
+		claims.UserID = shared.FinanceLedgerID
+		next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
+	})
 }
 
 // ClaimsFromContext extracts the authenticated claims from the request context.

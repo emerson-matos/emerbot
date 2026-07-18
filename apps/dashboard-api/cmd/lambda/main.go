@@ -32,6 +32,6 @@ func main() {
 		log.Fatalf("finance store: %v", err)
 	}
 
-	application := app.New(authStore, finStore, jwtSecret)
+	application := app.NewGateway(authStore, finStore, jwtSecret)
 	lambda.Start(application.HandleLambda)
 }
