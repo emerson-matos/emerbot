@@ -13,6 +13,10 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
+// emailIndexName is the GSI (hash: Email) declared on the users table in
+// infra/opentofu/environments/dev/main.tf, used by GetUserByEmail.
+const emailIndexName = "EmailIndex"
+
 // DynamoDBStore implements Store using DynamoDB.
 // Uses the users table (separate from the financial-entries table).
 type DynamoDBStore struct {
@@ -75,10 +79,10 @@ func (s *DynamoDBStore) SaveUser(ctx context.Context, user domain.User) error {
 }
 
 func (s *DynamoDBStore) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
-	// Scan by email — acceptable for 2 users. Add GSI if this ever scales.
-	out, err := s.client.Scan(ctx, &dynamodb.ScanInput{
-		TableName:        aws.String(s.usersTable),
-		FilterExpression: aws.String("Email = :email"),
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.usersTable),
+		IndexName:              aws.String(emailIndexName),
+		KeyConditionExpression: aws.String("Email = :email"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
 		},

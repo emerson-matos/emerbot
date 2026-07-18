@@ -15,17 +15,18 @@ Cloudflare DNS is optional and disabled by default. The base AWS/OpenTofu stack 
 - `cloudflare_zone_id = "<zone id>"` — the only knob needed to enable everything below.
 - `CLOUDFLARE_API_TOKEN` in the shell environment for the Cloudflare provider
   (needs **Zone:Read** so the apex domain can be resolved, plus DNS edit permissions).
-- Optional: `cloudflare_record_name` (defaults to `webhook`).
 
 ## What gets provisioned
 
-Setting `cloudflare_zone_id` provisions **two** API Gateway custom domains, with
-`<apex>` resolved automatically from the zone:
+Setting `cloudflare_zone_id` provisions **one** API Gateway custom domain
+(`infra/modules/api_custom_domain`), with `<apex>` resolved automatically
+from the zone:
 
-- `webhook.<apex>` (`cloudflare_record_name`) — the WhatsApp webhook.
-- `api.<apex>` (`api_record_name`) — the dashboard API.
+- `api.<apex>` (`api_record_name`) — serves both the dashboard API and the
+  WhatsApp webhook (`/webhook`). Routing is by path within the HTTP
+  API/stage, not by hostname, so a single domain covers both.
 
-Both map the same HTTP API/stage (routing is by path within the API). For each:
+The module provisions:
 
 - `aws_acm_certificate`, DNS-validated via a (non-proxied) CNAME created in the
   same Cloudflare zone.

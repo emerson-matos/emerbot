@@ -23,10 +23,12 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
 }
 
 resource "aws_dynamodb_table" "financial_entries" {
-  name         = "${local.prefix}-financial-entries"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "PK"
-  range_key    = "SK"
+  name           = "${local.prefix}-financial-entries"
+  billing_mode   = "PROVISIONED"
+  hash_key       = "PK"
+  range_key      = "SK"
+  read_capacity  = 10
+  write_capacity = 10
 
   attribute {
     name = "PK"
@@ -53,11 +55,16 @@ resource "aws_dynamodb_table" "financial_entries" {
     type = "S"
   }
 
+  # read/write capacity below sums to 25/25 with the base table above — the
+  # DynamoDB Always-Free allowance (25 RCU/25 WCU) is per account, not per
+  # table/index.
   global_secondary_index {
     name            = "GSI1-Category"
     hash_key        = "GSI1PK"
     range_key       = "GSI1SK"
     projection_type = "ALL"
+    read_capacity   = 8
+    write_capacity  = 8
   }
 
   global_secondary_index {
@@ -65,6 +72,8 @@ resource "aws_dynamodb_table" "financial_entries" {
     hash_key        = "GSI2PK"
     range_key       = "GSI2SK"
     projection_type = "ALL"
+    read_capacity   = 7
+    write_capacity  = 7
   }
 }
 
@@ -82,6 +91,18 @@ resource "aws_dynamodb_table" "users" {
     name = "SK"
     type = "S"
   }
+  attribute {
+    name = "Email"
+    type = "S"
+  }
+
+  # Used by GetUserByEmail (packages/auth) to avoid a table Scan — ADR-004
+  # requires Query, never Scan.
+  global_secondary_index {
+    name            = "EmailIndex"
+    hash_key        = "Email"
+    projection_type = "ALL"
+  }
 }
 
 resource "aws_dynamodb_table" "refresh_tokens" {
@@ -98,6 +119,11 @@ resource "aws_dynamodb_table" "refresh_tokens" {
     attribute_name = "TTL"
     enabled        = true
   }
+}
+
+resource "aws_cloudwatch_log_group" "webhook" {
+  name              = "/aws/lambda/${local.prefix}-webhook"
+  retention_in_days = 14
 }
 
 resource "aws_lambda_function" "webhook" {
@@ -249,10 +275,16 @@ resource "aws_iam_role_policy" "dashboard_api_dynamodb" {
         aws_dynamodb_table.financial_entries.arn,
         "${aws_dynamodb_table.financial_entries.arn}/index/*",
         aws_dynamodb_table.users.arn,
+        "${aws_dynamodb_table.users.arn}/index/*",
         aws_dynamodb_table.refresh_tokens.arn,
       ]
     }]
   })
+}
+
+resource "aws_cloudwatch_log_group" "dashboard_api" {
+  name              = "/aws/lambda/${local.prefix}-dashboard-api"
+  retention_in_days = 14
 }
 
 resource "aws_lambda_function" "dashboard_api" {

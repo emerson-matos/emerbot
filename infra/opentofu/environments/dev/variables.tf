@@ -63,17 +63,12 @@ variable "cloudflare_zone_id" {
   default     = ""
   description = <<-EOT
     Zone ID do Cloudflare. Quando definido, provisiona o custom domain do
-    API Gateway (webhook.<apex>) com certificado ACM validado via DNS. O
-    domínio apex é resolvido automaticamente a partir do zone_id, então a
-    infra funciona para qualquer TLD sem informar o nome do domínio. Deixe
-    em branco para não provisionar DNS/custom domain.
+    API Gateway (api.<apex>, que serve tanto a dashboard-api quanto
+    /webhook) com certificado ACM validado via DNS. O domínio apex é
+    resolvido automaticamente a partir do zone_id, então a infra funciona
+    para qualquer TLD sem informar o nome do domínio. Deixe em branco para
+    não provisionar DNS/custom domain.
   EOT
-}
-
-variable "cloudflare_record_name" {
-  type        = string
-  default     = "webhook"
-  description = "Nome do registro DNS do webhook que apontará para o API Gateway."
 }
 
 variable "api_record_name" {

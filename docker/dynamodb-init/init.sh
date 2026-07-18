@@ -55,10 +55,21 @@ create_table \
   --attribute-definitions \
     AttributeName=PK,AttributeType=S \
     AttributeName=SK,AttributeType=S \
+    AttributeName=Email,AttributeType=S \
   --key-schema \
     AttributeName=PK,KeyType=HASH \
     AttributeName=SK,KeyType=RANGE \
-  --billing-mode PAY_PER_REQUEST
+  --billing-mode PAY_PER_REQUEST \
+  --global-secondary-indexes \
+    '[
+      {
+        "IndexName": "EmailIndex",
+        "KeySchema": [
+          {"AttributeName":"Email","KeyType":"HASH"}
+        ],
+        "Projection": {"ProjectionType":"ALL"}
+      }
+    ]'
 
 # refresh-tokens table (TTL enabled)
 create_table \
