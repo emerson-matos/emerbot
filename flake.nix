@@ -8,9 +8,9 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
+      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -36,6 +36,7 @@
             opencode
             claude-code
             opentofu
+            typescript-go
             zip
           ];
 
