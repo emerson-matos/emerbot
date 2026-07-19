@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pill, AlertCircle, Loader2 } from 'lucide-react'
-import { api } from '../api/client'
+import { api, CognitoAuthError } from '../api/client'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 
@@ -18,13 +18,15 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      const res = await api.auth.login(email, password)
-      localStorage.setItem('access_token', res.access_token)
-      localStorage.setItem('refresh_token', res.refresh_token)
-      localStorage.setItem('user_name', res.name)
+      await api.auth.login(email, password)
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao fazer login')
+      if (err instanceof CognitoAuthError &&
+        (err.type === 'NotAuthorizedException' || err.type === 'UserNotFoundException')) {
+        setError('E-mail ou senha inválidos.')
+      } else {
+        setError('Erro ao fazer login')
+      }
     } finally {
       setLoading(false)
     }

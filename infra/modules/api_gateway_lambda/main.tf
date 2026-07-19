@@ -327,6 +327,10 @@ resource "aws_apigatewayv2_authorizer" "dashboard_jwt" {
   }
 }
 
+# NOTE: these route lists must stay in sync with the mux registered in
+# apps/dashboard-api/internal/app/app.go (newApp) — there is no compile-time
+# link between the two. Adding/removing a route in one place should prompt
+# checking the other.
 locals {
   dashboard_protected_routes = toset([
     "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
@@ -339,12 +343,16 @@ locals {
 }
 
 resource "aws_apigatewayv2_route" "dashboard_protected" {
-  for_each             = local.dashboard_protected_routes
-  api_id               = aws_apigatewayv2_api.http.id
-  route_key            = each.value
-  target               = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
-  authorizer_id        = aws_apigatewayv2_authorizer.dashboard_jwt.id
-  authorization_type   = "JWT"
+  for_each           = local.dashboard_protected_routes
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.dashboard_jwt.id
+  authorization_type = "JWT"
+  # "aws.cognito.signin.user.admin" is Cognito's implicit default scope granted
+  # to access tokens minted via direct auth flows (USER_PASSWORD_AUTH), since
+  # the app client (infra/modules/cognito_user_pool) sets no allowed_oauth_flows/
+  # allowed_oauth_scopes — there's no custom resource-server scope to reference.
   authorization_scopes = ["aws.cognito.signin.user.admin"]
 }
 

@@ -3,38 +3,89 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/golang-jwt/jwt/v5"
 
-	pkgauth "github.com/emerson/emerbot/packages/auth"
+	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
 const (
-	testEmail    = "demo@user.com"
-	testPassword = "pw123456"
+	testIssuer   = "https://test-issuer.example.com"
+	testClientID = "test-client-id"
+	testKID      = "test-kid"
 )
 
-func newTestApp(t *testing.T) *App {
+// newTestJWKSServer serves a JWKS containing the public half of key, under
+// testKID, so NewLocalCognitoMiddleware can verify tokens minted by mintToken.
+func newTestJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 	t.Helper()
-	authStore := pkgauth.NewInMemoryStore()
-	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
+	n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())
+	body, err := json.Marshal(map[string]any{
+		"keys": []map[string]any{
+			{"kty": "RSA", "use": "sig", "kid": testKID, "alg": "RS256", "n": n, "e": e},
+		},
+	})
 	if err != nil {
-		t.Fatalf("hash password: %v", err)
+		t.Fatalf("marshal jwks: %v", err)
 	}
-	if err := authStore.SaveUser(context.Background(), domain.User{
-		UserID: "u1", Email: testEmail, PasswordHash: string(hash), Name: "Demo",
-	}); err != nil {
-		t.Fatalf("seed user: %v", err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body) //nolint:errcheck
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// mintToken signs a Cognito-shaped access token. kid lets tests build tokens
+// that reference a key the JWKS server doesn't actually hold (signed with an
+// unrelated private key), to prove signature verification — not just kid
+// presence — is what rejects foreign tokens.
+func mintToken(t *testing.T, key *rsa.PrivateKey, kid, sub, email, username string) string {
+	t.Helper()
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub": sub, "email": email, "username": username,
+		"client_id": testClientID, "token_use": "access",
+		"iss": testIssuer,
+		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 	}
-	return New(authStore, pkgfinance.NewInMemoryStore(), "test-secret")
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = kid
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return signed
+}
+
+// newTestApp builds a NewLocal app wired to a local JWKS server, returning the
+// private key so tests can mint tokens for it via mintToken.
+func newTestApp(t *testing.T) (*App, *rsa.PrivateKey) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	jwksSrv := newTestJWKSServer(t, key)
+	authMw, err := apiauth.NewLocalCognitoMiddleware(context.Background(), jwksSrv.URL, testIssuer, testClientID)
+	if err != nil {
+		t.Fatalf("build local cognito middleware: %v", err)
+	}
+	return NewLocal(pkgfinance.NewInMemoryStore(), authMw), key
 }
 
 func do(t *testing.T, app *App, method, path, token string, body any) *httptest.ResponseRecorder {
@@ -56,45 +107,9 @@ func do(t *testing.T, app *App, method, path, token string, body any) *httptest.
 	return rec
 }
 
-func login(t *testing.T, app *App) string {
-	t.Helper()
-	rec := do(t, app, http.MethodPost, "/auth/login", "", map[string]string{
-		"email": testEmail, "password": testPassword,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("login: expected 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode login response: %v", err)
-	}
-	if resp.AccessToken == "" {
-		t.Fatal("expected a non-empty access token")
-	}
-	return resp.AccessToken
-}
-
-func TestLogin(t *testing.T) {
-	t.Parallel()
-	app := newTestApp(t)
-
-	// Valid credentials -> token (asserted in login()).
-	_ = login(t, app)
-
-	// Wrong password -> 401.
-	rec := do(t, app, http.MethodPost, "/auth/login", "", map[string]string{
-		"email": testEmail, "password": "wrong",
-	})
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for wrong password, got %d", rec.Code)
-	}
-}
-
 func TestProtectedRouteRequiresAuth(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
+	app, key := newTestApp(t)
 
 	if rec := do(t, app, http.MethodGet, "/entries", "", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without token, got %d", rec.Code)
@@ -102,15 +117,29 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 	if rec := do(t, app, http.MethodGet, "/entries", "garbage", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with a bad token, got %d", rec.Code)
 	}
-	if rec := do(t, app, http.MethodGet, "/entries", login(t, app), nil); rec.Code != http.StatusOK {
+
+	// Well-formed RS256 token referencing a real kid but signed by an
+	// unrelated key must also be rejected — proves signature verification
+	// actually happens, not just kid-presence matching.
+	foreignKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate foreign key: %v", err)
+	}
+	foreignToken := mintToken(t, foreignKey, testKID, "u1", "demo@user.com", "Demo")
+	if rec := do(t, app, http.MethodGet, "/entries", foreignToken, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with a foreign-key-signed token, got %d", rec.Code)
+	}
+
+	valid := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
+	if rec := do(t, app, http.MethodGet, "/entries", valid, nil); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 with a valid token, got %d", rec.Code)
 	}
 }
 
 func TestEntriesCRUD(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
-	token := login(t, app)
+	app, key := newTestApp(t)
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 
 	// Create.
 	rec := do(t, app, http.MethodPost, "/entries", token, map[string]any{
@@ -165,8 +194,8 @@ func listCount(t *testing.T, app *App, token string) int {
 
 func TestSummaryMonthly(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
-	token := login(t, app)
+	app, key := newTestApp(t)
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 	if rec := do(t, app, http.MethodGet, "/summary/monthly?month=2026-07", token, nil); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from /summary/monthly, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -174,8 +203,8 @@ func TestSummaryMonthly(t *testing.T) {
 
 func TestGoals(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
-	token := login(t, app)
+	app, key := newTestApp(t)
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 
 	rec := do(t, app, http.MethodPut, "/goals", token, map[string]any{
 		"month": "2026-07", "revenue_target": 8000000, "expense_target": 6000000,
@@ -201,8 +230,8 @@ func TestGoals(t *testing.T) {
 
 func TestCategoriesSeedsDefaults(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
-	token := login(t, app)
+	app, key := newTestApp(t)
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 
 	rec := do(t, app, http.MethodGet, "/categories", token, nil)
 	if rec.Code != http.StatusOK {
@@ -221,7 +250,7 @@ func TestCategoriesSeedsDefaults(t *testing.T) {
 
 func TestCORSPreflight(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	rec := do(t, app, http.MethodOptions, "/entries", "", nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 for CORS preflight, got %d", rec.Code)
@@ -233,7 +262,7 @@ func TestCORSPreflight(t *testing.T) {
 
 func TestGatewayClaimsBridgeProtectsFinanceRoutes(t *testing.T) {
 	t.Parallel()
-	app := NewGateway(pkgauth.NewInMemoryStore(), pkgfinance.NewInMemoryStore(), "test-secret")
+	app := NewGateway(pkgfinance.NewInMemoryStore())
 	event := events.APIGatewayV2HTTPRequest{
 		Version: "2.0",
 		RawPath: "/entries",
@@ -266,24 +295,10 @@ func TestGatewayClaimsBridgeProtectsFinanceRoutes(t *testing.T) {
 
 func TestFinanceLedgerSharedAcrossUsers(t *testing.T) {
 	t.Parallel()
-
-	authStore := pkgauth.NewInMemoryStore()
-	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
-	for _, u := range []domain.User{
-		{UserID: "u1", Email: "a@user.com", PasswordHash: string(hash), Name: "A"},
-		{UserID: "u2", Email: "b@user.com", PasswordHash: string(hash), Name: "B"},
-	} {
-		if err := authStore.SaveUser(context.Background(), u); err != nil {
-			t.Fatalf("seed user %s: %v", u.Email, err)
-		}
-	}
-	app := New(authStore, pkgfinance.NewInMemoryStore(), "test-secret")
+	app, key := newTestApp(t)
 
 	// User A creates an entry.
-	tokenA := loginAs(t, app, "a@user.com", testPassword)
+	tokenA := mintToken(t, key, testKID, "u1", "a@user.com", "A")
 	rec := do(t, app, http.MethodPost, "/entries", tokenA, map[string]any{
 		"date": "2026-07-10", "amount": 50000, "category": "aluguel",
 		"type": "expense", "description": "Aluguel", "payment_status": "paid",
@@ -293,25 +308,8 @@ func TestFinanceLedgerSharedAcrossUsers(t *testing.T) {
 	}
 
 	// User B — a DIFFERENT account — must see the same shared ledger.
-	tokenB := loginAs(t, app, "b@user.com", testPassword)
+	tokenB := mintToken(t, key, testKID, "u2", "b@user.com", "B")
 	if got := listCount(t, app, tokenB); got != 1 {
 		t.Fatalf("expected user B to see 1 shared entry, got %d", got)
 	}
-}
-
-func loginAs(t *testing.T, app *App, email, password string) string {
-	t.Helper()
-	rec := do(t, app, http.MethodPost, "/auth/login", "", map[string]string{
-		"email": email, "password": password,
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("login %s: expected 200, got %d (%s)", email, rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode login response: %v", err)
-	}
-	return resp.AccessToken
 }
