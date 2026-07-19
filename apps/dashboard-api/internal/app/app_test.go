@@ -56,12 +56,23 @@ func newTestJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 // presence — is what rejects foreign tokens.
 func mintToken(t *testing.T, key *rsa.PrivateKey, kid, sub, email, username string) string {
 	t.Helper()
+	return mintTokenWithOverrides(t, key, kid, sub, email, username, nil)
+}
+
+// mintTokenWithOverrides lets tests replace specific claims (e.g. client_id,
+// token_use) to exercise NewLocalCognitoMiddleware's checks beyond signature
+// verification.
+func mintTokenWithOverrides(t *testing.T, key *rsa.PrivateKey, kid, sub, email, username string, overrides jwt.MapClaims) string {
+	t.Helper()
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub": sub, "email": email, "username": username,
 		"client_id": testClientID, "token_use": "access",
 		"iss": testIssuer,
 		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+	}
+	for k, v := range overrides {
+		claims[k] = v
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = kid
@@ -128,6 +139,20 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 	foreignToken := mintToken(t, foreignKey, testKID, "u1", "demo@user.com", "Demo")
 	if rec := do(t, app, http.MethodGet, "/entries", foreignToken, nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with a foreign-key-signed token, got %d", rec.Code)
+	}
+
+	// An id token (token_use "id") must be rejected — only access tokens carry
+	// client_id, which is the equivalent of the `aud` check API Gateway's real
+	// JWT authorizer performs in the deployed path.
+	idToken := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"token_use": "id"})
+	if rec := do(t, app, http.MethodGet, "/entries", idToken, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with an id token (token_use != access), got %d", rec.Code)
+	}
+
+	// A token for a different Cognito app client must be rejected.
+	wrongClient := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"client_id": "some-other-client-id"})
+	if rec := do(t, app, http.MethodGet, "/entries", wrongClient, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with a foreign client_id, got %d", rec.Code)
 	}
 
 	valid := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
