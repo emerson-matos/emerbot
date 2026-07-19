@@ -72,16 +72,31 @@ function storeAuthResult(result: CognitoAuthResult) {
 // Cognito's REFRESH_TOKEN_AUTH flow doesn't rotate the refresh token, so a
 // missing RefreshToken in the result (handled by storeAuthResult) is expected
 // there, not an error.
-async function trySilentRefresh(): Promise<boolean> {
+let refreshInFlight: Promise<boolean> | null = null
+
+// A page load can fire several requests in parallel; if the access token is
+// stale, they'd all hit 401 at once and — without this — each would kick off
+// its own REFRESH_TOKEN_AUTH call. Sharing one in-flight promise collapses
+// that burst into a single refresh, which every caller then awaits.
+function trySilentRefresh(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight
+
   const refreshToken = localStorage.getItem('refresh_token')
-  if (!refreshToken) return false
-  try {
-    const result = await cognitoInitiateAuth('REFRESH_TOKEN_AUTH', { REFRESH_TOKEN: refreshToken })
-    storeAuthResult(result)
-    return true
-  } catch {
-    return false
-  }
+  if (!refreshToken) return Promise.resolve(false)
+
+  refreshInFlight = (async () => {
+    try {
+      const result = await cognitoInitiateAuth('REFRESH_TOKEN_AUTH', { REFRESH_TOKEN: refreshToken })
+      storeAuthResult(result)
+      return true
+    } catch {
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
 }
 
 async function request<T>(path: string, options: RequestInit = {}, isRetry = false): Promise<T> {
