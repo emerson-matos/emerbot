@@ -36,12 +36,6 @@ variable "webhook_secret_value" {
   sensitive = true
 }
 
-variable "jwt_secret_value" {
-  type        = string
-  sensitive   = true
-  description = "Segredo para assinar JWTs do dashboard."
-}
-
 variable "cognito_user_pool_issuer" {
   type        = string
   description = "Issuer do User Pool Cognito que autentica o dashboard."

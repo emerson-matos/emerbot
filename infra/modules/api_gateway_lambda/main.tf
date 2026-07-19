@@ -77,50 +77,6 @@ resource "aws_dynamodb_table" "financial_entries" {
   }
 }
 
-resource "aws_dynamodb_table" "users" {
-  name         = "${local.prefix}-users"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "PK"
-  range_key    = "SK"
-
-  attribute {
-    name = "PK"
-    type = "S"
-  }
-  attribute {
-    name = "SK"
-    type = "S"
-  }
-  attribute {
-    name = "Email"
-    type = "S"
-  }
-
-  # Used by GetUserByEmail (packages/auth) to avoid a table Scan — ADR-004
-  # requires Query, never Scan.
-  global_secondary_index {
-    name            = "EmailIndex"
-    hash_key        = "Email"
-    projection_type = "ALL"
-  }
-}
-
-resource "aws_dynamodb_table" "refresh_tokens" {
-  name         = "${local.prefix}-refresh-tokens"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "Token"
-
-  attribute {
-    name = "Token"
-    type = "S"
-  }
-
-  ttl {
-    attribute_name = "TTL"
-    enabled        = true
-  }
-}
-
 resource "aws_cloudwatch_log_group" "webhook" {
   name              = "/aws/lambda/${local.prefix}-webhook"
   retention_in_days = 14
@@ -275,9 +231,6 @@ resource "aws_iam_role_policy" "dashboard_api_dynamodb" {
       Resource = [
         aws_dynamodb_table.financial_entries.arn,
         "${aws_dynamodb_table.financial_entries.arn}/index/*",
-        aws_dynamodb_table.users.arn,
-        "${aws_dynamodb_table.users.arn}/index/*",
-        aws_dynamodb_table.refresh_tokens.arn,
       ]
     }]
   })
@@ -302,9 +255,6 @@ resource "aws_lambda_function" "dashboard_api" {
   environment {
     variables = {
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
-      USERS_TABLE             = aws_dynamodb_table.users.name
-      REFRESH_TOKENS_TABLE    = aws_dynamodb_table.refresh_tokens.name
-      JWT_SECRET              = var.jwt_secret_value
     }
   }
 }
@@ -338,7 +288,7 @@ locals {
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
   ])
   dashboard_public_routes = toset([
-    "GET /health", "POST /auth/login", "POST /auth/refresh", "OPTIONS /{proxy+}",
+    "GET /health", "OPTIONS /{proxy+}",
   ])
 }
 

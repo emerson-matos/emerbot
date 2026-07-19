@@ -38,7 +38,6 @@ module "assistant" {
   dashboard_api_zip_path     = var.dashboard_api_zip_path
   webhook_secret             = var.webhook_secret
   webhook_secret_value       = var.webhook_secret_value
-  jwt_secret_value           = var.jwt_secret_value
   cognito_user_pool_issuer   = module.cognito_dashboard.issuer
   cognito_app_client_id      = module.cognito_dashboard.app_client_id
   gemini_api_key_value       = var.gemini_api_key_value
