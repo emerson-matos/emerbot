@@ -9,5 +9,10 @@ set -e
 
 export COGNITO_JWKS_URL="http://cognito-local:9229/${COGNITO_USER_POOL_ID}/.well-known/jwks.json"
 export COGNITO_ISSUER="http://localhost:9229/${COGNITO_USER_POOL_ID}"
+# COGNITO_USER_POOL_ID/COGNITO_CLIENT_ID are set (not exported) by sourcing
+# cognito.env above — fine for the interpolation on the two lines above since
+# that happens in this shell, but exec below replaces the process, so
+# COGNITO_CLIENT_ID itself needs an explicit export to survive that handoff.
+export COGNITO_CLIENT_ID
 
 exec /dashboard-api

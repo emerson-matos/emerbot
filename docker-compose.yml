@@ -75,8 +75,17 @@ services:
     ports:
       - "9229:9229"
     volumes:
-      - ./docker/cognito-local/config.json:/app/.cognito/config.json:ro
-      - cognito-data:/app/.cognito/db
+      # cognito-local writes back into .cognito/ at startup (confirmed
+      # empirically: it fails with EROFS if config.json is mounted read-only)
+      # — so config.json is copied into the named volume by the entrypoint
+      # below rather than bind-mounted directly, which would otherwise let
+      # the container dirty the tracked file on every start (also confirmed
+      # empirically: it gets reformatted/rewritten in place).
+      - ./docker/cognito-local/config.json:/config-src/config.json:ro
+      - cognito-data:/app/.cognito
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - cp /config-src/config.json /app/.cognito/config.json && exec node /app/start.js
 
   # ---------------------------------------------------------------------------
   # Cognito Local bootstrap (runs once, exits 0): creates the local user pool,
