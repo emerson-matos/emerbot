@@ -12,9 +12,21 @@ follow-up opcional (expor o log de entrega como histórico real na UI).
 | API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go` (normaliza o telefone para E.164). |
 | Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
 | Job agendado | `apps/notifier` (Lambda) — avalia cada usuário e envia **um resumo diário** por WhatsApp, deduplicado por dia (log `SK=NOTIFLOG#<data>`). |
+| Janela de 24h | O webhook grava o último inbound por telefone (`PK=WA#<phone>`, `SK=INBOUND`); o notifier só envia dentro da janela de atendimento de 24h do WhatsApp. |
 | Envio | `whatsapp.Client.SendText` (mensagem proativa, sem `context` de resposta). |
 | Frontend | form real em `apps/web/src/pages/Notificacoes.tsx` (`useNotificationPrefs` / `useSaveNotificationPrefsMutation`). |
 | Infra | notifier Lambda + IAM + `aws_cloudwatch_event_rule` (EventBridge) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
+
+### Janela de atendimento de 24h (evita cobrança)
+
+O WhatsApp só permite mensagens **livres** (não-template) dentro de 24h desde a
+última mensagem que o usuário enviou ao número. Fora dessa janela, só valem
+mensagens de _template_ aprovadas — que são **cobradas por conversa**. Para não
+gerar custo, o notifier **nunca** usa template: ele lê o último inbound gravado
+pelo webhook e, se passou de 24h (ou o usuário nunca escreveu), **pula** o envio
+(contabilizado em `Result.OutsideWindow`). Na prática, o usuário precisa mandar
+qualquer mensagem (ex.: `/resumo`) para "reabrir" a janela e voltar a receber os
+alertas. Templates pagos ficam como decisão futura, se o custo for aceito.
 
 ### Configuração operacional pendente
 

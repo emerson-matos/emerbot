@@ -34,13 +34,30 @@ func day(s string) time.Time {
 
 func ptr(t time.Time) *time.Time { return &t }
 
-func seedUser(t *testing.T, store pkgfinance.Store, prefs domain.NotificationPrefs, entries ...domain.FinancialEntry) {
+// runDay is the fixed "now" the test notifier uses. inWindow / outWindow are
+// last-inbound timestamps that respectively fall inside / outside WhatsApp's
+// 24h customer-service window relative to runDay.
+var (
+	runDay    = day("2026-07-20")
+	inWindow  = day("2026-07-19").Add(12 * time.Hour) // 12h ago
+	outWindow = day("2026-07-17")                     // 3 days ago
+)
+
+// seedUser saves prefs + entries and, when inboundAt is non-zero, records it as
+// the phone's last inbound message (controls the 24h window).
+func seedUser(t *testing.T, store pkgfinance.Store, inboundAt time.Time, prefs domain.NotificationPrefs, entries ...domain.FinancialEntry) {
 	t.Helper()
-	if err := store.SaveNotificationPrefs(context.Background(), prefs); err != nil {
+	ctx := context.Background()
+	if err := store.SaveNotificationPrefs(ctx, prefs); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if err := store.SaveEntry(context.Background(), e); err != nil {
+		if err := store.SaveEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !inboundAt.IsZero() && prefs.Phone != "" {
+		if err := store.RecordInboundMessage(ctx, prefs.Phone, inboundAt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,17 +65,25 @@ func seedUser(t *testing.T, store pkgfinance.Store, prefs domain.NotificationPre
 
 func newNotifier(store pkgfinance.Store, wa *fakeWA) *Notifier {
 	n := New(store, wa, "PHONE_ID", time.UTC)
-	n.SetClock(func() time.Time { return day("2026-07-20") })
+	n.SetClock(func() time.Time { return runDay })
 	return n
 }
 
-func TestRunSendsDigestToEnabledUser(t *testing.T) {
+func dueExpense(id string, amount int64) domain.FinancialEntry {
+	return domain.FinancialEntry{
+		UserID: "u1", EntryID: id, Description: id, Amount: amount,
+		Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending,
+		DueDate: ptr(runDay),
+	}
+}
+
+func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	wa := &fakeWA{}
 	seedUser(
-		t, store,
+		t, store, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
-		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Description: "Fornecedor", Amount: 285000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(day("2026-07-20"))},
+		dueExpense("Fornecedor", 285000),
 	)
 
 	res, err := newNotifier(store, wa).Run(context.Background())
@@ -73,15 +98,56 @@ func TestRunSendsDigestToEnabledUser(t *testing.T) {
 	}
 }
 
+func TestRunSkipsOutsideCustomerServiceWindow(t *testing.T) {
+	store := pkgfinance.NewInMemoryStore()
+	wa := &fakeWA{}
+	// Enabled, with a real due-today alert, but last messaged us 3 days ago.
+	seedUser(
+		t, store, outWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	res, err := newNotifier(store, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 {
+		t.Fatalf("must not send outside the 24h window, sent=%d", len(wa.sent))
+	}
+	if res.Evaluated != 1 || res.OutsideWindow != 1 || res.Sent != 0 {
+		t.Fatalf("res=%+v, want Evaluated=1 OutsideWindow=1 Sent=0", res)
+	}
+}
+
+func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
+	store := pkgfinance.NewInMemoryStore()
+	wa := &fakeWA{}
+	// No inbound recorded at all (inboundAt zero) -> never in the window.
+	seedUser(
+		t, store, time.Time{},
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	res, err := newNotifier(store, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 || res.OutsideWindow != 1 {
+		t.Fatalf("res=%+v sent=%d, want no send and OutsideWindow=1", res, len(wa.sent))
+	}
+}
+
 func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	wa := &fakeWA{}
-	// disabled
-	seedUser(t, store, domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true},
-		domain.FinancialEntry{UserID: "off", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(day("2026-07-20"))})
-	// enabled but no phone
-	seedUser(t, store, domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true},
-		domain.FinancialEntry{UserID: "nophone", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(day("2026-07-20"))})
+	seedUser(t, store, inWindow,
+		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true},
+		domain.FinancialEntry{UserID: "off", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
+	seedUser(t, store, inWindow,
+		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true},
+		domain.FinancialEntry{UserID: "nophone", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
 
 	res, err := newNotifier(store, wa).Run(context.Background())
 	if err != nil {
@@ -96,9 +162,9 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	wa := &fakeWA{}
 	seedUser(
-		t, store,
+		t, store, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
-		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(day("2026-07-20"))},
+		dueExpense("e1", 1000),
 	)
 	n := newNotifier(store, wa)
 
@@ -120,11 +186,11 @@ func TestRunDedupesWithinDay(t *testing.T) {
 func TestRunNoAlertsNoSend(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	wa := &fakeWA{}
-	// Enabled user, but the only expense is already paid -> no alert.
+	// In-window and enabled, but the only expense is already paid -> no alert.
 	seedUser(
-		t, store,
+		t, store, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
-		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(day("2026-07-20"))},
+		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(runDay)},
 	)
 
 	res, err := newNotifier(store, wa).Run(context.Background())

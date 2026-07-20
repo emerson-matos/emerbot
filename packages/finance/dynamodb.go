@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,6 +26,11 @@ const (
 	// notifLogPrefix prefixes one item per delivered notification (dedupe key).
 	notifPrefsSK   = "NOTIFPREFS"
 	notifLogPrefix = "NOTIFLOG#"
+
+	// waPrefix keys WhatsApp-session items by phone (not userID); inboundSK is
+	// the fixed sort key holding the last inbound-message timestamp.
+	waPrefix  = "WA#"
+	inboundSK = "INBOUND"
 
 	// gsi2IndexName is the GSI (hash: GSI2PK, range: GSI2SK, declared in
 	// infra/modules/api_gateway_lambda/main.tf) that ListEntries queries by
@@ -717,4 +723,55 @@ func (s *DynamoDBStore) RecordNotificationSent(ctx context.Context, userID, key 
 		},
 	})
 	return err
+}
+
+func (s *DynamoDBStore) RecordInboundMessage(ctx context.Context, phone string, at time.Time) error {
+	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.tableName),
+		Item: map[string]types.AttributeValue{
+			"PK":            &types.AttributeValueMemberS{Value: waPrefix + phone},
+			"SK":            &types.AttributeValueMemberS{Value: inboundSK},
+			"Phone":         &types.AttributeValueMemberS{Value: phone},
+			"LastInboundAt": &types.AttributeValueMemberS{Value: at.UTC().Format(time.RFC3339)},
+		},
+		// Never let an out-of-order webhook retry move the timestamp backwards.
+		ConditionExpression: aws.String("attribute_not_exists(LastInboundAt) OR LastInboundAt < :at"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":at": &types.AttributeValueMemberS{Value: at.UTC().Format(time.RFC3339)},
+		},
+	})
+	if err != nil {
+		var cond *types.ConditionalCheckFailedException
+		if errors.As(err, &cond) {
+			// A newer timestamp is already stored — not an error.
+			return nil
+		}
+		return fmt.Errorf("record inbound message: %w", err)
+	}
+	return nil
+}
+
+func (s *DynamoDBStore) LastInboundMessage(ctx context.Context, phone string) (time.Time, bool, error) {
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: waPrefix + phone},
+			"SK": &types.AttributeValueMemberS{Value: inboundSK},
+		},
+	})
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("get inbound message: %w", err)
+	}
+	if out.Item == nil {
+		return time.Time{}, false, nil
+	}
+	raw, ok := out.Item["LastInboundAt"].(*types.AttributeValueMemberS)
+	if !ok || raw.Value == "" {
+		return time.Time{}, false, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw.Value)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return t, true, nil
 }

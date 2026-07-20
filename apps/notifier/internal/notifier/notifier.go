@@ -21,6 +21,12 @@ import (
 // looking for still-pending bills — matches the web hook's window.
 const OverdueLookbackMonths = 3
 
+// CustomerServiceWindow is WhatsApp's 24h window: a business may send free-form
+// messages only within 24h of the user's last inbound message. Outside it, only
+// (billed) template messages are allowed — which we deliberately avoid — so the
+// notifier stays silent rather than incur a charge.
+const CustomerServiceWindow = 24 * time.Hour
+
 type Notifier struct {
 	store         pkgfinance.Store
 	wa            whatsapp.Client
@@ -50,9 +56,10 @@ func (n *Notifier) SetClock(now func() time.Time) { n.now = now }
 
 // Result summarizes one run for logging/telemetry.
 type Result struct {
-	Evaluated int // users with WhatsApp enabled + a phone
-	Sent      int // digests actually delivered
-	Skipped   int // no alerts, or already sent today
+	Evaluated     int // users with WhatsApp enabled + a phone
+	Sent          int // digests actually delivered
+	Skipped       int // no alerts, or already sent today
+	OutsideWindow int // enabled, but no inbound message in the last 24h
 }
 
 // Run evaluates every enabled user and sends at most one digest each. It keeps
@@ -66,7 +73,8 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		return res, fmt.Errorf("list notification prefs: %w", err)
 	}
 
-	nowT := n.now().In(n.loc)
+	nowInstant := n.now()
+	nowT := nowInstant.In(n.loc)
 	y, m, d := nowT.Date()
 	// Anchor everything to a UTC calendar date so comparisons line up with
 	// how entries store their (timezone-free) dates.
@@ -81,6 +89,20 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 		res.Evaluated++
+
+		// WhatsApp only lets us send free-form messages within 24h of the
+		// user's last inbound message. Outside that window we'd need a paid
+		// template, so we stay silent instead. Checked before any other work
+		// so out-of-window users cost just one GetItem.
+		last, ok, err := n.store.LastInboundMessage(ctx, prefs.Phone)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("user %s: last inbound: %w", prefs.UserID, err))
+			continue
+		}
+		if !ok || nowInstant.Sub(last) >= CustomerServiceWindow {
+			res.OutsideWindow++
+			continue
+		}
 
 		entries, err := n.store.ListEntries(ctx, prefs.UserID, pkgfinance.EntryFilter{
 			From: &windowStart,
@@ -129,7 +151,8 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		}
 	}
 
-	log.Printf("notifier run: evaluated=%d sent=%d skipped=%d", res.Evaluated, res.Sent, res.Skipped)
+	log.Printf("notifier run: evaluated=%d sent=%d skipped=%d outside_window=%d",
+		res.Evaluated, res.Sent, res.Skipped, res.OutsideWindow)
 	return res, errors.Join(errs...)
 }
 

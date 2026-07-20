@@ -18,7 +18,7 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store)
 	// service can be nil: financial commands short-circuit before it is used.
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify")
+	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", store)
 
 	_, status, err := app.Handle(context.Background(), Request{
 		UserID:        "phone-A",
@@ -51,5 +51,38 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 	}
 	if byPhone.TotalExpense != 0 {
 		t.Fatalf("entry leaked under phone key: got %d", byPhone.TotalExpense)
+	}
+}
+
+// TestHandleRecordsInboundMessage proves every inbound message opens the
+// WhatsApp 24h window: after handling one, the sender's phone has a recorded
+// last-inbound timestamp the notifier can later check.
+func TestHandleRecordsInboundMessage(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	// Inbound recording happens before any routing, so /help (which needs
+	// neither a financial handler nor the orchestrator service) is enough.
+	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", store)
+
+	when := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	if _, _, err := app.Handle(context.Background(), Request{
+		UserID:    "5511999999999",
+		MessageID: "m1",
+		Text:      "/help",
+		Timestamp: when,
+	}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	got, ok, err := store.LastInboundMessage(context.Background(), "5511999999999")
+	if err != nil {
+		t.Fatalf("last inbound: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected an inbound timestamp to be recorded")
+	}
+	if want, _ := time.Parse(time.RFC3339, when); !got.Equal(want) {
+		t.Fatalf("recorded %v, want %v", got, want)
 	}
 }

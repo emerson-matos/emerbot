@@ -353,6 +353,7 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 		client,
 		"test-secret",
 		"test-verify-token",
+		nil,
 	)
 }
 
@@ -372,6 +373,7 @@ func newFailingApp(client *fakeWhatsAppClient) *App {
 		client,
 		"test-secret",
 		"test-verify-token",
+		nil,
 	)
 }
 
