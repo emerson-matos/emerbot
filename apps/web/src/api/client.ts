@@ -212,6 +212,18 @@ export const api = {
         body: JSON.stringify({ month, ...data }),
       }),
   },
+
+  notifications: {
+    getPreferences: () =>
+      request<{ preferences: NotificationPrefs }>(
+        "/notifications/preferences",
+      ),
+    savePreferences: (data: Partial<NotificationPrefs>) =>
+      request<{ preferences: NotificationPrefs }>("/notifications/preferences", {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+  },
 };
 
 // --- Types ---
@@ -268,6 +280,14 @@ export interface Goal {
   Month: string;
   RevenueTarget: number;
   ExpenseTarget: number;
+}
+
+export interface NotificationPrefs {
+  waEnabled: boolean;
+  phone: string;
+  notifyDueToday: boolean;
+  notifyOverdue: boolean;
+  notifyGoal: boolean;
 }
 
 export interface Category {

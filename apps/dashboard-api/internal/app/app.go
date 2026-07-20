@@ -65,6 +65,11 @@ func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *
 	mux.Handle("GET /goals", authMw(http.HandlerFunc(goalHandler.Get)))
 	mux.Handle("PUT /goals", authMw(http.HandlerFunc(goalHandler.Save)))
 
+	notifHandler := apifinance.NewNotificationsHandler(finStore)
+
+	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
+	mux.Handle("PUT /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Save)))
+
 	return &App{handler: withCORS(mux)}
 }
 

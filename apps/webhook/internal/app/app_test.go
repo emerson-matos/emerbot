@@ -392,6 +392,12 @@ func (f *fakeWhatsAppClient) SendReply(_ context.Context, _, _, messageBody, _ s
 	return nil
 }
 
+func (f *fakeWhatsAppClient) SendText(_ context.Context, _, _, messageBody string) error {
+	f.sendReplyCalls++
+	f.lastReply = messageBody
+	return nil
+}
+
 // testWebhookWithTexts builds a Meta envelope carrying one text message per
 // argument (all in a single entry/change) — used for batching and /help tests.
 func testWebhookWithTexts(texts ...string) string {

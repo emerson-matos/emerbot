@@ -16,6 +16,11 @@ variable "dashboard_api_zip_path" {
   description = "Caminho do artefato zip do dashboard-api Lambda."
 }
 
+variable "notifier_zip_path" {
+  type        = string
+  description = "Caminho do artefato zip do notifier Lambda (alertas por WhatsApp)."
+}
+
 variable "lambda_handler" {
   type    = string
   default = "bootstrap"
@@ -56,4 +61,16 @@ variable "meta_graph_api_token_value" {
   type        = string
   sensitive   = true
   description = "Token da API do WhatsApp Business (Graph API)."
+}
+
+variable "whatsapp_phone_number_id" {
+  type        = string
+  default     = ""
+  description = "Phone number ID do WhatsApp Business, remetente dos alertas proativos do notifier."
+}
+
+variable "notifier_schedule" {
+  type        = string
+  default     = "cron(0 11 * * ? *)"
+  description = "Expressão de agenda do EventBridge para o notifier. Padrão: 08h em São Paulo (11h UTC)."
 }

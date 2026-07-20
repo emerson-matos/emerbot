@@ -11,6 +11,9 @@ import (
 type Client interface {
 	MarkAsRead(ctx context.Context, phoneNumberID, messageID string) error
 	SendReply(ctx context.Context, phoneNumberID, to, messageBody, replyToMessageID string) error
+	// SendText sends a standalone message (no reply context) — used by the
+	// scheduled notifier, which has no inbound message to reply to.
+	SendText(ctx context.Context, phoneNumberID, to, messageBody string) error
 }
 
 func NewLocalClient(replyURL string) Client {

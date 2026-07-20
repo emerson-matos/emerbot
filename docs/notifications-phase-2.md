@@ -1,8 +1,33 @@
 # Notificações — Fase 2 (alertas por WhatsApp)
 
-Este documento descreve os próximos passos para a feature de notificações. A
-**Fase 1 já está implementada**; a **Fase 2** exige backend e ainda não foi
-feita.
+**Status: implementada.** As Fases 1 e 2 estão no código. O que resta é
+operacional (configurar o `WHATSAPP_PHONE_NUMBER_ID`, aplicar o OpenTofu) e um
+follow-up opcional (expor o log de entrega como histórico real na UI).
+
+## Como está montado
+
+| Camada | Onde |
+|--------|------|
+| Preferências (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`). |
+| API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go` (normaliza o telefone para E.164). |
+| Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
+| Job agendado | `apps/notifier` (Lambda) — avalia cada usuário e envia **um resumo diário** por WhatsApp, deduplicado por dia (log `SK=NOTIFLOG#<data>`). |
+| Envio | `whatsapp.Client.SendText` (mensagem proativa, sem `context` de resposta). |
+| Frontend | form real em `apps/web/src/pages/Notificacoes.tsx` (`useNotificationPrefs` / `useSaveNotificationPrefsMutation`). |
+| Infra | notifier Lambda + IAM + `aws_cloudwatch_event_rule` (EventBridge) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
+
+### Configuração operacional pendente
+
+- **`WHATSAPP_PHONE_NUMBER_ID`** (Phone number ID do Meta) e
+  **`META_GRAPH_API_TOKEN`** precisam estar setados (via `TF_VAR_*`) para o
+  notifier enviar. Sem o token, o cliente cai no simulador local.
+- **Agenda**: `var.notifier_schedule` (default `cron(0 11 * * ? *)` = 08h em
+  São Paulo). Ajuste o fuso do "vence hoje" com `NOTIFIER_TIMEZONE`.
+- Rodar `make build-lambdas && make tofu-apply` (constrói também `notifier.zip`).
+
+## Histórico de referência (plano original)
+
+O texto abaixo é o plano que guiou a implementação, mantido para contexto.
 
 ## Fase 1 — alertas derivados no cliente (pronto)
 

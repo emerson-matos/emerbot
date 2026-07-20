@@ -6,7 +6,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { api, CognitoAuthError } from "./client";
-import type { CreateEntryInput, Entry } from "./client";
+import type { CreateEntryInput, Entry, NotificationPrefs } from "./client";
 import { useToast } from "@/lib/toast";
 
 export const queryKeys = {
@@ -17,6 +17,7 @@ export const queryKeys = {
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesPaged: (pageSize: number) => ["entries", "paged", pageSize] as const,
   goal: (month: string) => ["goal", month] as const,
+  notificationPrefs: () => ["notifications", "preferences"] as const,
 };
 
 export function useMonthlySummary(month: string) {
@@ -103,6 +104,33 @@ export function useSaveGoalMutation(month: string) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.goal(month) });
+    },
+  });
+}
+
+export function useNotificationPrefs() {
+  return useQuery({
+    queryKey: queryKeys.notificationPrefs(),
+    queryFn: () => api.notifications.getPreferences(),
+    select: (data) => data.preferences,
+  });
+}
+
+export function useSaveNotificationPrefsMutation() {
+  const queryClient = useQueryClient();
+  const notify = useToast();
+
+  return useMutation({
+    mutationFn: (data: Partial<NotificationPrefs>) =>
+      api.notifications.savePreferences(data),
+    onError: () => {
+      notify("Não foi possível salvar as preferências.", "error");
+    },
+    onSuccess: (result) => {
+      // The server normalizes the phone, so seed the cache from its response
+      // instead of the values we sent.
+      queryClient.setQueryData(queryKeys.notificationPrefs(), result);
+      notify("Preferências salvas.", "success");
     },
   });
 }
