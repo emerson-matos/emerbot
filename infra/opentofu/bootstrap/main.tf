@@ -28,6 +28,29 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   }
 }
 
+# Versioning lets us roll back a bad state write, but old versions would pile up
+# forever. Keep 90 days of history (plenty for rollback) and drop the rest, so
+# storage stays a rounding error. Versioning must be enabled first.
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket     = aws_s3_bucket.state.id
+  depends_on = [aws_s3_bucket_versioning.state]
+
+  rule {
+    id     = "expire-old-state-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "state" {
   bucket                  = aws_s3_bucket.state.id
   block_public_acls       = true
