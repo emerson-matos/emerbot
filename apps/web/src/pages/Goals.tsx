@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { Target } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import {
+  BarChart3, CheckCircle2, Target, TrendingDown, TrendingUp,
+} from 'lucide-react'
 import { formatBRL } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -29,6 +32,43 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   )
 }
 
+type MetaTone = 'positive' | 'negative' | 'info' | 'neutral'
+
+const metaToneVar: Record<MetaTone, string> = {
+  positive: 'var(--success)',
+  negative: 'var(--destructive)',
+  info: 'var(--info)',
+  neutral: 'var(--primary)',
+}
+
+function MetaTile({ title, value, subtitle, icon: Icon, tone }: {
+  title: string
+  value: string
+  subtitle: string
+  icon: LucideIcon
+  tone: MetaTone
+}) {
+  const c = metaToneVar[tone]
+  return (
+    <Card className="relative overflow-hidden">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: c }} />
+      <CardContent className="flex items-start justify-between gap-3 pl-5">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: c }}>{value}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+        <span
+          className="grid size-9 shrink-0 place-items-center rounded-lg"
+          style={{ background: `color-mix(in oklch, ${c} 14%, transparent)`, color: c }}
+        >
+          <Icon className="size-[18px]" />
+        </span>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Goals() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
@@ -49,6 +89,7 @@ export default function Goals() {
 
   const [revenueInput, setRevenueInput] = useState('')
   const [expenseInput, setExpenseInput] = useState('')
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     if (goal) {
@@ -69,65 +110,131 @@ export default function Goals() {
   const revColor = revPct >= 100 ? 'var(--success)' : 'var(--info)'
   const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 
+  const monthsHit = months3.reduce((count, _, i) => {
+    const g = goalsByMonth[i]
+    const t = trendQueries[i].data
+    return g && t && t.TotalIncome >= g.RevenueTarget ? count + 1 : count
+  }, 0)
+  const loadedIncomes = trendQueries.filter(q => q.isSuccess).map(q => q.data!.TotalIncome)
+  const avgRevenue = loadedIncomes.length
+    ? Math.round(loadedIncomes.reduce((s, v) => s + v, 0) / loadedIncomes.length)
+    : 0
+
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="space-y-5">
-          <h3 className="flex items-center gap-2 text-sm font-semibold">
-            <Target className="size-4 text-primary" aria-hidden />
-            Meta do Mês
-          </h3>
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight">Metas</h1>
+        <p className="mt-1 text-muted-foreground">Defina as metas financeiras do mês</p>
+      </div>
 
-          <div className="space-y-2">
-            <label htmlFor="revenue-target" className="text-xs font-medium text-muted-foreground">
-              Meta de faturamento (R$)
-            </label>
-            <Input
-              id="revenue-target"
-              type="number"
-              min="0"
-              step="0.01"
-              value={revenueInput}
-              onChange={e => setRevenueInput(e.target.value)}
-            />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetaTile
+          title="Progresso Faturamento"
+          value={`${revPct.toFixed(0)}%`}
+          subtitle="da meta deste mês"
+          icon={TrendingUp}
+          tone="positive"
+        />
+        <MetaTile
+          title="Progresso Despesas"
+          value={`${expPct.toFixed(0)}%`}
+          subtitle="do limite deste mês"
+          icon={TrendingDown}
+          tone="negative"
+        />
+        <MetaTile
+          title="Meses na Meta"
+          value={`${monthsHit}/${months3.length}`}
+          subtitle="faturamento atingido"
+          icon={Target}
+          tone="info"
+        />
+        <MetaTile
+          title="Faturamento Médio"
+          value={formatBRL(avgRevenue)}
+          subtitle="últimos meses"
+          icon={BarChart3}
+          tone="neutral"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <TrendingUp className="size-4 text-success" aria-hidden />
+              Meta de Faturamento
+            </h3>
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Faturamento</span>
+              <span className="text-muted-foreground">Progresso</span>
               <span className="font-medium tabular-nums">
                 {formatBRL(actualIncome)} / {formatBRL(revenueTarget)}
               </span>
             </div>
             <ProgressBar pct={revPct} color={revColor} />
-          </div>
+            <div className="space-y-2 pt-2">
+              <label htmlFor="revenue-target" className="text-xs font-medium text-muted-foreground">
+                Valor da meta (R$)
+              </label>
+              <Input
+                id="revenue-target"
+                type="number"
+                min="0"
+                step="0.01"
+                value={revenueInput}
+                onChange={e => { setRevenueInput(e.target.value); setSaved(false) }}
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-          <div className="space-y-2">
-            <label htmlFor="expense-target" className="text-xs font-medium text-muted-foreground">
-              Meta de despesas (R$)
-            </label>
-            <Input
-              id="expense-target"
-              type="number"
-              min="0"
-              step="0.01"
-              value={expenseInput}
-              onChange={e => setExpenseInput(e.target.value)}
-            />
+        <Card>
+          <CardContent className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <TrendingDown className="size-4 text-destructive" aria-hidden />
+              Limite de Despesas
+            </h3>
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Despesas</span>
+              <span className="text-muted-foreground">Progresso</span>
               <span className="font-medium tabular-nums">
                 {formatBRL(actualExpense)} / {formatBRL(expenseTarget)}
               </span>
             </div>
             <ProgressBar pct={expPct} color={expColor} />
-          </div>
+            <div className="space-y-2 pt-2">
+              <label htmlFor="expense-target" className="text-xs font-medium text-muted-foreground">
+                Valor limite (R$)
+              </label>
+              <Input
+                id="expense-target"
+                type="number"
+                min="0"
+                step="0.01"
+                value={expenseInput}
+                onChange={e => { setExpenseInput(e.target.value); setSaved(false) }}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-          <Button
-            onClick={() => saveGoal.mutate({ revenue_target: revenueTarget, expense_target: expenseTarget })}
-            disabled={saveGoal.isPending}
-          >
-            Salvar Metas
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="flex items-center gap-3">
+        <Button
+          onClick={() => saveGoal.mutate(
+            { revenue_target: revenueTarget, expense_target: expenseTarget },
+            { onSuccess: () => setSaved(true) },
+          )}
+          disabled={saveGoal.isPending}
+        >
+          Salvar Metas
+        </Button>
+        {saved && (
+          <span className="flex items-center gap-1.5 text-sm text-success">
+            <CheckCircle2 className="size-4" aria-hidden />
+            Metas salvas
+          </span>
+        )}
+      </div>
 
       <Card>
         <CardContent className="space-y-4">

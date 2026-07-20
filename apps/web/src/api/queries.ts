@@ -6,7 +6,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { api, CognitoAuthError } from "./client";
-import type { Entry } from "./client";
+import type { CreateEntryInput, Entry } from "./client";
 import { useToast } from "@/lib/toast";
 
 export const queryKeys = {
@@ -108,37 +108,52 @@ export function useSaveGoalMutation(month: string) {
 }
 
 type EntriesPage = { entries: Entry[]; count: number };
+type InfiniteEntriesData = { pages: EntriesPage[]; pageParams: unknown[] };
 
-// Optimistically flips an entry to "paid" in the cached list, rolling back
-// on failure; on settle, revalidates entries + every summary so KPIs/charts
+function markEntryPaid<T extends EntriesPage | InfiniteEntriesData>(
+  old: T,
+  entryID: string,
+): T {
+  const flip = (e: Entry) =>
+    e.EntryID === entryID ? { ...e, PaymentStatus: "paid" as const } : e;
+
+  if ("pages" in old) {
+    return {
+      ...old,
+      pages: old.pages.map((p) => ({ ...p, entries: p.entries.map(flip) })),
+    };
+  }
+  return { ...old, entries: old.entries.map(flip) };
+}
+
+// Optimistically flips an entry to "paid" across every cached entries query
+// (both the ranged `useEntries` shape and the cursor-paginated
+// `useEntriesInfinite` shape used by the Transações page), rolling back on
+// failure; on settle, revalidates entries + every summary so KPIs/charts
 // catch up.
-export function useMarkPaidMutation(from: string, to: string) {
+export function useMarkPaidMutation() {
   const queryClient = useQueryClient();
   const notify = useToast();
-  const key = queryKeys.entries(from, to);
+  const entriesKey = { queryKey: ["entries"] };
 
   return useMutation({
     mutationFn: (entryID: string) =>
       api.entries.update(entryID, { payment_status: "paid" }),
     onMutate: async (entryID: string) => {
-      await queryClient.cancelQueries({ queryKey: key });
-      const previous = queryClient.getQueryData<EntriesPage>(key);
-      queryClient.setQueryData<EntriesPage | undefined>(key, (old) =>
-        old
-          ? {
-              ...old,
-              entries: old.entries.map((e) =>
-                e.EntryID === entryID
-                  ? { ...e, PaymentStatus: "paid" as const }
-                  : e,
-              ),
-            }
-          : old,
+      await queryClient.cancelQueries(entriesKey);
+      const previous = queryClient.getQueriesData<
+        EntriesPage | InfiniteEntriesData
+      >(entriesKey);
+      queryClient.setQueriesData<EntriesPage | InfiniteEntriesData | undefined>(
+        entriesKey,
+        (old) => (old ? markEntryPaid(old, entryID) : old),
       );
       return { previous };
     },
     onError: (_err, _entryID, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      context?.previous?.forEach(([key, data]) => {
+        queryClient.setQueryData(key, data);
+      });
       notify("Não foi possível marcar como pago.", "error");
     },
     onSuccess: () => {
@@ -146,7 +161,28 @@ export function useMarkPaidMutation(from: string, to: string) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
-      queryClient.invalidateQueries({ queryKey: key });
+      queryClient.invalidateQueries(entriesKey);
+    },
+  });
+}
+
+// Creates a new manual entry (the "Nova Transação" form), then revalidates
+// entries + every summary so KPIs/charts/tables catch up.
+export function useCreateEntryMutation() {
+  const queryClient = useQueryClient();
+  const notify = useToast();
+
+  return useMutation({
+    mutationFn: (data: CreateEntryInput) => api.entries.create(data),
+    onError: () => {
+      notify("Não foi possível registrar a transação.", "error");
+    },
+    onSuccess: () => {
+      notify("Transação registrada.", "success");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
     },
   });
 }

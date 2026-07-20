@@ -5,23 +5,15 @@ import {
 } from 'lucide-react'
 import { formatBRL } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  useEntries,
-  useMonthlyTrend,
-} from '../api/queries'
+import { useMonthlyTrend } from '../api/queries'
 
 export default function WorstMonth() {
   const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
   const months3 = [-2, -1, 0].map(offset =>
     format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
   )
 
-  const entriesQuery = useEntries(firstDay, lastDay)
   const trendQueries = useMonthlyTrend(months3)
-
-  const entries = entriesQuery.data?.entries ?? []
 
   const monthlyData = trendQueries.every(q => q.isSuccess)
     ? trendQueries.map((q, i) => ({
@@ -37,34 +29,28 @@ export default function WorstMonth() {
     )
     : null
 
-  const expenseByDay: Record<string, number> = {}
-  for (const e of entries) {
-    if (e.Type === 'expense') {
-      const day = e.Date.slice(0, 10)
-      expenseByDay[day] = (expenseByDay[day] ?? 0) + e.Amount
-    }
-  }
   return (
-    <Card className="relative overflow-hidden" >
+    <Card className="relative overflow-hidden">
       <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-destructive" />
-      <CardContent className="flex items-center gap-3 pl-5">
+      <CardContent className="flex items-start justify-between gap-3 pl-5">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pior Mês</p>
+          {worstMonth ? (
+            <>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-destructive">
+                {formatBRL(worstMonth.income - worstMonth.expense)}
+              </p>
+              <p className="mt-1 text-xs capitalize text-muted-foreground">{worstMonth.month}</p>
+            </>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">sem dados por enquanto</p>
+          )}
+        </div>
         <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-destructive/15 text-destructive">
           <CalendarX className="size-[18px]" />
         </span>
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pior Mês</p>
-          <div className="mt-0.5 text-sm">
-            {worstMonth ? (
-              <>
-                <strong className="capitalize">{worstMonth.month}</strong>
-                {' — '}
-                <span className="tabular-nums">{formatBRL(worstMonth.income - worstMonth.expense)}</span>
-              </>
-            ) : (<p> sem dados por enquanto</p>)}
-          </div>
-        </div>
       </CardContent>
-    </Card >
+    </Card>
   )
 }
 

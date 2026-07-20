@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   Landmark,
   LayoutDashboard,
+  PlusCircle,
   Receipt,
   Settings,
   Target,
@@ -20,6 +21,7 @@ interface NavItem {
 const nav: NavItem[] = [
   { label: "Painel", icon: LayoutDashboard, to: "/" },
   { label: "Transações", icon: Receipt, to: "/transacoes" },
+  { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
   { label: "Metas", icon: Target, to: "/metas" },
   { label: "Estoque", icon: ArrowLeftRight, soon: true },
   { label: "Contas", icon: Landmark, soon: true },
