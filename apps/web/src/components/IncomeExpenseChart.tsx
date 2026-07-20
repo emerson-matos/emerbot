@@ -6,18 +6,25 @@ import { BarChart3 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '../api/client'
 import { chartColor, tooltipProps } from '@/lib/chart'
+import { format } from 'date-fns';
+import { useMonthlyTrend } from '@/api/queries';
+import { ptBR } from 'date-fns/locale';
 
-interface MonthlyData {
-  month: string
-  income: number
-  expense: number
-}
+export default function IncomeExpenseChart() {
+  const now = new Date()
+  const months3 = [-2, -1, 0].map(offset =>
+    format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
+  )
+  const trendQueries = useMonthlyTrend(months3)
+  const data = trendQueries.every(q => q.isSuccess)
+    ? trendQueries.map((q, i) => ({
+      month: format(new Date(months3[i] + '-01'), 'MMM', { locale: ptBR }),
+      income: q.data!.TotalIncome,
+      expense: q.data!.TotalExpense,
+    }))
+    : []
 
-interface Props {
-  data: MonthlyData[]
-}
 
-export default function IncomeExpenseChart({ data }: Props) {
   const chartData = data.map(d => ({
     name: d.month,
     Receitas: d.income / 100,

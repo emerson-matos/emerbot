@@ -1,14 +1,9 @@
+import { format } from 'date-fns'
 import { Target } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { formatBRL } from '../api/client'
-import type { MonthlySummary } from '../api/client'
-import { useGoal } from '../api/queries'
-
-interface Props {
-  month: string
-  summary: MonthlySummary | null
-}
+import { useGoal, useMonthlySummary } from '../api/queries'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -21,8 +16,13 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   )
 }
 
-export default function GoalCard({ month, summary }: Props) {
-  const goal = useGoal(month).data?.goal ?? null
+export default function GoalCard() {
+  const now = new Date()
+  const currentMonth = format(now, 'yyyy-MM')
+  const summaryQuery = useMonthlySummary(currentMonth)
+  const summary = summaryQuery.data ?? null
+
+  const goal = useGoal(currentMonth).data?.goal ?? null
 
   const actualIncome = summary?.TotalIncome ?? 0
   const actualExpense = summary?.TotalExpense ?? 0

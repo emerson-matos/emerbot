@@ -1,16 +1,17 @@
+import { useCategorySummary } from '../api/queries'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { PieChart } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '../api/client'
-import type { CategorySummary } from '../api/client'
 import { categoricalPalette, chartColor, tooltipProps } from '@/lib/chart'
 import EmptyState from './EmptyState'
 
-interface Props {
-  data: CategorySummary[]
-}
 
-export default function CategoryDonut({ data }: Props) {
+export default function CategoryDonut() {
+  const categoriesQuery = useCategorySummary()
+
+  const data = categoriesQuery.data?.categories ?? []
+
   const expenses = data
     .filter(c => c.Type === 'expense')
     .sort((a, b) => b.Total - a.Total)
