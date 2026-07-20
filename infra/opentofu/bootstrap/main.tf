@@ -36,6 +36,34 @@ resource "aws_s3_bucket_public_access_block" "state" {
   restrict_public_buckets = true
 }
 
+# The state holds secret values (Lambda env vars) in plaintext, so refuse any
+# access that isn't over TLS. A deny-only policy doesn't grant public access,
+# so it coexists with block_public_policy above.
+data "aws_iam_policy_document" "state_bucket" {
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.state.arn, "${aws_s3_bucket.state.arn}/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "state" {
+  bucket = aws_s3_bucket.state.id
+  policy = data.aws_iam_policy_document.state_bucket.json
+}
+
 # ---------------------------------------------------------------------------
 # GitHub Actions OIDC provider + the role CI assumes (no long-lived AWS keys)
 # ---------------------------------------------------------------------------

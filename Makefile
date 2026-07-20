@@ -33,7 +33,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         seed demo \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas clean-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state \
+        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
         tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
@@ -210,6 +210,11 @@ tofu-bootstrap:
 tofu-migrate-state:
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(TOFU_DIR) init -migrate-state
+
+# Copy the deploy secrets from your local env into GitHub Actions (needs `gh`).
+# Load your values first, e.g.:  set -a && . ./.env && set +a
+gh-secrets:
+	./scripts/gh-secrets.sh
 
 tofu-plan: build-lambdas
 	eval "$$(aws configure export-credentials --format env)" && \

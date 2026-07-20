@@ -50,21 +50,36 @@ Pipeline: `.github/workflows/deploy.yml`.
    make tofu-migrate-state   # tofu init -migrate-state, answer "yes"
    ```
 
-3. **Set the GitHub repository secrets** (Settings → Secrets and variables →
-   Actions). Optional ones can be left unset — the matching feature just stays
-   off (see the `""` defaults in `variables.tf`).
+3. **Set the GitHub repository secrets.** These live only on your dev machine
+   today (shell / `.env`); CI reads them from GitHub Actions secrets. Easiest is
+   to load your env and push them in one shot:
 
-   | Secret | Required | Notes |
+   ```sh
+   gh auth login                 # once
+   set -a && . ./.env && set +a  # load your local values
+   make gh-secrets               # uploads them with the right names (incl. AWS_DEPLOY_ROLE_ARN)
+   ```
+
+   `scripts/gh-secrets.sh` encodes the local-var → secret-name mapping below.
+   Or set them by hand (Settings → Secrets and variables → Actions). Optional
+   ones can be left unset — the matching feature just stays off (see the `""`
+   defaults in `variables.tf`).
+
+   | GitHub secret | From local env var | Required |
    | --- | --- | --- |
-   | `AWS_DEPLOY_ROLE_ARN` | ✅ | `tofu -chdir=infra/opentofu/bootstrap output -raw deploy_role_arn` |
-   | `TF_VAR_WEBHOOK_SECRET` | ✅ | WhatsApp webhook verify/secret |
-   | `TF_VAR_WEBHOOK_SECRET_VALUE` | ✅ | verify token |
-   | `TF_VAR_GEMINI_API_KEY_VALUE` | ✅ | Gemini API key |
-   | `TF_VAR_META_GRAPH_API_TOKEN_VALUE` | ✅ | WhatsApp Graph API token |
-   | `TF_VAR_WHATSAPP_PHONE_NUMBER_ID` | ✅ | notifier sender |
-   | `CLOUDFLARE_API_TOKEN` | if using Cloudflare | DNS / Pages provider |
-   | `TF_VAR_CLOUDFLARE_ZONE_ID` | if using Cloudflare | custom domain |
-   | `TF_VAR_CLOUDFLARE_ACCOUNT_ID` | if using Pages | frontend |
+   | `AWS_DEPLOY_ROLE_ARN` | bootstrap output `deploy_role_arn` | ✅ |
+   | `TF_VAR_WEBHOOK_SECRET` | `WEBHOOK_SECRET` (Meta app secret) | ✅ |
+   | `TF_VAR_WEBHOOK_SECRET_VALUE` | `WEBHOOK_VERIFY_TOKEN` | ✅ |
+   | `TF_VAR_GEMINI_API_KEY_VALUE` | `GEMINI_API_KEY` | ✅ |
+   | `TF_VAR_META_GRAPH_API_TOKEN_VALUE` | `META_GRAPH_API_TOKEN` | ✅ |
+   | `TF_VAR_WHATSAPP_PHONE_NUMBER_ID` | `WHATSAPP_PHONE_NUMBER_ID` | ✅ |
+   | `CLOUDFLARE_API_TOKEN` | `CLOUDFLARE_API_TOKEN` | if using Cloudflare |
+   | `TF_VAR_CLOUDFLARE_ZONE_ID` | `CLOUDFLARE_ZONE_ID` | if using Cloudflare |
+   | `TF_VAR_CLOUDFLARE_ACCOUNT_ID` | `CLOUDFLARE_ACCOUNT_ID` | if using Pages |
+
+   > The remote state is private (Block Public Access on, encrypted, TLS-only) —
+   > but note it stores these secret values in plaintext, so treat read access
+   > to the state bucket as equivalent to read access to the secrets.
 
 ## Shipping a change
 
