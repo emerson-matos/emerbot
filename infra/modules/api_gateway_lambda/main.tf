@@ -477,7 +477,7 @@ resource "aws_scheduler_schedule" "notifier_daily" {
     role_arn = aws_iam_role.scheduler_notifier.arn
 
     retry_policy {
-      maximum_retry_attempts = 3
+      maximum_retry_attempts       = 3
       maximum_event_age_in_seconds = 300
     }
   }
