@@ -1,0 +1,146 @@
+name: deploy
+
+# Manual button ships to AWS: run this workflow from the Actions tab
+# (workflow_dispatch) to apply. Pull requests get a `tofu plan` posted as a
+# comment so infra changes are reviewable, but never apply on their own.
+#
+# Auth is GitHub OIDC — no long-lived AWS keys. Bootstrap the role + remote
+# state once (infra/opentofu/bootstrap) and set the secrets listed in
+# docs/deploy.md before the first run.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "infra/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".github/workflows/deploy.yml"
+
+permissions:
+  id-token: write # assume the AWS role via OIDC
+  contents: read
+  pull-requests: write # post the plan comment
+
+# Never let two applies (or an apply and a plan) touch the remote state at once.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  TOFU_DIR: infra/opentofu/environments/dev
+
+jobs:
+  plan:
+    # Skip forks: they can't read secrets / assume the role anyway.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # secrets can't be referenced in workflow-level env, so map TF_VARs here.
+    # Optional ones default to "" in variables.tf, so an unset secret just
+    # disables the matching feature (e.g. no Cloudflare) instead of failing.
+    env:
+      TF_VAR_webhook_secret: ${{ secrets.TF_VAR_WEBHOOK_SECRET }}
+      TF_VAR_webhook_secret_value: ${{ secrets.TF_VAR_WEBHOOK_SECRET_VALUE }}
+      TF_VAR_gemini_api_key_value: ${{ secrets.TF_VAR_GEMINI_API_KEY_VALUE }}
+      TF_VAR_meta_graph_api_token_value: ${{ secrets.TF_VAR_META_GRAPH_API_TOKEN_VALUE }}
+      TF_VAR_whatsapp_phone_number_id: ${{ secrets.TF_VAR_WHATSAPP_PHONE_NUMBER_ID }}
+      TF_VAR_cloudflare_zone_id: ${{ secrets.TF_VAR_CLOUDFLARE_ZONE_ID }}
+      TF_VAR_cloudflare_account_id: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build Lambda zips
+        run: make build-lambdas
+
+      - name: Tofu init
+        run: tofu -chdir="$TOFU_DIR" init -input=false
+
+      - name: Tofu plan
+        id: plan
+        run: |
+          set -o pipefail
+          tofu -chdir="$TOFU_DIR" plan -no-color -input=false 2>&1 | tee plan.txt
+
+      - name: Comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- tofu-plan-dev -->';
+            let plan = fs.existsSync('plan.txt') ? fs.readFileSync('plan.txt', 'utf8') : '(no plan output)';
+            const max = 60000;
+            if (plan.length > max) plan = plan.slice(-max) + '\n\n... (truncated, see the Actions log for the full plan)';
+            const ok = '${{ steps.plan.outcome }}' === 'success';
+            const status = ok ? '✅ plan succeeded' : '❌ plan failed';
+            const body = `${marker}\n### Tofu plan (dev) — ${status}\n\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n\n</details>`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.data.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  apply:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_webhook_secret: ${{ secrets.TF_VAR_WEBHOOK_SECRET }}
+      TF_VAR_webhook_secret_value: ${{ secrets.TF_VAR_WEBHOOK_SECRET_VALUE }}
+      TF_VAR_gemini_api_key_value: ${{ secrets.TF_VAR_GEMINI_API_KEY_VALUE }}
+      TF_VAR_meta_graph_api_token_value: ${{ secrets.TF_VAR_META_GRAPH_API_TOKEN_VALUE }}
+      TF_VAR_whatsapp_phone_number_id: ${{ secrets.TF_VAR_WHATSAPP_PHONE_NUMBER_ID }}
+      TF_VAR_cloudflare_zone_id: ${{ secrets.TF_VAR_CLOUDFLARE_ZONE_ID }}
+      TF_VAR_cloudflare_account_id: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build Lambda zips
+        run: make build-lambdas
+
+      - name: Tofu init
+        run: tofu -chdir="$TOFU_DIR" init -input=false
+
+      - name: Tofu apply
+        run: tofu -chdir="$TOFU_DIR" apply -auto-approve -input=false
+
+      - name: Show outputs
+        run: |
+          echo "### Deploy outputs" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tofu -chdir="$TOFU_DIR" output >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
