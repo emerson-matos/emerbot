@@ -11,6 +11,13 @@ import {
 } from '@/components/ui/table'
 import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation } from '../api/queries'
 
+// CSS `capitalize` (text-transform) uppercases every word, which is wrong
+// for a multi-word Portuguese date like "abril de 2026" (→ "Abril De 2026").
+// Capitalize only the leading letter instead.
+function capitalizeFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
     <div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -141,8 +148,8 @@ export default function Goals() {
                 const expense = trend?.TotalExpense ?? 0
                 return (
                   <TableRow key={monthStr}>
-                    <TableCell className="capitalize">
-                      {format(new Date(monthStr + '-01'), "MMMM 'de' yyyy", { locale: ptBR })}
+                    <TableCell>
+                      {capitalizeFirst(format(new Date(monthStr + '-01'), "MMMM 'de' yyyy", { locale: ptBR }))}
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {formatBRL(income)} / {monthGoal ? formatBRL(monthGoal.RevenueTarget) : '—'}
