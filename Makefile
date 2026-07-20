@@ -17,6 +17,7 @@ TOFU_DIR := infra/opentofu/environments/dev
 LAMBDA_DIR := $(TOFU_DIR)/.lambdas
 LAMBDA_ZIP := $(LAMBDA_DIR)/webhook.zip
 DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
+NOTIFIER_ZIP := $(LAMBDA_DIR)/notifier.zip
 
 .PHONY: build test fmt lint \
         run-webhook run-api run-cli run-lambda \
@@ -24,7 +25,7 @@ DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
         logs-webhook logs-api \
         seed demo \
         web-dev \
-        build-lambda-webhook build-lambda-dashboard-api build-lambdas \
+        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
@@ -46,9 +47,15 @@ $(DASHBOARD_ZIP):
 	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/dashboard-bin ./apps/dashboard-api/cmd/lambda
 	cd $(LAMBDA_DIR) && mv dashboard-bin bootstrap && zip dashboard-api.zip bootstrap && rm bootstrap
 
+$(NOTIFIER_ZIP):
+	mkdir -p $(LAMBDA_DIR)
+	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/notifier-bin ./apps/notifier/cmd/lambda
+	cd $(LAMBDA_DIR) && mv notifier-bin bootstrap && zip notifier.zip bootstrap && rm bootstrap
+
 build-lambda-webhook: $(LAMBDA_ZIP)
 build-lambda-dashboard-api: $(DASHBOARD_ZIP)
-build-lambdas: build-lambda-webhook build-lambda-dashboard-api
+build-lambda-notifier: $(NOTIFIER_ZIP)
+build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier
 
 # ---------------------------------------------------------------------------
 # Test / fmt / lint
@@ -159,6 +166,8 @@ TF_VAR_cloudflare_account_id       ?= $(CLOUDFLARE_ACCOUNT_ID)
 export TF_VAR_cloudflare_account_id
 TF_VAR_meta_graph_api_token_value  ?= $(META_GRAPH_API_TOKEN)
 export TF_VAR_meta_graph_api_token_value
+TF_VAR_whatsapp_phone_number_id    ?= $(WHATSAPP_PHONE_NUMBER_ID)
+export TF_VAR_whatsapp_phone_number_id
 TF_VAR_cloudflare_zone_id          ?= $(CLOUDFLARE_ZONE_ID)
 export TF_VAR_cloudflare_zone_id
 

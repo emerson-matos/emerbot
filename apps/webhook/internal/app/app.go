@@ -23,6 +23,7 @@ import (
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -130,15 +131,23 @@ func firstToken(s string) string {
 	return s
 }
 
+// SessionStore records when a phone last messaged us, so the scheduled
+// notifier can respect WhatsApp's 24h customer-service window (free-form
+// messages are only allowed within it). packages/wasession satisfies this.
+type SessionStore interface {
+	RecordInbound(ctx context.Context, phone string, at time.Time) error
+}
+
 type App struct {
 	service          *orchestrator.Service
 	financialHandler *financial.Handler
 	whatsappClient   whatsapp.Client
+	sessions         SessionStore
 	secret           string
 	verifyToken      string
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
 	if verifyToken == "" {
 		verifyToken = secret
 	}
@@ -146,6 +155,7 @@ func New(service *orchestrator.Service, finHandler *financial.Handler, waClient 
 		service:          service,
 		financialHandler: finHandler,
 		whatsappClient:   waClient,
+		sessions:         sessions,
 		secret:           secret,
 		verifyToken:      verifyToken,
 	}
@@ -153,6 +163,7 @@ func New(service *orchestrator.Service, finHandler *financial.Handler, waClient 
 
 func NewFromEnv(secret, graphAPIToken string) *App {
 	var finHandler *financial.Handler
+	var sessions SessionStore
 	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
 	if finTable != "" {
@@ -163,6 +174,17 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		}
 		parser := whatsapp.NewRegexParser()
 		finHandler = financial.NewHandler(parser, store)
+	}
+
+	// The 24h-window session store lives in its own table (TTL-managed), so it
+	// is wired independently of the finance store.
+	if sessTable := shared.Getenv("WHATSAPP_SESSIONS_TABLE", ""); sessTable != "" {
+		ctx := context.Background()
+		sessStore, err := wasession.NewDynamoDBStore(ctx, sessTable, endpoint)
+		if err != nil {
+			log.Fatalf("NewFromEnv: session store: %v", err)
+		}
+		sessions = sessStore
 	}
 
 	stores := memory.NewInMemoryStores()
@@ -184,7 +206,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
 	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, finHandler, waClient, secret, verifyToken)
+	return New(svc, finHandler, waClient, secret, verifyToken, sessions)
 }
 
 func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
@@ -196,6 +218,15 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	if a.whatsappClient != nil {
 		if err := a.whatsappClient.MarkAsRead(ctx, req.PhoneNumberID, req.MessageID); err != nil {
 			log.Printf("mark as read: %v", err)
+		}
+	}
+
+	// Any inbound message opens WhatsApp's 24h customer-service window, so
+	// record it (best-effort) regardless of how the message routes below. The
+	// scheduled notifier reads this to avoid sending outside the window.
+	if a.sessions != nil && message.UserID != "" {
+		if err := a.sessions.RecordInbound(ctx, message.UserID, message.Timestamp); err != nil {
+			log.Printf("record inbound message: %v", err)
 		}
 	}
 

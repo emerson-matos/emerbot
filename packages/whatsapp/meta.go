@@ -18,6 +18,15 @@ type metaReplyPayload struct {
 	Context          metaContext  `json:"context,omitempty"`
 }
 
+// metaTextPayload is a message with no reply context — Meta rejects a
+// context object carrying an empty message_id, so proactive sends use this
+// leaner shape instead of metaReplyPayload.
+type metaTextPayload struct {
+	MessagingProduct string       `json:"messaging_product"`
+	To               string       `json:"to"`
+	Text             metaTextBody `json:"text"`
+}
+
 type metaTextBody struct {
 	Body string `json:"body"`
 }
@@ -66,6 +75,20 @@ func (c *MetaClient) SendReply(ctx context.Context, phoneNumberID, to, messageBo
 	_, err := c.postJSON(ctx, phoneNumberID, payload, http.StatusOK, http.StatusCreated)
 	if err != nil {
 		return fmt.Errorf("meta send reply: %w", err)
+	}
+	return nil
+}
+
+func (c *MetaClient) SendText(ctx context.Context, phoneNumberID, to, messageBody string) error {
+	payload := metaTextPayload{
+		MessagingProduct: "whatsapp",
+		To:               to,
+		Text:             metaTextBody{Body: messageBody},
+	}
+
+	_, err := c.postJSON(ctx, phoneNumberID, payload, http.StatusOK, http.StatusCreated)
+	if err != nil {
+		return fmt.Errorf("meta send text: %w", err)
 	}
 	return nil
 }

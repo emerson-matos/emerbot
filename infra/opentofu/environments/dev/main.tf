@@ -36,12 +36,14 @@ module "assistant" {
   environment                = var.environment
   lambda_zip_path            = var.lambda_zip_path
   dashboard_api_zip_path     = var.dashboard_api_zip_path
+  notifier_zip_path          = var.notifier_zip_path
   webhook_secret             = var.webhook_secret
   webhook_secret_value       = var.webhook_secret_value
   cognito_user_pool_issuer   = module.cognito_dashboard.issuer
   cognito_app_client_id      = module.cognito_dashboard.app_client_id
   gemini_api_key_value       = var.gemini_api_key_value
   meta_graph_api_token_value = var.meta_graph_api_token_value
+  whatsapp_phone_number_id   = var.whatsapp_phone_number_id
 }
 
 module "cognito_dashboard" {

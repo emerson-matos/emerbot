@@ -20,8 +20,16 @@ func (c *LocalClient) MarkAsRead(ctx context.Context, phoneNumberID string, mess
 }
 
 func (c *LocalClient) SendReply(_ context.Context, _ /*phoneNumberID*/ string, _ /*to*/ string, messageBody string, replyToMessageID string) error {
+	return c.post(replyToMessageID, messageBody)
+}
+
+func (c *LocalClient) SendText(_ context.Context, _ /*phoneNumberID*/ string, to string, messageBody string) error {
+	return c.post(to, messageBody)
+}
+
+func (c *LocalClient) post(to, messageBody string) error {
 	payload := map[string]string{
-		"to":      replyToMessageID,
+		"to":      to,
 		"message": messageBody,
 	}
 	body, err := json.Marshal(payload)

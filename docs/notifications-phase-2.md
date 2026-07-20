@@ -1,8 +1,59 @@
 # Notificações — Fase 2 (alertas por WhatsApp)
 
-Este documento descreve os próximos passos para a feature de notificações. A
-**Fase 1 já está implementada**; a **Fase 2** exige backend e ainda não foi
-feita.
+**Status: implementada.** As Fases 1 e 2 estão no código. O que resta é
+operacional (configurar o `WHATSAPP_PHONE_NUMBER_ID`, aplicar o OpenTofu) e um
+follow-up opcional (expor o log de entrega como histórico real na UI).
+
+## Como está montado
+
+| Camada | Onde |
+|--------|------|
+| Preferências (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`). |
+| API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go` (normaliza o telefone para E.164). |
+| Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
+| Job agendado | `apps/notifier` (Lambda) — avalia cada usuário e envia **um resumo diário** por WhatsApp, deduplicado por dia (log `SK=NOTIFLOG#<data>`). |
+| Janela de 24h | `packages/wasession` — tabela DynamoDB própria (`whatsapp-sessions`, on-demand, **TTL de 20h**). O webhook grava uma sessão por telefone a cada inbound; o notifier só envia se a sessão estiver ativa. |
+| Envio | `whatsapp.Client.SendText` (mensagem proativa, sem `context` de resposta). |
+| Frontend | form real em `apps/web/src/pages/Notificacoes.tsx` (`useNotificationPrefs` / `useSaveNotificationPrefsMutation`). |
+| Infra | notifier Lambda + IAM + `aws_cloudwatch_event_rule` (EventBridge) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
+
+### Janela de atendimento de 24h (evita cobrança)
+
+O WhatsApp só permite mensagens **livres** (não-template) dentro de 24h desde a
+última mensagem que o usuário enviou ao número. Fora dessa janela só valem
+_templates_ aprovados, **cobrados por conversa**. O notifier **nunca** usa
+template — logo, no pior caso, um envio fora da janela é apenas **rejeitado**
+pela Meta (não gera cobrança). Ainda assim, para não fazer envios inúteis, o
+notifier só envia quando há uma sessão ativa (`Result.OutsideWindow` conta os
+pulados).
+
+Mecânica (`packages/wasession`), na tabela dedicada `whatsapp-sessions`:
+
+- O webhook grava, a cada inbound, um item `{Phone, ExpiresAt = agora + 20h}`.
+- `ExpiresAt` é o atributo de **TTL** do DynamoDB, então o item some sozinho —
+  a tabela não cresce.
+- O notifier checa `Active(phone, agora)`: item presente **e** `ExpiresAt` no
+  futuro. A checagem no read protege contra o atraso de remoção do TTL (o
+  DynamoDB pode demorar horas para apagar), então nunca confiamos só na
+  presença do item.
+- As **20h** (abaixo das 24h reais) dão margem para o horário do job diário e
+  desvio de relógio.
+
+Na prática, o usuário manda qualquer mensagem (ex.: `/resumo`) para reabrir a
+janela e voltar a receber os alertas. Templates pagos ficam como decisão futura.
+
+### Configuração operacional pendente
+
+- **`WHATSAPP_PHONE_NUMBER_ID`** (Phone number ID do Meta) e
+  **`META_GRAPH_API_TOKEN`** precisam estar setados (via `TF_VAR_*`) para o
+  notifier enviar. Sem o token, o cliente cai no simulador local.
+- **Agenda**: `var.notifier_schedule` (default `cron(0 11 * * ? *)` = 08h em
+  São Paulo). Ajuste o fuso do "vence hoje" com `NOTIFIER_TIMEZONE`.
+- Rodar `make build-lambdas && make tofu-apply` (constrói também `notifier.zip`).
+
+## Histórico de referência (plano original)
+
+O texto abaixo é o plano que guiou a implementação, mantido para contexto.
 
 ## Fase 1 — alertas derivados no cliente (pronto)
 

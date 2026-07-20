@@ -14,9 +14,11 @@ import (
 // InMemoryStore implements Store for tests and local development without Docker.
 type InMemoryStore struct {
 	mu         sync.RWMutex
-	entries    map[string]domain.FinancialEntry // key: userID+entryID
-	categories map[string]domain.Category       // key: userID+slug
-	goals      map[string]domain.Goal           // key: userID+month
+	entries    map[string]domain.FinancialEntry    // key: userID+entryID
+	categories map[string]domain.Category          // key: userID+slug
+	goals      map[string]domain.Goal              // key: userID+month
+	notifPrefs map[string]domain.NotificationPrefs // key: userID
+	notifLog   map[string]struct{}                 // key: userID+"#"+key
 }
 
 func NewInMemoryStore() *InMemoryStore {
@@ -24,12 +26,15 @@ func NewInMemoryStore() *InMemoryStore {
 		entries:    make(map[string]domain.FinancialEntry),
 		categories: make(map[string]domain.Category),
 		goals:      make(map[string]domain.Goal),
+		notifPrefs: make(map[string]domain.NotificationPrefs),
+		notifLog:   make(map[string]struct{}),
 	}
 }
 
 func entryKey(userID, entryID string) string { return userID + "#" + entryID }
 func catKey(userID, slug string) string      { return userID + "#" + slug }
 func goalKey(userID, month string) string    { return userID + "#" + month }
+func notifLogKey(userID, key string) string  { return userID + "#" + key }
 
 // --- Entries ---
 
@@ -293,4 +298,48 @@ func (s *InMemoryStore) ListCategories(_ context.Context, userID string) ([]doma
 		return result[i].Slug < result[j].Slug
 	})
 	return result, nil
+}
+
+// --- Notifications ---
+
+func (s *InMemoryStore) SaveNotificationPrefs(_ context.Context, prefs domain.NotificationPrefs) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notifPrefs[prefs.UserID] = prefs
+	return nil
+}
+
+func (s *InMemoryStore) GetNotificationPrefs(_ context.Context, userID string) (domain.NotificationPrefs, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.notifPrefs[userID]
+	if !ok {
+		return domain.NotificationPrefs{}, fmt.Errorf("notification prefs not found for %s", userID)
+	}
+	return p, nil
+}
+
+func (s *InMemoryStore) ListNotificationPrefs(_ context.Context) ([]domain.NotificationPrefs, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.NotificationPrefs, 0, len(s.notifPrefs))
+	for _, p := range s.notifPrefs {
+		result = append(result, p)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].UserID < result[j].UserID })
+	return result, nil
+}
+
+func (s *InMemoryStore) NotificationSent(_ context.Context, userID, key string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.notifLog[notifLogKey(userID, key)]
+	return ok, nil
+}
+
+func (s *InMemoryStore) RecordNotificationSent(_ context.Context, userID, key string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notifLog[notifLogKey(userID, key)] = struct{}{}
+	return nil
 }

@@ -353,6 +353,7 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 		client,
 		"test-secret",
 		"test-verify-token",
+		nil,
 	)
 }
 
@@ -372,13 +373,16 @@ func newFailingApp(client *fakeWhatsAppClient) *App {
 		client,
 		"test-secret",
 		"test-verify-token",
+		nil,
 	)
 }
 
 type fakeWhatsAppClient struct {
 	markAsReadCalls int
 	sendReplyCalls  int
+	sendTextCalls   int
 	lastReply       string
+	lastText        string
 }
 
 func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
@@ -389,6 +393,12 @@ func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
 func (f *fakeWhatsAppClient) SendReply(_ context.Context, _, _, messageBody, _ string) error {
 	f.sendReplyCalls++
 	f.lastReply = messageBody
+	return nil
+}
+
+func (f *fakeWhatsAppClient) SendText(_ context.Context, _, _, messageBody string) error {
+	f.sendTextCalls++
+	f.lastText = messageBody
 	return nil
 }
 

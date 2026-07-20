@@ -87,4 +87,16 @@ type Store interface {
 	// Categories
 	SaveCategory(ctx context.Context, cat domain.Category) error
 	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
+
+	// Notification preferences
+	SaveNotificationPrefs(ctx context.Context, prefs domain.NotificationPrefs) error
+	GetNotificationPrefs(ctx context.Context, userID string) (domain.NotificationPrefs, error)
+	// ListNotificationPrefs returns every user's prefs — used by the scheduled
+	// notifier, which has no per-user request context to key off of.
+	ListNotificationPrefs(ctx context.Context) ([]domain.NotificationPrefs, error)
+
+	// Notification delivery log — lets the notifier avoid re-sending the same
+	// alert to the same user twice. key is caller-defined (e.g. "2026-07-20").
+	NotificationSent(ctx context.Context, userID, key string) (bool, error)
+	RecordNotificationSent(ctx context.Context, userID, key string, sentAt time.Time) error
 }
