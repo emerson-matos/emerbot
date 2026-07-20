@@ -3,6 +3,12 @@ TOFU    ?= tofu
 NPM     ?= npm
 COMPOSE ?= podman compose
 
+# $(if ...) splits its arguments on every top-level comma, so a literal comma
+# inside a then/else branch (e.g. "Name=x,Value=y") gets misparsed as an
+# extra argument instead of staying part of the text — this defers the comma
+# until after argument-splitting has already happened.
+comma := ,
+
 # On NixOS / is nearly full; redirect buildah temp files to /home.
 export TMPDIR := $(HOME)/.tmp/buildah
 $(shell mkdir -p $(TMPDIR))
@@ -114,15 +120,17 @@ demo: up
 # Users (dashboard auth)
 # ---------------------------------------------------------------------------
 # Create one user in the deployed Cognito user pool. Password is generated and
-# printed once unless PASSWORD is supplied.
-#   make create-user EMAIL=someone@example.com [NAME="Someone"] [PASSWORD=...]
+# printed once unless PASSWORD is supplied. PHONE (E.164, e.g. +5511999999999)
+# is prep for the WhatsApp bot's phone->account linking — not yet read by any
+# app code, just stored on the Cognito user.
+#   make create-user EMAIL=someone@example.com [NAME="Someone"] [PHONE=+5511999999999] [PASSWORD=...]
 create-user:
 	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com"; exit 1; }
 	eval "$$(aws configure export-credentials --format env)" && \
 	POOL_ID=$$($(TOFU) -chdir=$(TOFU_DIR) output -raw cognito_user_pool_id) && \
 	PASSWORD="$(if $(PASSWORD),$(PASSWORD),$$(openssl rand -base64 12))" && \
 	aws cognito-idp admin-create-user --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
-		--user-attributes Name=email,Value="$(EMAIL)" Name=email_verified,Value=true $(if $(NAME),Name=name,Value="$(NAME)",) \
+		--user-attributes Name=email,Value="$(EMAIL)" Name=email_verified,Value=true $(if $(NAME),Name=name$(comma)Value="$(NAME)") $(if $(PHONE),Name=phone_number$(comma)Value="$(PHONE)") \
 		--message-action SUPPRESS && \
 	aws cognito-idp admin-set-user-password --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
 		--password "$$PASSWORD" --permanent && \
