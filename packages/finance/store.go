@@ -99,11 +99,4 @@ type Store interface {
 	// alert to the same user twice. key is caller-defined (e.g. "2026-07-20").
 	NotificationSent(ctx context.Context, userID, key string) (bool, error)
 	RecordNotificationSent(ctx context.Context, userID, key string, sentAt time.Time) error
-
-	// WhatsApp customer-service window: the webhook records when a phone last
-	// messaged us so the notifier can send free-form messages only within the
-	// 24h window Meta allows (outside it, only paid template messages work).
-	// phone is E.164 digits.
-	RecordInboundMessage(ctx context.Context, phone string, at time.Time) error
-	LastInboundMessage(ctx context.Context, phone string) (time.Time, bool, error)
 }

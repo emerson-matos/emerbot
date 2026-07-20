@@ -19,7 +19,6 @@ type InMemoryStore struct {
 	goals      map[string]domain.Goal              // key: userID+month
 	notifPrefs map[string]domain.NotificationPrefs // key: userID
 	notifLog   map[string]struct{}                 // key: userID+"#"+key
-	inbound    map[string]time.Time                // key: phone (E.164)
 }
 
 func NewInMemoryStore() *InMemoryStore {
@@ -29,7 +28,6 @@ func NewInMemoryStore() *InMemoryStore {
 		goals:      make(map[string]domain.Goal),
 		notifPrefs: make(map[string]domain.NotificationPrefs),
 		notifLog:   make(map[string]struct{}),
-		inbound:    make(map[string]time.Time),
 	}
 }
 
@@ -344,21 +342,4 @@ func (s *InMemoryStore) RecordNotificationSent(_ context.Context, userID, key st
 	defer s.mu.Unlock()
 	s.notifLog[notifLogKey(userID, key)] = struct{}{}
 	return nil
-}
-
-func (s *InMemoryStore) RecordInboundMessage(_ context.Context, phone string, at time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Keep only the most recent inbound time.
-	if prev, ok := s.inbound[phone]; !ok || at.After(prev) {
-		s.inbound[phone] = at
-	}
-	return nil
-}
-
-func (s *InMemoryStore) LastInboundMessage(_ context.Context, phone string) (time.Time, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	t, ok := s.inbound[phone]
-	return t, ok, nil
 }

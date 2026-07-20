@@ -135,8 +135,9 @@ function WhatsAppPreferences() {
         </div>
 
         <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          Para não gerar cobrança, os alertas só são enviados nas 24h após você
-          mandar uma mensagem no WhatsApp. Mande qualquer mensagem (ex.:{' '}
+          Por regra do WhatsApp, os alertas só são enviados por um período após
+          você mandar uma mensagem ao bot. Se pararem de chegar, mande qualquer
+          mensagem (ex.:{' '}
           <span className="rounded bg-background px-1 py-0.5 font-mono font-medium text-foreground">/resumo</span>
           ) para reativar.
         </p>

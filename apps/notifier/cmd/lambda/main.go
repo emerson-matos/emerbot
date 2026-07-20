@@ -11,6 +11,7 @@ import (
 	"github.com/emerson/emerbot/apps/notifier/internal/notifier"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/shared"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -21,6 +22,15 @@ func main() {
 	finStore, err := pkgfinance.NewDynamoDBStore(ctx, finTable, "")
 	if err != nil {
 		log.Fatalf("finance store: %v", err)
+	}
+
+	sessTable := shared.Getenv("WHATSAPP_SESSIONS_TABLE", "")
+	if sessTable == "" {
+		log.Fatal("WHATSAPP_SESSIONS_TABLE is required")
+	}
+	sessions, err := wasession.NewDynamoDBStore(ctx, sessTable, "")
+	if err != nil {
+		log.Fatalf("session store: %v", err)
 	}
 
 	metaToken := shared.Getenv("META_GRAPH_API_TOKEN", "")
@@ -41,7 +51,7 @@ func main() {
 		loc = time.UTC
 	}
 
-	n := notifier.New(finStore, wa, phoneNumberID, loc)
+	n := notifier.New(finStore, sessions, wa, phoneNumberID, loc)
 
 	// EventBridge Scheduler invokes with an event we don't need to inspect —
 	// the job is the same every time.

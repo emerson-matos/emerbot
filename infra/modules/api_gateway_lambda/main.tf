@@ -77,6 +77,26 @@ resource "aws_dynamodb_table" "financial_entries" {
   }
 }
 
+# WhatsApp customer-service window: one item per phone, auto-expired by TTL
+# (see packages/wasession). On-demand billing keeps it off the finance table's
+# provisioned free-tier 25/25 capacity, and at a few messages/day the request
+# cost is negligible.
+resource "aws_dynamodb_table" "whatsapp_sessions" {
+  name         = "${local.prefix}-whatsapp-sessions"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "Phone"
+
+  attribute {
+    name = "Phone"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ExpiresAt"
+    enabled        = true
+  }
+}
+
 resource "aws_cloudwatch_log_group" "webhook" {
   name              = "/aws/lambda/${local.prefix}-webhook"
   retention_in_days = 14
@@ -98,6 +118,7 @@ resource "aws_lambda_function" "webhook" {
       WEBHOOK_SECRET          = var.webhook_secret
       WEBHOOK_VERIFY_TOKEN    = var.webhook_secret_value
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
+      WHATSAPP_SESSIONS_TABLE = aws_dynamodb_table.whatsapp_sessions.name
       META_GRAPH_API_TOKEN    = var.meta_graph_api_token_value
       GEMINI_API_KEY          = var.gemini_api_key_value
     }
@@ -187,6 +208,21 @@ resource "aws_iam_role_policy" "webhook_dynamodb" {
         aws_dynamodb_table.financial_entries.arn,
         "${aws_dynamodb_table.financial_entries.arn}/index/*",
       ]
+    }]
+  })
+}
+
+# The webhook writes one session item per inbound message.
+resource "aws_iam_role_policy" "webhook_sessions" {
+  name = "${local.prefix}-webhook-sessions"
+  role = aws_iam_role.lambda_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:PutItem"]
+      Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
     }]
   })
 }
@@ -350,19 +386,27 @@ resource "aws_iam_role_policy" "notifier_dynamodb" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "dynamodb:PutItem",
-        "dynamodb:GetItem",
-        "dynamodb:Query",
-        "dynamodb:Scan",
-      ]
-      Resource = [
-        aws_dynamodb_table.financial_entries.arn,
-        "${aws_dynamodb_table.financial_entries.arn}/index/*",
-      ]
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+        ]
+        Resource = [
+          aws_dynamodb_table.financial_entries.arn,
+          "${aws_dynamodb_table.financial_entries.arn}/index/*",
+        ]
+      },
+      {
+        # Read-only: the notifier only checks whether a session is still open.
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem"]
+        Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
+      },
+    ]
   })
 }
 
@@ -387,6 +431,7 @@ resource "aws_lambda_function" "notifier" {
   environment {
     variables = {
       FINANCIAL_ENTRIES_TABLE  = aws_dynamodb_table.financial_entries.name
+      WHATSAPP_SESSIONS_TABLE  = aws_dynamodb_table.whatsapp_sessions.name
       META_GRAPH_API_TOKEN     = var.meta_graph_api_token_value
       WHATSAPP_PHONE_NUMBER_ID = var.whatsapp_phone_number_id
     }

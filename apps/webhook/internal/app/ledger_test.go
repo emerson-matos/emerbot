@@ -9,6 +9,7 @@ import (
 	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/shared"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -18,7 +19,7 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store)
 	// service can be nil: financial commands short-circuit before it is used.
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", store)
+	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", wasession.NewInMemoryStore())
 
 	_, status, err := app.Handle(context.Background(), Request{
 		UserID:        "phone-A",
@@ -60,29 +61,27 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 func TestHandleRecordsInboundMessage(t *testing.T) {
 	t.Parallel()
 
-	store := pkgfinance.NewInMemoryStore()
+	sessions := wasession.NewInMemoryStore()
 	// Inbound recording happens before any routing, so /help (which needs
 	// neither a financial handler nor the orchestrator service) is enough.
-	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", store)
+	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
-	when := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	when := time.Now().UTC().Add(-time.Hour)
 	if _, _, err := app.Handle(context.Background(), Request{
 		UserID:    "5511999999999",
 		MessageID: "m1",
 		Text:      "/help",
-		Timestamp: when,
+		Timestamp: when.Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 
-	got, ok, err := store.LastInboundMessage(context.Background(), "5511999999999")
+	// The message opened the 24h window, so the phone's session is active now.
+	active, err := sessions.Active(context.Background(), "5511999999999", time.Now().UTC())
 	if err != nil {
-		t.Fatalf("last inbound: %v", err)
+		t.Fatalf("active: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected an inbound timestamp to be recorded")
-	}
-	if want, _ := time.Parse(time.RFC3339, when); !got.Equal(want) {
-		t.Fatalf("recorded %v, want %v", got, want)
+	if !active {
+		t.Fatal("expected an active session after handling an inbound message")
 	}
 }

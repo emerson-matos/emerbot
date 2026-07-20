@@ -14,6 +14,7 @@ import (
 
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/notifications"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -21,29 +22,26 @@ import (
 // looking for still-pending bills — matches the web hook's window.
 const OverdueLookbackMonths = 3
 
-// CustomerServiceWindow is WhatsApp's 24h window: a business may send free-form
-// messages only within 24h of the user's last inbound message. Outside it, only
-// (billed) template messages are allowed — which we deliberately avoid — so the
-// notifier stays silent rather than incur a charge.
-const CustomerServiceWindow = 24 * time.Hour
-
 type Notifier struct {
 	store         pkgfinance.Store
+	sessions      wasession.Store
 	wa            whatsapp.Client
 	phoneNumberID string
 	loc           *time.Location
 	now           func() time.Time
 }
 
-// New builds a Notifier. loc is the timezone whose calendar day defines
-// "today" / "vence hoje" (nil falls back to UTC). The clock is time.Now;
+// New builds a Notifier. sessions gates delivery to WhatsApp's customer-service
+// window (see packages/wasession). loc is the timezone whose calendar day
+// defines "today" / "vence hoje" (nil falls back to UTC). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store pkgfinance.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location) *Notifier {
+func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}
 	return &Notifier{
 		store:         store,
+		sessions:      sessions,
 		wa:            wa,
 		phoneNumberID: phoneNumberID,
 		loc:           loc,
@@ -90,16 +88,16 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		}
 		res.Evaluated++
 
-		// WhatsApp only lets us send free-form messages within 24h of the
-		// user's last inbound message. Outside that window we'd need a paid
-		// template, so we stay silent instead. Checked before any other work
-		// so out-of-window users cost just one GetItem.
-		last, ok, err := n.store.LastInboundMessage(ctx, prefs.Phone)
+		// WhatsApp only lets us send free-form messages within its
+		// customer-service window (see packages/wasession). Outside it we'd need
+		// a paid template, so we stay silent instead. Checked before any other
+		// work so out-of-window users cost just one GetItem.
+		active, err := n.sessions.Active(ctx, prefs.Phone, nowInstant)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("user %s: last inbound: %w", prefs.UserID, err))
+			errs = append(errs, fmt.Errorf("user %s: session check: %w", prefs.UserID, err))
 			continue
 		}
-		if !ok || nowInstant.Sub(last) >= CustomerServiceWindow {
+		if !active {
 			res.OutsideWindow++
 			continue
 		}

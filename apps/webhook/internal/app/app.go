@@ -23,6 +23,7 @@ import (
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -132,9 +133,9 @@ func firstToken(s string) string {
 
 // SessionStore records when a phone last messaged us, so the scheduled
 // notifier can respect WhatsApp's 24h customer-service window (free-form
-// messages are only allowed within it). The finance store satisfies this.
+// messages are only allowed within it). packages/wasession satisfies this.
 type SessionStore interface {
-	RecordInboundMessage(ctx context.Context, phone string, at time.Time) error
+	RecordInbound(ctx context.Context, phone string, at time.Time) error
 }
 
 type App struct {
@@ -173,7 +174,17 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		}
 		parser := whatsapp.NewRegexParser()
 		finHandler = financial.NewHandler(parser, store)
-		sessions = store
+	}
+
+	// The 24h-window session store lives in its own table (TTL-managed), so it
+	// is wired independently of the finance store.
+	if sessTable := shared.Getenv("WHATSAPP_SESSIONS_TABLE", ""); sessTable != "" {
+		ctx := context.Background()
+		sessStore, err := wasession.NewDynamoDBStore(ctx, sessTable, endpoint)
+		if err != nil {
+			log.Fatalf("NewFromEnv: session store: %v", err)
+		}
+		sessions = sessStore
 	}
 
 	stores := memory.NewInMemoryStores()
@@ -214,7 +225,7 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	// record it (best-effort) regardless of how the message routes below. The
 	// scheduled notifier reads this to avoid sending outside the window.
 	if a.sessions != nil && message.UserID != "" {
-		if err := a.sessions.RecordInboundMessage(ctx, message.UserID, message.Timestamp); err != nil {
+		if err := a.sessions.RecordInbound(ctx, message.UserID, message.Timestamp); err != nil {
 			log.Printf("record inbound message: %v", err)
 		}
 	}

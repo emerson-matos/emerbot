@@ -7,6 +7,7 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/wasession"
 )
 
 type fakeWA struct {
@@ -35,36 +36,45 @@ func day(s string) time.Time {
 func ptr(t time.Time) *time.Time { return &t }
 
 // runDay is the fixed "now" the test notifier uses. inWindow / outWindow are
-// last-inbound timestamps that respectively fall inside / outside WhatsApp's
-// 24h customer-service window relative to runDay.
+// last-inbound timestamps whose sessions are respectively still open / expired
+// (wasession.Window) as of runDay.
 var (
 	runDay    = day("2026-07-20")
-	inWindow  = day("2026-07-19").Add(12 * time.Hour) // 12h ago
-	outWindow = day("2026-07-17")                     // 3 days ago
+	inWindow  = day("2026-07-19").Add(12 * time.Hour) // session open at runDay
+	outWindow = day("2026-07-17")                     // session long expired
 )
 
+type stores struct {
+	fin      *pkgfinance.InMemoryStore
+	sessions *wasession.InMemoryStore
+}
+
+func newStores() stores {
+	return stores{fin: pkgfinance.NewInMemoryStore(), sessions: wasession.NewInMemoryStore()}
+}
+
 // seedUser saves prefs + entries and, when inboundAt is non-zero, records it as
-// the phone's last inbound message (controls the 24h window).
-func seedUser(t *testing.T, store pkgfinance.Store, inboundAt time.Time, prefs domain.NotificationPrefs, entries ...domain.FinancialEntry) {
+// the phone's last inbound message (which controls the 24h window).
+func seedUser(t *testing.T, s stores, inboundAt time.Time, prefs domain.NotificationPrefs, entries ...domain.FinancialEntry) {
 	t.Helper()
 	ctx := context.Background()
-	if err := store.SaveNotificationPrefs(ctx, prefs); err != nil {
+	if err := s.fin.SaveNotificationPrefs(ctx, prefs); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if err := store.SaveEntry(ctx, e); err != nil {
+		if err := s.fin.SaveEntry(ctx, e); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if !inboundAt.IsZero() && prefs.Phone != "" {
-		if err := store.RecordInboundMessage(ctx, prefs.Phone, inboundAt); err != nil {
+		if err := s.sessions.RecordInbound(ctx, prefs.Phone, inboundAt); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-func newNotifier(store pkgfinance.Store, wa *fakeWA) *Notifier {
-	n := New(store, wa, "PHONE_ID", time.UTC)
+func newNotifier(s stores, wa *fakeWA) *Notifier {
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC)
 	n.SetClock(func() time.Time { return runDay })
 	return n
 }
@@ -78,15 +88,15 @@ func dueExpense(id string, amount int64) domain.FinancialEntry {
 }
 
 func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
 	seedUser(
-		t, store, inWindow,
+		t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(store, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,21 +109,21 @@ func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
 }
 
 func TestRunSkipsOutsideCustomerServiceWindow(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
-	// Enabled, with a real due-today alert, but last messaged us 3 days ago.
+	// Enabled, with a real due-today alert, but last messaged us days ago.
 	seedUser(
-		t, store, outWindow,
+		t, s, outWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(store, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.sent) != 0 {
-		t.Fatalf("must not send outside the 24h window, sent=%d", len(wa.sent))
+		t.Fatalf("must not send outside the window, sent=%d", len(wa.sent))
 	}
 	if res.Evaluated != 1 || res.OutsideWindow != 1 || res.Sent != 0 {
 		t.Fatalf("res=%+v, want Evaluated=1 OutsideWindow=1 Sent=0", res)
@@ -121,16 +131,16 @@ func TestRunSkipsOutsideCustomerServiceWindow(t *testing.T) {
 }
 
 func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
-	// No inbound recorded at all (inboundAt zero) -> never in the window.
+	// No inbound recorded at all -> no session -> outside the window.
 	seedUser(
-		t, store, time.Time{},
+		t, s, time.Time{},
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(store, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,16 +150,16 @@ func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
 }
 
 func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
-	seedUser(t, store, inWindow,
+	seedUser(t, s, inWindow,
 		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true},
 		domain.FinancialEntry{UserID: "off", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
-	seedUser(t, store, inWindow,
+	seedUser(t, s, inWindow,
 		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true},
 		domain.FinancialEntry{UserID: "nophone", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
 
-	res, err := newNotifier(store, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,14 +169,14 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 }
 
 func TestRunDedupesWithinDay(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
 	seedUser(
-		t, store, inWindow,
+		t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
 		dueExpense("e1", 1000),
 	)
-	n := newNotifier(store, wa)
+	n := newNotifier(s, wa)
 
 	if _, err := n.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -184,16 +194,16 @@ func TestRunDedupesWithinDay(t *testing.T) {
 }
 
 func TestRunNoAlertsNoSend(t *testing.T) {
-	store := pkgfinance.NewInMemoryStore()
+	s := newStores()
 	wa := &fakeWA{}
 	// In-window and enabled, but the only expense is already paid -> no alert.
 	seedUser(
-		t, store, inWindow,
+		t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
 		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(runDay)},
 	)
 
-	res, err := newNotifier(store, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
