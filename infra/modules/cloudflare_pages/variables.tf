@@ -52,6 +52,16 @@ variable "api_url" {
   description = "Valor de VITE_API_URL injetado no build de produção."
 }
 
+variable "cognito_endpoint" {
+  type        = string
+  description = "Valor de VITE_COGNITO_ENDPOINT injetado no build (endpoint regional do Cognito IdP, ex: https://cognito-idp.<region>.amazonaws.com)."
+}
+
+variable "cognito_client_id" {
+  type        = string
+  description = "Valor de VITE_COGNITO_CLIENT_ID injetado no build (app client ID do Cognito user pool)."
+}
+
 variable "zone_id" {
   type        = string
   description = "Zone ID do Cloudflare para criar o CNAME do domínio customizado."

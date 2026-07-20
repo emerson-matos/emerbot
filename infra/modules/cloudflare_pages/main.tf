@@ -27,8 +27,12 @@ resource "cloudflare_pages_project" "this" {
   }
 
   # production and preview must agree on fail_open (Cloudflare API code 8000066),
-  # so both are defined explicitly with the same value and the same build-time
-  # VITE_API_URL.
+  # so both are defined explicitly with the same values and the same build-time
+  # VITE_* vars. Vite inlines import.meta.env.VITE_* at build time — omitting
+  # any of these here means the built bundle silently falls back to the
+  # client's localhost dev default instead of erroring, so all three must
+  # stay in sync (confirmed the hard way: a missing VITE_COGNITO_ENDPOINT
+  # here shipped a production bundle pointed at localhost:9229).
   deployment_configs = {
     production = {
       fail_open = true
@@ -36,6 +40,14 @@ resource "cloudflare_pages_project" "this" {
         VITE_API_URL = {
           type  = "plain_text"
           value = var.api_url
+        }
+        VITE_COGNITO_ENDPOINT = {
+          type  = "plain_text"
+          value = var.cognito_endpoint
+        }
+        VITE_COGNITO_CLIENT_ID = {
+          type  = "plain_text"
+          value = var.cognito_client_id
         }
       }
     }
@@ -45,6 +57,14 @@ resource "cloudflare_pages_project" "this" {
         VITE_API_URL = {
           type  = "plain_text"
           value = var.api_url
+        }
+        VITE_COGNITO_ENDPOINT = {
+          type  = "plain_text"
+          value = var.cognito_endpoint
+        }
+        VITE_COGNITO_CLIENT_ID = {
+          type  = "plain_text"
+          value = var.cognito_client_id
         }
       }
     }

@@ -124,6 +124,8 @@ module "cloudflare_pages" {
   github_owner      = var.github_owner
   github_repo       = var.github_repo
   api_url           = "https://${local.api_domain}"
+  cognito_endpoint  = module.cognito_dashboard.idp_endpoint
+  cognito_client_id = module.cognito_dashboard.app_client_id
   zone_id           = var.cloudflare_zone_id
   custom_domain     = "${var.dashboard_record_name}.${local.zone_name}"
   record_name       = var.dashboard_record_name
