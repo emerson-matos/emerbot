@@ -14,6 +14,7 @@ export TMPDIR := $(HOME)/.tmp/buildah
 $(shell mkdir -p $(TMPDIR))
 
 TOFU_DIR := infra/opentofu/environments/dev
+BOOTSTRAP_DIR := infra/opentofu/bootstrap
 LAMBDA_DIR := $(TOFU_DIR)/.lambdas
 LAMBDA_ZIP := $(LAMBDA_DIR)/webhook.zip
 DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
@@ -32,7 +33,8 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         seed demo \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas clean-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-plan tofu-apply tofu-destroy
+        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state \
+        tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
 # Go
@@ -195,6 +197,19 @@ export TF_VAR_cloudflare_zone_id
 
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
+
+# One-time-per-account: create the S3 state bucket + GitHub OIDC deploy role.
+# Uses your local admin AWS creds. See docs/deploy.md.
+tofu-bootstrap:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) apply
+
+# One-time: push the existing local terraform.tfstate up to the S3 backend
+# (run after tofu-bootstrap, the first time you switch to remote state).
+tofu-migrate-state:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(TOFU_DIR) init -migrate-state
 
 tofu-plan: build-lambdas
 	eval "$$(aws configure export-credentials --format env)" && \
