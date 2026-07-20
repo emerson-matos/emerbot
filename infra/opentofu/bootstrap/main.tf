@@ -29,8 +29,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
 }
 
 # Versioning lets us roll back a bad state write, but old versions would pile up
-# forever. Keep 90 days of history (plenty for rollback) and drop the rest, so
-# storage stays a rounding error. Versioning must be enabled first.
+# forever. Cap the history so storage stays a rounding error: keep the 10 most
+# recent prior versions, and expire any that are also older than 30 days. S3
+# only deletes a noncurrent version when BOTH conditions hold, so the 10 newest
+# are always retained for rollback. Versioning must be enabled first.
 resource "aws_s3_bucket_lifecycle_configuration" "state" {
   bucket     = aws_s3_bucket.state.id
   depends_on = [aws_s3_bucket_versioning.state]
@@ -42,7 +44,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
     filter {}
 
     noncurrent_version_expiration {
-      noncurrent_days = 90
+      noncurrent_days           = 30
+      newer_noncurrent_versions = 10
     }
 
     abort_incomplete_multipart_upload {
