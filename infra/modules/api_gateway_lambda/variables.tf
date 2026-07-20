@@ -74,3 +74,9 @@ variable "notifier_schedule" {
   default     = "cron(0 11 * * ? *)"
   description = "Expressão de agenda do EventBridge para o notifier. Padrão: 08h em São Paulo (11h UTC)."
 }
+
+variable "notifier_timezone" {
+  type        = string
+  default     = "America/Sao_Paulo"
+  description = "Fuso horário que define o dia (\"vence hoje\") dos alertas do notifier."
+}

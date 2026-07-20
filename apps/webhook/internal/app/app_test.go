@@ -380,7 +380,9 @@ func newFailingApp(client *fakeWhatsAppClient) *App {
 type fakeWhatsAppClient struct {
 	markAsReadCalls int
 	sendReplyCalls  int
+	sendTextCalls   int
 	lastReply       string
+	lastText        string
 }
 
 func (f *fakeWhatsAppClient) MarkAsRead(context.Context, string, string) error {
@@ -395,8 +397,8 @@ func (f *fakeWhatsAppClient) SendReply(_ context.Context, _, _, messageBody, _ s
 }
 
 func (f *fakeWhatsAppClient) SendText(_ context.Context, _, _, messageBody string) error {
-	f.sendReplyCalls++
-	f.lastReply = messageBody
+	f.sendTextCalls++
+	f.lastText = messageBody
 	return nil
 }
 
