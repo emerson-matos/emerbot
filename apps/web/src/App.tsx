@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import { AuthLayout } from './components/layout/AuthLayout';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const token = localStorage.getItem('access_token')
@@ -12,7 +13,15 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
+
+        <Route
+          element={
+            <AuthLayout />
+          }
+        >
+          <Route path="/login" element={<Login />} />
+        </Route>
+
         <Route
           path="/"
           element={

@@ -1,44 +1,53 @@
-import { useMutation, useQueries, useQueryClient, useQuery } from '@tanstack/react-query'
-import { api } from './client'
-import type { Entry } from './client'
-import { useToast } from '@/lib/toast'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQueryClient,
+  useQuery,
+} from "@tanstack/react-query";
+import { api, CognitoAuthError } from "./client";
+import type { Entry } from "./client";
+import { useToast } from "@/lib/toast";
+import { useNavigate } from "react-router-dom";
 
 export const queryKeys = {
-  summaryMonthly: (month: string) => ['summary', 'monthly', month] as const,
-  summaryCategories: (from?: string, to?: string) => ['summary', 'categories', from, to] as const,
-  cashflow: (month: string) => ['summary', 'cashflow', month] as const,
-  entries: (from: string, to: string) => ['entries', from, to] as const,
-  goal: (month: string) => ['goal', month] as const,
-}
+  summaryMonthly: (month: string) => ["summary", "monthly", month] as const,
+  summaryCategories: (from?: string, to?: string) =>
+    ["summary", "categories", from, to] as const,
+  cashflow: (month: string) => ["summary", "cashflow", month] as const,
+  entries: (from: string, to: string) => ["entries", from, to] as const,
+  entriesPaged: (pageSize: number) => ["entries", "paged", pageSize] as const,
+  goal: (month: string) => ["goal", month] as const,
+};
 
 export function useMonthlySummary(month: string) {
   return useQuery({
     queryKey: queryKeys.summaryMonthly(month),
     queryFn: () => api.summary.monthly(month),
-  })
+  });
 }
 
 export function useMonthlyTrend(months: string[]) {
   return useQueries({
-    queries: months.map(month => ({
+    queries: months.map((month) => ({
       queryKey: queryKeys.summaryMonthly(month),
       queryFn: () => api.summary.monthly(month),
     })),
-  })
+  });
 }
 
 export function useCategorySummary(from?: string, to?: string) {
   return useQuery({
     queryKey: queryKeys.summaryCategories(from, to),
     queryFn: () => api.summary.categories(from, to),
-  })
+  });
 }
 
 export function useCashFlow(month: string) {
   return useQuery({
     queryKey: queryKeys.cashflow(month),
     queryFn: () => api.summary.cashflow(month),
-  })
+  });
 }
 
 export function useEntries(from: string, to: string) {
@@ -52,7 +61,7 @@ export function useGoal(month: string) {
   return useQuery({
     queryKey: queryKeys.goal(month),
     queryFn: () => api.goals.get(month),
-  })
+  });
 }
 
 type EntriesPage = { entries: Entry[]; count: number }
@@ -61,32 +70,62 @@ type EntriesPage = { entries: Entry[]; count: number }
 // on failure; on settle, revalidates entries + every summary so KPIs/charts
 // catch up.
 export function useMarkPaidMutation(from: string, to: string) {
-  const queryClient = useQueryClient()
-  const notify = useToast()
-  const key = queryKeys.entries(from, to)
+  const queryClient = useQueryClient();
+  const notify = useToast();
+  const key = queryKeys.entries(from, to);
 
   return useMutation({
-    mutationFn: (entryID: string) => api.entries.update(entryID, { payment_status: 'paid' }),
+    mutationFn: (entryID: string) =>
+      api.entries.update(entryID, { payment_status: "paid" }),
     onMutate: async (entryID: string) => {
-      await queryClient.cancelQueries({ queryKey: key })
-      const previous = queryClient.getQueryData<EntriesPage>(key)
-      queryClient.setQueryData<EntriesPage | undefined>(key, old =>
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<EntriesPage>(key);
+      queryClient.setQueryData<EntriesPage | undefined>(key, (old) =>
         old
-          ? { ...old, entries: old.entries.map(e => (e.EntryID === entryID ? { ...e, PaymentStatus: 'paid' as const } : e)) }
+          ? {
+              ...old,
+              entries: old.entries.map((e) =>
+                e.EntryID === entryID
+                  ? { ...e, PaymentStatus: "paid" as const }
+                  : e,
+              ),
+            }
           : old,
-      )
-      return { previous }
+      );
+      return { previous };
     },
     onError: (_err, _entryID, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous)
-      notify('Não foi possível marcar como pago.', 'error')
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      notify("Não foi possível marcar como pago.", "error");
     },
     onSuccess: () => {
-      notify('Transação marcada como paga.', 'success')
+      notify("Transação marcada como paga.", "success");
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['summary'] })
-      queryClient.invalidateQueries({ queryKey: key })
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: key });
     },
-  })
+  });
+}
+
+export class InvalidCredentialsError extends Error {}
+
+export function useLoginMutation() {
+  return useMutation({
+    mutationFn: async ({ email, password }: LoginRequest) => {
+      try {
+        await api.auth.login(email, password);
+      } catch (err) {
+        if (
+          err instanceof CognitoAuthError &&
+          (err.type === "NotAuthorizedException" ||
+            err.type === "UserNotFoundException")
+        ) {
+          throw new InvalidCredentialsError();
+        }
+
+        throw err;
+      }
+    },
+  });
 }
