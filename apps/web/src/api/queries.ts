@@ -8,7 +8,6 @@ import {
 import { api, CognitoAuthError } from "./client";
 import type { Entry } from "./client";
 import { useToast } from "@/lib/toast";
-import { useNavigate } from "react-router-dom";
 
 export const queryKeys = {
   summaryMonthly: (month: string) => ["summary", "monthly", month] as const,
@@ -153,6 +152,10 @@ export function useMarkPaidMutation(from: string, to: string) {
 }
 
 export class InvalidCredentialsError extends Error {}
+type LoginRequest = {
+  email: string;
+  password: string;
+};
 
 export function useLoginMutation() {
   return useMutation({

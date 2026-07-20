@@ -16,7 +16,6 @@ import {
 import { formatBRL } from '../api/client'
 import type { Entry } from '../api/client'
 import { useEntriesInfinite } from '../api/queries'
-import AppLayout from '../components/AppLayout'
 import EmptyState from '../components/EmptyState'
 
 type TypeFilter = 'all' | 'income' | 'expense'

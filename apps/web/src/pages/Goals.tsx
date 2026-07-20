@@ -10,7 +10,6 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation } from '../api/queries'
-import AppLayout from '../components/AppLayout'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -24,7 +23,6 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function Goals() {
-  const userName = localStorage.getItem('user_name') ?? 'você'
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
   const months3 = [-2, -1, 0].map(offset =>

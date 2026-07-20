@@ -13,7 +13,6 @@ import {
   useMonthlySummary, useCategorySummary, useCashFlow, useEntries,
   useMonthlyTrend, useMarkPaidMutation,
 } from '../api/queries'
-import AppLayout from '../components/AppLayout'
 import KpiCard from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
@@ -23,10 +22,8 @@ import TransactionsTable from '../components/TransactionsTable'
 import EmptyState from '../components/EmptyState'
 
 export default function Dashboard() {
-  const userName = localStorage.getItem('user_name') ?? 'você'
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
-  const monthLabel = format(now, "MMMM 'de' yyyy", { locale: ptBR })
   const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
   const months3 = [-2, -1, 0].map(offset =>
