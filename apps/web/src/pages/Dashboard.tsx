@@ -24,7 +24,7 @@ import EmptyState from '../components/EmptyState'
 export default function Dashboard() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
+  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), now.getDay() - 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
   const months3 = [-2, -1, 0].map(offset =>
     format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
