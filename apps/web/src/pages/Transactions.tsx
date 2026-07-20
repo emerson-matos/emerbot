@@ -153,6 +153,7 @@ export default function Transactions() {
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead>Pago Em</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -191,10 +192,10 @@ export default function Transactions() {
                             <Badge className="bg-warning/15 text-warning">Pendente</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          <span className="text-xs text-muted-foreground tabular-nums">
-                            {formatPaidAt(e)}
-                          </span>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                          {formatPaidAt(e) || '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
                           {e.PaymentStatus === 'pending' && (
                             <Button
                               variant="ghost"

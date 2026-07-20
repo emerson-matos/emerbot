@@ -86,7 +86,8 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Pr
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Valor</TableHead>
                   <TableHead className="text-center">Status</TableHead>
-                  {onMarkPaid && <TableHead>Pago Em</TableHead>}
+                  <TableHead>Pago Em</TableHead>
+                  {onMarkPaid && <TableHead />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -133,11 +134,11 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Pr
                           </Badge>
                         )}
                       </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                        {formatPaidAt(e) || "—"}
+                      </TableCell>
                       {onMarkPaid && (
-                        <TableCell className="whitespace-nowrap">
-                          <span className="text-xs text-muted-foreground tabular-nums">
-                            {formatPaidAt(e)}
-                          </span>
+                        <TableCell className="text-right">
                           {e.PaymentStatus === "pending" && (
                             <Button
                               variant="ghost"
