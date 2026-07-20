@@ -54,7 +54,7 @@ function base64UrlDecode(input: string): string {
   return new TextDecoder().decode(bytes)
 }
 
-function decodeIdToken(idToken: string): { name?: string; email?: string } {
+function decodeIdToken(idToken: string): { name?: string; email?: string; phone_number?: string } {
   try {
     return JSON.parse(base64UrlDecode(idToken.split('.')[1]))
   } catch {
@@ -65,8 +65,10 @@ function decodeIdToken(idToken: string): { name?: string; email?: string } {
 function storeAuthResult(result: CognitoAuthResult) {
   localStorage.setItem('access_token', result.AccessToken)
   if (result.RefreshToken) localStorage.setItem('refresh_token', result.RefreshToken)
-  const { name, email } = decodeIdToken(result.IdToken)
+  const { name, email, phone_number } = decodeIdToken(result.IdToken)
   localStorage.setItem('user_name', name ?? email ?? '')
+  if (email) localStorage.setItem('user_email', email)
+  if (phone_number) localStorage.setItem('user_phone', phone_number)
 }
 
 // Cognito's REFRESH_TOKEN_AUTH flow doesn't rotate the refresh token, so a
@@ -172,6 +174,8 @@ export const api = {
       const qs = month ? `?month=${month}` : ''
       return request<{ goal: Goal | null; month: string }>(`/goals${qs}`)
     },
+    save: (month: string, data: { revenue_target?: number; expense_target?: number }) =>
+      request<{ goal: Goal }>('/goals', { method: 'PUT', body: JSON.stringify({ month, ...data }) }),
   },
 }
 

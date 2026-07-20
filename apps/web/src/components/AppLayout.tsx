@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Receipt, Target, Settings, Pill,
+  ArrowLeftRight, Landmark,
   Moon, Sun, LogOut, Menu, X,
+  Sidebar,
 } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
@@ -10,15 +13,17 @@ import { cn } from '@/lib/utils'
 interface NavItem {
   label: string
   icon: typeof LayoutDashboard
-  active?: boolean
+  to?: string
   soon?: boolean
 }
 
 const nav: NavItem[] = [
-  { label: 'Painel', icon: LayoutDashboard, active: true },
-  { label: 'Transações', icon: Receipt, soon: true },
-  { label: 'Metas', icon: Target, soon: true },
-  { label: 'Ajustes', icon: Settings, soon: true },
+  { label: 'Painel', icon: LayoutDashboard, to: '/' },
+  { label: 'Transações', icon: Receipt, to: '/transacoes' },
+  { label: 'Metas', icon: Target, to: '/metas' },
+  { label: 'Estoque', icon: ArrowLeftRight, soon: true },
+  { label: 'Contas', icon: Landmark, soon: true },
+  { label: 'Ajustes', icon: Settings, to: '/ajustes' },
 ]
 
 function Brand() {
@@ -28,7 +33,7 @@ function Brand() {
         <Pill className="size-5" />
       </span>
       <div className="leading-tight">
-        <p className="font-heading text-sm font-semibold tracking-tight">Farmácia</p>
+        <p className="font-heading text-sm font-semibold tracking-tight">Drogaria Nova Farma</p>
         <p className="text-[11px] text-muted-foreground">Financeiro</p>
       </div>
     </div>
@@ -36,54 +41,63 @@ function Brand() {
 }
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const base = 'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors'
+  const inactive = 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
   return (
     <nav className="flex flex-col gap-1">
       {nav.map(item => {
         const Icon = item.icon
-        return (
-          <button
-            key={item.label}
-            type="button"
-            disabled={item.soon}
-            onClick={onNavigate}
-            aria-current={item.active ? 'page' : undefined}
-            className={cn(
-              'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              item.active
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-              item.soon && 'cursor-not-allowed opacity-50 hover:bg-transparent',
-            )}
-          >
-            <Icon className="size-4 shrink-0" />
-            <span className="flex-1 text-left">{item.label}</span>
-            {item.soon && (
+        if (item.soon) {
+          return (
+            <button
+              key={item.label}
+              type="button"
+              disabled
+              className={cn(base, inactive, 'cursor-not-allowed opacity-50 hover:bg-transparent')}
+            >
+              <Icon className="size-4 shrink-0" />
+              <span className="flex-1 text-left">{item.label}</span>
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                 em breve
               </span>
-            )}
-          </button>
+            </button>
+          )
+        }
+        return (
+          <NavLink
+            key={item.label}
+            to={item.to!}
+            end={item.to === '/'}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cn(
+                base,
+                isActive
+                  ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                  : inactive,
+              )
+            }
+          >
+            <Icon className="size-4 shrink-0" />
+            <span className="flex-1 text-left">{item.label}</span>
+          </NavLink>
         )
       })}
     </nav>
   )
 }
 
-export default function AppLayout({
-  children,
-  userName,
-  subtitle,
-  onLogout,
-}: {
-  children: ReactNode
-  userName: string
-  subtitle?: string
-  onLogout: () => void
-}) {
+export default function ApppLt() {
   const { theme, toggle } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const initials = userName.trim().slice(0, 2).toUpperCase() || '??'
+  const userName = localStorage.getItem('user_name') ?? 'você'
+  const initials = userName?.trim().slice(0, 2).toUpperCase() || '??'
+  const navigate = useNavigate();
 
+  function handleLogout() {
+    localStorage.clear();
+    navigate("/login", { replace: true });
+  }
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
       {/* Desktop sidebar */}
@@ -101,7 +115,7 @@ export default function AppLayout({
             <p className="text-[11px] text-muted-foreground">Administrador</p>
           </div>
           <button
-            onClick={onLogout}
+            onClick={handleLogout}
             aria-label="Sair"
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
           >
@@ -117,25 +131,6 @@ export default function AppLayout({
             className="absolute inset-0 bg-foreground/40 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col gap-6 border-r border-sidebar-border bg-sidebar p-4 [animation:toast-in_.2s_ease-out]">
-            <div className="flex items-center justify-between pt-2">
-              <Brand />
-              <button
-                onClick={() => setMobileOpen(false)}
-                aria-label="Fechar menu"
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-muted"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-            <NavLinks onNavigate={() => setMobileOpen(false)} />
-            <button
-              onClick={onLogout}
-              className="mt-auto flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-destructive"
-            >
-              <LogOut className="size-4" /> Sair
-            </button>
-          </aside>
         </div>
       )}
 
@@ -148,14 +143,6 @@ export default function AppLayout({
           >
             <Menu className="size-5" />
           </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="font-heading truncate text-base font-semibold tracking-tight sm:text-lg">
-              Painel Financeiro
-            </h1>
-            {subtitle && (
-              <p className="truncate text-xs capitalize text-muted-foreground">{subtitle}</p>
-            )}
-          </div>
           <button
             onClick={toggle}
             aria-label={theme === 'dark' ? 'Tema claro' : 'Tema escuro'}
@@ -164,8 +151,9 @@ export default function AppLayout({
             {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6"><Outlet /></main>
       </div>
     </div>
   )
 }
+

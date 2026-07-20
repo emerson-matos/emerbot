@@ -1,4 +1,5 @@
 import { Target } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { formatBRL } from '../api/client'
 import type { MonthlySummary } from '../api/client'
@@ -60,6 +61,7 @@ export default function GoalCard({ month, summary }: Props) {
           <p className="py-2 text-center text-xs text-muted-foreground">
             Defina sua meta pelo WhatsApp com{' '}
             <span className="rounded bg-muted px-1 py-0.5 font-mono font-semibold text-foreground">/meta</span>
+            {' '}ou <Link to="/metas" className="text-primary underline">defina pelo painel</Link>
           </p>
         )}
       </CardContent>
