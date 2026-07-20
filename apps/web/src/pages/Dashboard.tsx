@@ -155,12 +155,14 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2"><CashFlowChart data={cashflow} /></div>
-        <IncomeExpenseChart data={monthlyData} />
+        <div className="lg:col-span-3"><CashFlowChart data={cashflow} /></div>
       </div>
 
       {/* Breakdown */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="col-span-1">
+          <IncomeExpenseChart data={monthlyData} />
+        </div>
         <Card>
           <CardContent className="space-y-4">
             <h3 className="flex items-center gap-2 text-sm font-semibold">

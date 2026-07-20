@@ -1,79 +1,181 @@
+import { useId, useMemo } from "react";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
-} from 'recharts'
-import { LineChart as LineChartIcon } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { formatBRL } from '../api/client'
-import type { CashFlowPoint } from '../api/client'
-import { chartColor, tooltipProps } from '@/lib/chart'
-import { format, parseISO } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ReferenceDot,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { LineChart as LineChartIcon } from "lucide-react";
+import { format, parseISO } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { chartColor, tooltipProps } from "@/lib/chart";
+import { formatBRL } from "../api/client";
+import type { CashFlowPoint } from "../api/client";
 
 interface Props {
-  data: CashFlowPoint[]
+  data: CashFlowPoint[];
 }
 
 export default function CashFlowChart({ data }: Props) {
-  const today = format(new Date(), 'yyyy-MM-dd')
-  let todayIndex = -1
+  const gradientId = useId();
 
-  const formatted = data.map((p, i) => {
-    if (p.Date === today) todayIndex = i
+  const { formatted, todayPoint } = useMemo(() => {
+    const today = format(new Date(), "yyyy-MM-dd");
+
+    const formatted = data.map((point) => {
+      const balance = point.RunningBalance / 100;
+      const label = format(parseISO(point.Date), "dd/MM", {
+        locale: ptBR,
+      });
+
+      return {
+        ...point,
+        label,
+        balance,
+
+        actual: point.Date <= today ? balance : null,
+        forecast: point.Date >= today ? balance : null,
+      };
+    });
+
     return {
-      ...p,
-      label: format(parseISO(p.Date), 'dd/MM', { locale: ptBR }),
-      balance: p.RunningBalance / 100,
-    }
-  })
+      formatted,
+      todayPoint: formatted.find((p) => p.Date === today),
+    };
+  }, [data]);
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <LineChartIcon className="size-4 text-primary" aria-hidden />
+          <LineChartIcon className="size-4 text-primary" />
           Fluxo de Caixa do Mês
         </CardTitle>
       </CardHeader>
+
       <CardContent>
-        <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={formatted} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={320}>
+          <AreaChart
+            data={formatted}
+            margin={{ top: 24, right: 12, left: 0, bottom: 0 }}
+          >
             <defs>
-              <linearGradient id="cashflow-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={chartColor.income} stopOpacity={0.28} />
-                <stop offset="100%" stopColor={chartColor.income} stopOpacity={0} />
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                {/* positive */}
+                <stop
+                  offset="0%"
+                  stopColor={chartColor.income}
+                />
+
+                {/* negative */}
+                <stop
+                  offset="100%"
+                  stopColor={chartColor.expense}
+                />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={chartColor.grid} vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: chartColor.axis }} interval={4} tickLine={false} axisLine={false} />
-            <YAxis
-              tick={{ fontSize: 11, fill: chartColor.axis }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`}
+
+            <CartesianGrid
+              vertical={false}
+              stroke={chartColor.grid}
+              strokeDasharray="3 3"
+              opacity={0.2}
             />
-            <Tooltip {...tooltipProps} formatter={value => [formatBRL(Number(value) * 100), 'Saldo']} />
-            <ReferenceLine y={0} stroke={chartColor.expense} strokeDasharray="4 4" />
-            {todayIndex >= 0 && (
-              <ReferenceLine
-                x={formatted[todayIndex].label}
-                stroke={chartColor.today}
-                strokeDasharray="4 4"
-                label={{ value: 'hoje', position: 'top', fontSize: 10, fill: chartColor.today }}
-              />
+
+            <XAxis
+              dataKey="label"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 11, fill: chartColor.axis }}
+              minTickGap={24}
+            />
+
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 11, fill: chartColor.axis }}
+              tickFormatter={(v: number) => {
+                const abs = Math.abs(v);
+
+                if (abs >= 1000) {
+                  return `${v < 0 ? "-" : ""}R$${(abs / 1000).toFixed(0)}k`;
+                }
+
+                return `${v < 0 ? "-" : ""}R$${abs.toFixed(0)}`;
+              }}
+            />
+
+            <Tooltip
+              {...tooltipProps}
+              formatter={(value) => [
+                formatBRL(Number(value ?? 0) * 100),
+                "Saldo",
+              ]}
+            />
+
+            <ReferenceLine
+              y={0}
+              stroke={chartColor.grid}
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+            />
+
+            {todayPoint && (
+              <>
+                <ReferenceLine
+                  x={todayPoint.label}
+                  stroke={chartColor.today}
+                  strokeDasharray="4 4"
+                  label={{
+                    value: "Hoje",
+                    position: "insideTop",
+                    dx: -24,
+                    dy: 8,
+                    fontSize: 16,
+                    fill: chartColor.today,
+                  }}
+                />
+                <ReferenceDot
+                  x={todayPoint.label}
+                  y={todayPoint.balance}
+                  r={4}
+                  fill={chartColor.today}
+                  stroke="#fff"
+                  strokeWidth={2}
+                />
+              </>
             )}
+
             <Area
               type="monotone"
-              dataKey="balance"
-              stroke={chartColor.income}
-              strokeWidth={2}
-              fill="url(#cashflow-fill)"
+              dataKey="actual"
+              stroke={`url(#${gradientId})`}
+              strokeWidth={2.5}
+              fill={`url(#${gradientId})`}
               dot={false}
-              activeDot={{ r: 4 }}
+              connectNulls
+            />
+
+            <Area
+              type="monotone"
+              dataKey="forecast"
+              stroke={`url(#${gradientId})`}
+              strokeWidth={2.5}
+              strokeDasharray="6 4"
+              fill="none"
+              dot={false}
+              connectNulls
             />
           </AreaChart>
         </ResponsiveContainer>
       </CardContent>
     </Card>
-  )
+  );
 }
