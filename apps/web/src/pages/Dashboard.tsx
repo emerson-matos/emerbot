@@ -87,13 +87,17 @@ export default function Dashboard() {
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
   const cashflowQuery = useCashFlow(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
-  const markPaid = useMarkPaidMutation(firstDay, lastDay)
+  const markPaid = useMarkPaidMutation()
 
   const cashflow = cashflowQuery.data?.points ?? []
   const entries = entriesQuery.data?.entries ?? []
 
   return (
     <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight">Painel de Controle</h1>
+        <p className="mt-1 text-muted-foreground">Visão geral financeira do estabelecimento</p>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <BalanceCard />
@@ -110,15 +114,13 @@ export default function Dashboard() {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-3"><CashFlowChart data={cashflow} /></div>
-      </div>
+      <CashFlowChart data={cashflow} />
+      <IncomeExpenseChart />
 
       {/* Breakdown */}
-      <div className="grid grid-cols-1  gap-3 lg:grid-cols-3">
-        <IncomeExpenseChart />
-        <CategoryDonut />
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <MonthlyExpent />
+        <CategoryDonut />
       </div>
 
       <TransactionsTable

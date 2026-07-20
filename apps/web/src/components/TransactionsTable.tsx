@@ -16,6 +16,7 @@ import { formatBRL } from "../api/client";
 import type { Entry } from "../api/client";
 import { format, parseISO, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { categoryLabels } from "@/lib/categories";
 import EmptyState from "./EmptyState";
 
 interface Props {
@@ -23,24 +24,6 @@ interface Props {
   isLoading?: boolean;
   onMarkPaid?: (id: string) => void;
 }
-
-const categoryLabels: Record<string, string> = {
-  aluguel: "Aluguel",
-  folha_pagamento: "Folha",
-  fornecedor_medicamentos: "Fornec. Med.",
-  fornecedor_geral: "Fornec. Geral",
-  impostos: "Impostos",
-  emprestimo: "Empréstimo",
-  cartao_credito: "Cartão",
-  energia_agua: "Energia/Água",
-  telefone_internet: "Tel./Internet",
-  manutencao: "Manutenção",
-  venda_balcao: "Venda Balcão",
-  convenio: "Convênio",
-  delivery: "Delivery",
-  outros_despesas: "Outros",
-  outros_receitas: "Outros",
-};
 
 const PAGE_SIZE = 20;
 
@@ -55,6 +38,12 @@ function formatEffectiveDate(e: Entry): string {
   if (!iso) return "—";
   const parsed = parseISO(iso);
   return isValid(parsed) ? format(parsed, "dd/MM/yy", { locale: ptBR }) : "—";
+}
+
+function formatPaidAt(e: Entry): string {
+  if (!e.PaymentDate) return "";
+  const parsed = parseISO(e.PaymentDate);
+  return isValid(parsed) ? `em ${format(parsed, "dd/MM", { locale: ptBR })}` : "";
 }
 
 export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Props) {
@@ -97,7 +86,7 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Pr
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Valor</TableHead>
                   <TableHead className="text-center">Status</TableHead>
-                  {onMarkPaid && <TableHead />}
+                  {onMarkPaid && <TableHead>Pago Em</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -145,7 +134,10 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Pr
                         )}
                       </TableCell>
                       {onMarkPaid && (
-                        <TableCell className="text-right">
+                        <TableCell className="whitespace-nowrap">
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {formatPaidAt(e)}
+                          </span>
                           {e.PaymentStatus === "pending" && (
                             <Button
                               variant="ghost"

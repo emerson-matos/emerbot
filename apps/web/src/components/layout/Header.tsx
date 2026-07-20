@@ -1,7 +1,4 @@
 import { Bell, Menu, Moon, Sun } from "lucide-react";
-import { useLocation } from "react-router-dom";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 
 interface HeaderProps {
   theme: "light" | "dark";
@@ -9,28 +6,11 @@ interface HeaderProps {
   onOpenMenu: () => void;
 }
 
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-const PAGE_META: Record<string, { title: string; subtitle: string }> = {
-  "/": {
-    title: "Painel Financeiro",
-    subtitle: capitalizeFirst(format(new Date(), "MMMM 'de' yyyy", { locale: ptBR })),
-  },
-  "/transacoes": { title: "Transações", subtitle: "Entradas e saídas registradas" },
-  "/metas": { title: "Metas", subtitle: "Metas financeiras do mês" },
-  "/ajustes": { title: "Ajustes", subtitle: "Perfil e preferências" },
-};
-
 export default function Header({
   theme,
   onToggleTheme,
   onOpenMenu,
 }: HeaderProps) {
-  const { pathname } = useLocation();
-  const { title, subtitle } = PAGE_META[pathname] ?? PAGE_META["/"];
-
   return (
     <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background/70 px-4 backdrop-blur-md sm:px-6">
       <button
@@ -41,10 +21,7 @@ export default function Header({
         <Menu className="size-5" />
       </button>
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-semibold tracking-tight">{title}</p>
-        <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
-      </div>
+      <div className="min-w-0 flex-1" />
 
       <div className="flex items-center gap-2">
         <button

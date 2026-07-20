@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import AppLayout from './components/layout/AppLayout';
 import Transactions from './pages/Transactions';
+import NovaTransacao from './pages/NovaTransacao';
 import Goals from './pages/Goals';
 import Settings from './pages/Settings';
 import { AuthLayout } from './components/layout/AuthLayout';
@@ -35,6 +36,7 @@ export default function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="transacoes" element={<Transactions />} />
+          <Route path="nova-transacao" element={<NovaTransacao />} />
           <Route path="metas" element={<Goals />} />
           <Route path="ajustes" element={<Settings />} />
         </Route>

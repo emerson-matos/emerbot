@@ -1,5 +1,8 @@
 import { useState } from 'react'
-import { Search, Receipt, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  Search, Receipt, ArrowUpRight, ArrowDownRight, Check, Plus,
+} from 'lucide-react'
 import { format, parseISO, isValid } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Card, CardContent } from '@/components/ui/card'
@@ -15,7 +18,8 @@ import {
 } from '@/components/ui/select'
 import { formatBRL } from '../api/client'
 import type { Entry } from '../api/client'
-import { useEntriesInfinite } from '../api/queries'
+import { useEntriesInfinite, useMarkPaidMutation } from '../api/queries'
+import { categoryLabels } from '@/lib/categories'
 import EmptyState from '../components/EmptyState'
 
 type TypeFilter = 'all' | 'income' | 'expense'
@@ -33,24 +37,6 @@ const statusLabels: Record<StatusFilter, string> = {
   pending: 'Pendente',
 }
 
-const categoryLabels: Record<string, string> = {
-  aluguel: 'Aluguel',
-  folha_pagamento: 'Folha',
-  fornecedor_medicamentos: 'Fornec. Med.',
-  fornecedor_geral: 'Fornec. Geral',
-  impostos: 'Impostos',
-  emprestimo: 'Empréstimo',
-  cartao_credito: 'Cartão',
-  energia_agua: 'Energia/Água',
-  telefone_internet: 'Tel./Internet',
-  manutencao: 'Manutenção',
-  venda_balcao: 'Venda Balcão',
-  convenio: 'Convênio',
-  delivery: 'Delivery',
-  outros_despesas: 'Outros',
-  outros_receitas: 'Outros',
-}
-
 function formatEffectiveDate(e: Entry): string {
   const iso = e.DueDate || e.Date
   if (!iso) return '—'
@@ -58,10 +44,17 @@ function formatEffectiveDate(e: Entry): string {
   return isValid(parsed) ? format(parsed, 'dd/MM/yy', { locale: ptBR }) : '—'
 }
 
+function formatPaidAt(e: Entry): string {
+  if (!e.PaymentDate) return ''
+  const parsed = parseISO(e.PaymentDate)
+  return isValid(parsed) ? `em ${format(parsed, 'dd/MM', { locale: ptBR })}` : ''
+}
+
 export default function Transactions() {
   const {
     data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
   } = useEntriesInfinite()
+  const markPaid = useMarkPaidMutation()
   const entries = data?.pages.flatMap(p => p.entries) ?? []
 
   const [search, setSearch] = useState('')
@@ -77,6 +70,16 @@ export default function Transactions() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Transações</h1>
+          <p className="mt-1 text-muted-foreground">Todas as entradas e saídas registradas</p>
+        </div>
+        <Button render={<Link to="/nova-transacao" />}>
+          <Plus className="size-4" /> Nova Transação
+        </Button>
+      </div>
+
       <Card>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
@@ -149,6 +152,7 @@ export default function Transactions() {
                     <TableHead>Categoria</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead className="text-center">Status</TableHead>
+                    <TableHead>Pago Em</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -185,6 +189,21 @@ export default function Transactions() {
                             <Badge className="bg-success/15 text-success">Pago</Badge>
                           ) : (
                             <Badge className="bg-warning/15 text-warning">Pendente</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {formatPaidAt(e)}
+                          </span>
+                          {e.PaymentStatus === 'pending' && (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="text-success hover:text-success"
+                              onClick={() => markPaid.mutate(e.EntryID)}
+                            >
+                              <Check className="size-3.5" /> Pagar
+                            </Button>
                           )}
                         </TableCell>
                       </TableRow>
