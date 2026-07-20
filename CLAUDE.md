@@ -21,8 +21,8 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 
 ## Deploy / infra
 
-- `make build-lambdas` cross-compiles `GOOS=linux GOARCH=arm64`, renames the binary to `bootstrap`, zips it into `infra/opentofu/environments/dev/.lambdas/`. Lambdas run on `provided.al2`/arm64.
-- `make tofu-plan` / `make tofu-apply` — depend on `build-lambdas` first and inject AWS creds via `aws configure export-credentials`. Because `source_code_hash` tracks the zip, **you must rebuild the zips before apply** or Tofu won't detect code changes.
+- `make build-lambdas` cross-compiles `GOOS=linux GOARCH=arm64` (reproducibly: `-trimpath`, CGO off, zeroed zip mtime), names the binary `bootstrap`, zips it into `infra/opentofu/environments/dev/.lambdas/`. Lambdas run on `provided.al2`/arm64.
+- `make tofu-plan` / `make tofu-apply` — depend on `build-lambdas` first and inject AWS creds via `aws configure export-credentials`. The zips list the Go sources as prerequisites, so they **rebuild automatically** whenever code changes — no need to `rm` them by hand anymore. Because the build is reproducible, an unrelated rebuild that yields the same binary keeps `source_code_hash` stable, so Tofu only redeploys Lambdas whose code actually changed. (`make clean-lambdas` force-clears the zips if ever needed.)
 - Prod secrets (`GEMINI_API_KEY`, `META_GRAPH_API_TOKEN`, etc.) are injected as **plain Lambda env vars** by OpenTofu from `TF_VAR_*` — trust the code in `infra/modules/api_gateway_lambda`, not the README's "Secrets Manager" mention (stale).
 - Only a `dev` environment exists, with **local** `terraform.tfstate` (no remote backend).
 
