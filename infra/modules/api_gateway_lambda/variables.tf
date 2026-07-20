@@ -36,10 +36,14 @@ variable "webhook_secret_value" {
   sensitive = true
 }
 
-variable "jwt_secret_value" {
+variable "cognito_user_pool_issuer" {
   type        = string
-  sensitive   = true
-  description = "Segredo para assinar JWTs do dashboard."
+  description = "Issuer do User Pool Cognito que autentica o dashboard."
+}
+
+variable "cognito_app_client_id" {
+  type        = string
+  description = "ID do app client Cognito público do dashboard."
 }
 
 variable "gemini_api_key_value" {
@@ -53,4 +57,3 @@ variable "meta_graph_api_token_value" {
   sensitive   = true
   description = "Token da API do WhatsApp Business (Graph API)."
 }
-

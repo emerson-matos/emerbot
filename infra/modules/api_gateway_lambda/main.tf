@@ -77,50 +77,6 @@ resource "aws_dynamodb_table" "financial_entries" {
   }
 }
 
-resource "aws_dynamodb_table" "users" {
-  name         = "${local.prefix}-users"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "PK"
-  range_key    = "SK"
-
-  attribute {
-    name = "PK"
-    type = "S"
-  }
-  attribute {
-    name = "SK"
-    type = "S"
-  }
-  attribute {
-    name = "Email"
-    type = "S"
-  }
-
-  # Used by GetUserByEmail (packages/auth) to avoid a table Scan — ADR-004
-  # requires Query, never Scan.
-  global_secondary_index {
-    name            = "EmailIndex"
-    hash_key        = "Email"
-    projection_type = "ALL"
-  }
-}
-
-resource "aws_dynamodb_table" "refresh_tokens" {
-  name         = "${local.prefix}-refresh-tokens"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "Token"
-
-  attribute {
-    name = "Token"
-    type = "S"
-  }
-
-  ttl {
-    attribute_name = "TTL"
-    enabled        = true
-  }
-}
-
 resource "aws_cloudwatch_log_group" "webhook" {
   name              = "/aws/lambda/${local.prefix}-webhook"
   retention_in_days = 14
@@ -174,11 +130,12 @@ resource "aws_apigatewayv2_route" "webhook_post" {
 
 locals {
   route_config = jsonencode({
-    webhook_get   = aws_apigatewayv2_route.webhook_get.route_key
-    webhook_post  = aws_apigatewayv2_route.webhook_post.route_key
-    dashboard     = aws_apigatewayv2_route.dashboard_api.route_key
-    webhook_int   = aws_apigatewayv2_integration.webhook.id
-    dashboard_int = aws_apigatewayv2_integration.dashboard_api.id
+    webhook_get      = aws_apigatewayv2_route.webhook_get.route_key
+    webhook_post     = aws_apigatewayv2_route.webhook_post.route_key
+    dashboard        = [for route in aws_apigatewayv2_route.dashboard_protected : route.route_key]
+    dashboard_public = [for route in aws_apigatewayv2_route.dashboard_public : route.route_key]
+    webhook_int      = aws_apigatewayv2_integration.webhook.id
+    dashboard_int    = aws_apigatewayv2_integration.dashboard_api.id
   })
 }
 
@@ -274,9 +231,6 @@ resource "aws_iam_role_policy" "dashboard_api_dynamodb" {
       Resource = [
         aws_dynamodb_table.financial_entries.arn,
         "${aws_dynamodb_table.financial_entries.arn}/index/*",
-        aws_dynamodb_table.users.arn,
-        "${aws_dynamodb_table.users.arn}/index/*",
-        aws_dynamodb_table.refresh_tokens.arn,
       ]
     }]
   })
@@ -301,9 +255,6 @@ resource "aws_lambda_function" "dashboard_api" {
   environment {
     variables = {
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
-      USERS_TABLE             = aws_dynamodb_table.users.name
-      REFRESH_TOKENS_TABLE    = aws_dynamodb_table.refresh_tokens.name
-      JWT_SECRET              = var.jwt_secret_value
     }
   }
 }
@@ -315,9 +266,50 @@ resource "aws_apigatewayv2_integration" "dashboard_api" {
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_route" "dashboard_api" {
+resource "aws_apigatewayv2_authorizer" "dashboard_jwt" {
+  api_id           = aws_apigatewayv2_api.http.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${local.prefix}-dashboard-cognito"
+  jwt_configuration {
+    audience = [var.cognito_app_client_id]
+    issuer   = var.cognito_user_pool_issuer
+  }
+}
+
+# NOTE: these route lists must stay in sync with the mux registered in
+# apps/dashboard-api/internal/app/app.go (newApp) — there is no compile-time
+# link between the two. Adding/removing a route in one place should prompt
+# checking the other.
+locals {
+  dashboard_protected_routes = toset([
+    "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
+    "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
+    "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
+  ])
+  dashboard_public_routes = toset([
+    "GET /health", "OPTIONS /{proxy+}",
+  ])
+}
+
+resource "aws_apigatewayv2_route" "dashboard_protected" {
+  for_each           = local.dashboard_protected_routes
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.dashboard_jwt.id
+  authorization_type = "JWT"
+  # "aws.cognito.signin.user.admin" is Cognito's implicit default scope granted
+  # to access tokens minted via direct auth flows (USER_PASSWORD_AUTH), since
+  # the app client (infra/modules/cognito_user_pool) sets no allowed_oauth_flows/
+  # allowed_oauth_scopes — there's no custom resource-server scope to reference.
+  authorization_scopes = ["aws.cognito.signin.user.admin"]
+}
+
+resource "aws_apigatewayv2_route" "dashboard_public" {
+  for_each  = local.dashboard_public_routes
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /{proxy+}"
+  route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
 }
 

@@ -15,3 +15,6 @@ output "dashboard_url" {
   description = "URL do frontend Cloudflare Pages (quando o Pages está habilitado)."
   value       = local.pages_enabled ? module.cloudflare_pages[0].custom_domain_url : null
 }
+
+output "cognito_user_pool_id" { value = module.cognito_dashboard.user_pool_id }
+output "cognito_app_client_id" { value = module.cognito_dashboard.app_client_id }

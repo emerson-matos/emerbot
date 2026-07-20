@@ -11,8 +11,6 @@ x-aws-local: &aws-local
 x-dynamo-env: &dynamo-env
   DYNAMODB_ENDPOINT: http://dynamodb-local:8000
   FINANCIAL_ENTRIES_TABLE: emerbot-local-financial-entries
-  USERS_TABLE: emerbot-local-users
-  REFRESH_TOKENS_TABLE: emerbot-local-refresh-tokens
 
 services:
   # ---------------------------------------------------------------------------
@@ -68,6 +66,48 @@ services:
       - "8001:8001"
 
   # ---------------------------------------------------------------------------
+  # Cognito Local  →  http://localhost:9229
+  # ---------------------------------------------------------------------------
+  cognito-local:
+    image: docker.io/jagregory/cognito-local:latest
+    container_name: emerbot-cognito-local
+    restart: unless-stopped
+    ports:
+      - "9229:9229"
+    volumes:
+      # cognito-local writes back into .cognito/ at startup (confirmed
+      # empirically: it fails with EROFS if config.json is mounted read-only)
+      # — so config.json is copied into the named volume by the entrypoint
+      # below rather than bind-mounted directly, which would otherwise let
+      # the container dirty the tracked file on every start (also confirmed
+      # empirically: it gets reformatted/rewritten in place).
+      - ./docker/cognito-local/config.json:/config-src/config.json:ro
+      - cognito-data:/app/.cognito
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - cp /config-src/config.json /app/.cognito/config.json && exec node /app/start.js
+
+  # ---------------------------------------------------------------------------
+  # Cognito Local bootstrap (runs once, exits 0): creates the local user pool,
+  # app client, and demo user, then writes their (dynamically generated) IDs
+  # to a shared volume for dashboard-api/web to pick up — see
+  # docker/cognito-init/init.sh for why this can't just be static env vars.
+  # ---------------------------------------------------------------------------
+  cognito-init:
+    image: docker.io/amazon/aws-cli:latest
+    container_name: emerbot-cognito-init
+    depends_on:
+      - cognito-local
+    environment:
+      <<: *aws-local
+      COGNITO_ENDPOINT: http://cognito-local:9229
+      USER_DEMO_PASSWORD: ${USER_DEMO_PASSWORD:-fake123}
+    volumes:
+      - ./docker/cognito-init/init.sh:/init.sh:ro
+      - cognito-runtime:/shared
+    entrypoint: ["/bin/sh", "/init.sh"]
+
+  # ---------------------------------------------------------------------------
   # Webhook service  →  http://localhost:8080
   # ---------------------------------------------------------------------------
   webhook:
@@ -105,11 +145,15 @@ services:
     depends_on:
       dynamodb-init:
         condition: service_completed_successfully
+      cognito-init:
+        condition: service_completed_successfully
     environment:
       <<: [*aws-local, *dynamo-env]
       API_ADDR: :8081
-      JWT_SECRET: local-jwt-secret-change-in-prod
-      USER_DEMO_PASSWORD: ${USER_DEMO_PASSWORD:-fake123}
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    volumes:
+      - ./docker/dashboard-api/entrypoint.sh:/entrypoint.sh:ro
+      - cognito-runtime:/shared:ro
     ports:
       - "8081:8081"
     healthcheck:
@@ -147,13 +191,21 @@ services:
     depends_on:
       dashboard-api:
         condition: service_healthy
+      cognito-init:
+        condition: service_completed_successfully
     volumes:
       - ./apps/web:/app
       - /app/node_modules
+      - ./docker/web/entrypoint.sh:/entrypoint.sh:ro
+      - cognito-runtime:/shared:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       VITE_API_URL: http://localhost:8081
+      VITE_COGNITO_ENDPOINT: http://localhost:9229
     ports:
       - "5173:5173"
 
 volumes:
   dynamodb-data:
+  cognito-data:
+  cognito-runtime:

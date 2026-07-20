@@ -49,41 +49,4 @@ create_table \
       }
     ]'
 
-# users table
-create_table \
-  --table-name emerbot-local-users \
-  --attribute-definitions \
-    AttributeName=PK,AttributeType=S \
-    AttributeName=SK,AttributeType=S \
-    AttributeName=Email,AttributeType=S \
-  --key-schema \
-    AttributeName=PK,KeyType=HASH \
-    AttributeName=SK,KeyType=RANGE \
-  --billing-mode PAY_PER_REQUEST \
-  --global-secondary-indexes \
-    '[
-      {
-        "IndexName": "EmailIndex",
-        "KeySchema": [
-          {"AttributeName":"Email","KeyType":"HASH"}
-        ],
-        "Projection": {"ProjectionType":"ALL"}
-      }
-    ]'
-
-# refresh-tokens table (TTL enabled)
-create_table \
-  --table-name emerbot-local-refresh-tokens \
-  --attribute-definitions \
-    AttributeName=Token,AttributeType=S \
-  --key-schema \
-    AttributeName=Token,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
-
-# Enable TTL on refresh-tokens
-echo "Enabling TTL on emerbot-local-refresh-tokens..."
-$AWS update-time-to-live \
-  --table-name emerbot-local-refresh-tokens \
-  --time-to-live-specification "Enabled=true,AttributeName=TTL" 2>/dev/null || true
-
 echo "All tables ready."

@@ -1,10 +1,105 @@
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8081'
+const COGNITO_ENDPOINT = import.meta.env.VITE_COGNITO_ENDPOINT ?? 'http://localhost:9229'
+const COGNITO_CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID ?? ''
 
 function getToken(): string | null {
   return localStorage.getItem('access_token')
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// --- Cognito (InitiateAuth over plain JSON — no AWS SDK needed) ---
+
+export class CognitoAuthError extends Error {
+  type: string
+  constructor(type: string, message: string) {
+    super(message)
+    this.type = type
+  }
+}
+
+interface CognitoAuthResult {
+  AccessToken: string
+  IdToken: string
+  RefreshToken?: string
+  ExpiresIn: number
+  TokenType: string
+}
+
+async function cognitoInitiateAuth(
+  authFlow: 'USER_PASSWORD_AUTH' | 'REFRESH_TOKEN_AUTH',
+  authParameters: Record<string, string>,
+): Promise<CognitoAuthResult> {
+  const res = await fetch(`${COGNITO_ENDPOINT}/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+    },
+    body: JSON.stringify({
+      AuthFlow: authFlow,
+      ClientId: COGNITO_CLIENT_ID,
+      AuthParameters: authParameters,
+    }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new CognitoAuthError(body.__type ?? 'UnknownError', body.message ?? 'Authentication failed')
+  }
+  return body.AuthenticationResult
+}
+
+function base64UrlDecode(input: string): string {
+  const base64 = input.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+  const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function decodeIdToken(idToken: string): { name?: string; email?: string } {
+  try {
+    return JSON.parse(base64UrlDecode(idToken.split('.')[1]))
+  } catch {
+    return {}
+  }
+}
+
+function storeAuthResult(result: CognitoAuthResult) {
+  localStorage.setItem('access_token', result.AccessToken)
+  if (result.RefreshToken) localStorage.setItem('refresh_token', result.RefreshToken)
+  const { name, email } = decodeIdToken(result.IdToken)
+  localStorage.setItem('user_name', name ?? email ?? '')
+}
+
+// Cognito's REFRESH_TOKEN_AUTH flow doesn't rotate the refresh token, so a
+// missing RefreshToken in the result (handled by storeAuthResult) is expected
+// there, not an error.
+let refreshInFlight: Promise<boolean> | null = null
+
+// A page load can fire several requests in parallel; if the access token is
+// stale, they'd all hit 401 at once and — without this — each would kick off
+// its own REFRESH_TOKEN_AUTH call. Sharing one in-flight promise collapses
+// that burst into a single refresh, which every caller then awaits.
+function trySilentRefresh(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight
+
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return Promise.resolve(false)
+
+  refreshInFlight = (async () => {
+    try {
+      const result = await cognitoInitiateAuth('REFRESH_TOKEN_AUTH', { REFRESH_TOKEN: refreshToken })
+      storeAuthResult(result)
+      return true
+    } catch {
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
+}
+
+async function request<T>(path: string, options: RequestInit = {}, isRetry = false): Promise<T> {
   const token = getToken()
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -14,6 +109,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { ...options, headers })
 
   if (res.status === 401) {
+    if (!isRetry && (await trySilentRefresh())) {
+      return request<T>(path, options, true)
+    }
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     window.location.href = '/login'
@@ -31,11 +129,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   auth: {
-    login: (email: string, password: string) =>
-      request<{ access_token: string; refresh_token: string; name: string }>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      }),
+    login: async (email: string, password: string) => {
+      const result = await cognitoInitiateAuth('USER_PASSWORD_AUTH', { USERNAME: email, PASSWORD: password })
+      storeAuthResult(result)
+    },
   },
 
   entries: {

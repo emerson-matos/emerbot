@@ -8,7 +8,6 @@ import (
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	apifinance "github.com/emerson/emerbot/apps/dashboard-api/internal/finance"
-	pkgauth "github.com/emerson/emerbot/packages/auth"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
@@ -18,11 +17,25 @@ type App struct {
 	handler http.Handler
 }
 
-func New(authStore pkgauth.Store, finStore pkgfinance.Store, jwtSecret string) *App {
-	jwt := pkgauth.NewJWT(jwtSecret)
-	authMw := apiauth.Middleware(jwt)
+// NewGateway is used by the deployed Lambda behind API Gateway's Cognito JWT
+// authorizer, which has already validated the request's JWT before Lambda
+// runs — see bridge.go's gatewayClaims.
+func NewGateway(finStore pkgfinance.Store) *App {
+	return newApp(finStore, apiauth.GatewayMiddleware)
+}
 
-	authHandler := apiauth.NewHandler(authStore, jwt)
+// NewLocal is used by cmd/local, which has no API Gateway in front of it — it
+// verifies Cognito JWTs itself via JWKS (see apiauth.NewLocalCognitoMiddleware)
+// instead of trusting pre-validated claims.
+func NewLocal(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
+	return newApp(finStore, authMw)
+}
+
+// newApp wires the routes shared by both entrypoints. NOTE: this route list
+// must stay in sync with the dashboard_protected_routes/dashboard_public_routes
+// locals in infra/modules/api_gateway_lambda/main.tf — there is no
+// compile-time link between the two.
+func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
 	entriesHandler := apifinance.NewEntriesHandler(finStore)
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
@@ -33,10 +46,6 @@ func New(authStore pkgauth.Store, finStore pkgfinance.Store, jwtSecret string) *
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-
-	// Auth routes (no middleware).
-	mux.HandleFunc("POST /auth/login", authHandler.Login)
-	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 
 	// Protected routes — wrapped with JWT middleware.
 	mux.Handle("GET /entries", authMw(http.HandlerFunc(entriesHandler.List)))

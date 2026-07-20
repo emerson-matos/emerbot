@@ -115,7 +115,6 @@ make tofu-apply
 
 - `packages/domain`: contratos e regras centrais do domínio.
 - `packages/finance`: entradas financeiras, metas mensais, summaries, categorias.
-- `packages/auth`: JWT, login, refresh tokens.
 - `packages/orchestrator`: coordena memória, tools e LLM.
 - `packages/llm`: abstrações do provider e adapter local.
 - `packages/memory`: contratos e implementações de memória.

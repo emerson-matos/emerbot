@@ -7,13 +7,14 @@ Start the local emerbot environment for hands-on testing.
 
 Steps:
 
-1. Run `make demo`. This runs `podman compose up`, waits on `dashboard-api` at `http://localhost:8081/health`, then seeds ~120 demo financial entries.
+1. Run `make demo`. This runs `podman compose up`, waits on `dashboard-api` at `http://localhost:8081/health`, then seeds ~120 demo financial entries. Auth runs against `cognito-local` (a real Cognito emulator, not a fake JWT system) — `cognito-init` creates the pool/client/demo user on first boot before `dashboard-api`/`web` start.
 2. Once healthy, report the service URLs and login:
    - Web dashboard: http://localhost:5173
    - Dashboard API: http://localhost:8081
    - Webhook: http://localhost:8080
    - WhatsApp simulator: http://localhost:9000
    - DynamoDB admin: http://localhost:8001
+   - Cognito local: http://localhost:9229
    - Demo login: `demo@user.com` / `fake123`
 3. If containers fail to start, check whether `TMPDIR` is set to `$HOME/.tmp/buildah` (podman stages layers there on this machine) and whether ports are already in use.
 

@@ -113,15 +113,20 @@ demo: up
 # ---------------------------------------------------------------------------
 # Users (dashboard auth)
 # ---------------------------------------------------------------------------
-# Create one user in the deployed dev users table. Password is generated and
+# Create one user in the deployed Cognito user pool. Password is generated and
 # printed once unless PASSWORD is supplied.
 #   make create-user EMAIL=someone@example.com [NAME="Someone"] [PASSWORD=...]
 create-user:
 	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com"; exit 1; }
 	eval "$$(aws configure export-credentials --format env)" && \
-	USERS_TABLE=emerbot-dev-users \
-	REFRESH_TOKENS_TABLE=emerbot-dev-refresh-tokens \
-	$(GO) run ./scripts/create-user -email "$(EMAIL)" -name "$(NAME)" $(if $(PASSWORD),-password "$(PASSWORD)",)
+	POOL_ID=$$($(TOFU) -chdir=$(TOFU_DIR) output -raw cognito_user_pool_id) && \
+	PASSWORD="$(if $(PASSWORD),$(PASSWORD),$$(openssl rand -base64 12))" && \
+	aws cognito-idp admin-create-user --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
+		--user-attributes Name=email,Value="$(EMAIL)" Name=email_verified,Value=true $(if $(NAME),Name=name,Value="$(NAME)",) \
+		--message-action SUPPRESS && \
+	aws cognito-idp admin-set-user-password --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
+		--password "$$PASSWORD" --permanent && \
+	echo "Created user $(EMAIL) — password: $$PASSWORD"
 
 # ---------------------------------------------------------------------------
 # Frontend
