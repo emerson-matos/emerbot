@@ -16,6 +16,12 @@ type EntryFilter struct {
 	Category string
 	Status   domain.PaymentStatus
 	Type     domain.EntryType
+	// Limit caps the number of entries returned, most-recent (by
+	// effectiveDate) first. Zero means "no cap" — callers that page through
+	// results (see apps/dashboard-api/internal/finance/entries.go's List
+	// handler) should always set this rather than relying on From/To alone,
+	// to bound DynamoDB read cost and response size.
+	Limit int
 }
 
 // effectiveDate is the date an entry counts toward for monthly/period views

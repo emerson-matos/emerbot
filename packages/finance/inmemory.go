@@ -92,6 +92,9 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 	sort.Slice(result, func(i, j int) bool {
 		return effectiveDate(result[i]).After(effectiveDate(result[j]))
 	})
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
+	}
 	return result, nil
 }
 

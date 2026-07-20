@@ -202,6 +202,47 @@ func TestEntriesCRUD(t *testing.T) {
 	}
 }
 
+func TestEntriesListLimit(t *testing.T) {
+	t.Parallel()
+	app, key := newTestApp(t)
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
+
+	for _, date := range []string{"2026-07-01", "2026-07-02", "2026-07-03"} {
+		rec := do(t, app, http.MethodPost, "/entries", token, map[string]any{
+			"date": date, "amount": 1000, "category": "aluguel",
+			"type": "expense", "description": "Aluguel " + date, "payment_status": "paid",
+		})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create entry %s: expected 201, got %d (%s)", date, rec.Code, rec.Body.String())
+		}
+	}
+
+	// ?limit=2 caps the response even though 3 entries exist.
+	rec := do(t, app, http.MethodGet, "/entries?limit=2", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Entries []domain.FinancialEntry `json:"entries"`
+		Count   int                     `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Fatalf("expected limit=2 to cap the response at 2 entries, got %d", resp.Count)
+	}
+	if resp.Entries[0].Date.Format("2006-01-02") != "2026-07-03" {
+		t.Fatalf("expected the most recent entry first, got %s", resp.Entries[0].Date.Format("2006-01-02"))
+	}
+
+	// No limit param -> the server-side default still applies (well above 3,
+	// so all 3 come back) rather than the request being rejected or ignored.
+	if got := listCount(t, app, token); got != 3 {
+		t.Fatalf("expected all 3 entries under the default limit, got %d", got)
+	}
+}
+
 func listCount(t *testing.T, app *App, token string) int {
 	t.Helper()
 	rec := do(t, app, http.MethodGet, "/entries", token, nil)

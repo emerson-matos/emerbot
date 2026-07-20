@@ -45,6 +45,43 @@ func TestInMemoryStoreListEntriesAppliesFiltersAndSortsDesc(t *testing.T) {
 	}
 }
 
+func TestInMemoryStoreListEntriesRespectsLimit(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	entry1 := testEntry("u1", "e1", "2026-07-10", 10000, "aluguel", domain.EntryTypeExpense)
+	entry2 := testEntry("u1", "e2", "2026-07-12", 20000, "venda_balcao", domain.EntryTypeIncome)
+	entry3 := testEntry("u1", "e3", "2026-07-11", 15000, "aluguel", domain.EntryTypeExpense)
+
+	for _, entry := range []domain.FinancialEntry{entry1, entry2, entry3} {
+		if err := store.SaveEntry(ctx, entry); err != nil {
+			t.Fatalf("SaveEntry(%s): %v", entry.EntryID, err)
+		}
+	}
+
+	entries, err := store.ListEntries(ctx, "u1", EntryFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected Limit:2 to cap results at 2, got %d", len(entries))
+	}
+	// Most-recent-first: e2 (07-12) then e3 (07-11), e1 (07-10) dropped.
+	if entries[0].EntryID != "e2" || entries[1].EntryID != "e3" {
+		t.Fatalf("expected the 2 most recent entries (e2, e3), got %s then %s", entries[0].EntryID, entries[1].EntryID)
+	}
+
+	unlimited, err := store.ListEntries(ctx, "u1", EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(unlimited) != 3 {
+		t.Fatalf("expected Limit:0 (zero value) to mean unbounded, got %d entries", len(unlimited))
+	}
+}
+
 func TestInMemoryStoreSaveEntriesPersistsWholeBatch(t *testing.T) {
 	t.Parallel()
 

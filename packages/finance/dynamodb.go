@@ -304,6 +304,12 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	if filterNames != nil {
 		input.ExpressionAttributeNames = filterNames
 	}
+	if filter.Limit > 0 {
+		// Most-recent-first, so we can stop reading pages as soon as we have
+		// enough matches instead of scanning the whole partition — GSI2SK is
+		// date-prefixed, so descending key order is effectiveDate descending.
+		input.ScanIndexForward = aws.Bool(false)
+	}
 
 	var entries []domain.FinancialEntry
 	paginator := dynamodb.NewQueryPaginator(s.client, input)
@@ -323,11 +329,17 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 			}
 			entries = append(entries, e)
 		}
+		if filter.Limit > 0 && len(entries) >= filter.Limit {
+			break
+		}
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
 		return effectiveDate(entries[i]).After(effectiveDate(entries[j]))
 	})
+	if filter.Limit > 0 && len(entries) > filter.Limit {
+		entries = entries[:filter.Limit]
+	}
 	return entries, nil
 }
 

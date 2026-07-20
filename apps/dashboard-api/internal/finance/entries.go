@@ -3,6 +3,7 @@ package finance
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,15 @@ import (
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+)
+
+// defaultEntriesLimit/maxEntriesLimit bound how many entries a single
+// GET /entries call can return, most-recent first — without this, an
+// unbounded query (e.g. the web dashboard's Transações page browsing full
+// history) would scan a user's entire DynamoDB partition on every request.
+const (
+	defaultEntriesLimit = 50
+	maxEntriesLimit     = 200
 )
 
 type EntriesHandler struct {
@@ -47,6 +57,15 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	filter.Category = q.Get("category")
 	filter.Status = domain.PaymentStatus(q.Get("status"))
 	filter.Type = domain.EntryType(q.Get("type"))
+	filter.Limit = defaultEntriesLimit
+	if raw := q.Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			filter.Limit = n
+		}
+	}
+	if filter.Limit > maxEntriesLimit {
+		filter.Limit = maxEntriesLimit
+	}
 
 	entries, err := h.store.ListEntries(r.Context(), claims.UserID, filter)
 	if err != nil {
