@@ -58,6 +58,7 @@ variable "meta_graph_api_token_value" {
 
 variable "whatsapp_phone_number_id" {
   type        = string
+  sensitive   = true
   description = "Phone number ID do WhatsApp Business, remetente dos alertas proativos do notifier."
   default     = ""
 }

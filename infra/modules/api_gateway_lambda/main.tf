@@ -439,22 +439,55 @@ resource "aws_lambda_function" "notifier" {
   }
 }
 
-# EventBridge schedule: invoke the notifier once a day.
-resource "aws_cloudwatch_event_rule" "notifier_daily" {
-  name                = "${local.prefix}-notifier-daily"
-  description         = "Dispara o notifier (alertas por WhatsApp) uma vez ao dia."
-  schedule_expression = var.notifier_schedule
+# IAM role for EventBridge Scheduler to invoke the notifier Lambda.
+resource "aws_iam_role" "scheduler_notifier" {
+  name = "${local.prefix}-scheduler-notifier-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+    }]
+  })
 }
 
-resource "aws_cloudwatch_event_target" "notifier_daily" {
-  rule = aws_cloudwatch_event_rule.notifier_daily.name
-  arn  = aws_lambda_function.notifier.arn
+resource "aws_iam_role_policy_attachment" "scheduler_notifier_exec" {
+  role       = aws_iam_role.scheduler_notifier.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaRole"
 }
 
-resource "aws_lambda_permission" "allow_eventbridge_notifier" {
-  statement_id  = "AllowExecutionFromEventBridge"
+# EventBridge Scheduler: invoke the notifier once a day with a 30-minute
+# flexible window so AWS can retry on transient failures.
+resource "aws_scheduler_schedule" "notifier_daily" {
+  name        = "${local.prefix}-notifier-daily"
+  description = "Dispara o notifier (alertas por WhatsApp) uma vez ao dia."
+
+  flexible_time_window {
+    mode                      = "FLEXIBLE"
+    maximum_window_in_minutes = 30
+  }
+
+  schedule_expression          = var.notifier_schedule
+  schedule_expression_timezone = var.notifier_timezone
+
+  target {
+    arn      = aws_lambda_function.notifier.arn
+    role_arn = aws_iam_role.scheduler_notifier.arn
+
+    retry_policy {
+      maximum_retry_attempts       = 3
+      maximum_event_age_in_seconds = 300
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_scheduler_notifier" {
+  statement_id  = "AllowExecutionFromScheduler"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.notifier.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.notifier_daily.arn
+  principal     = "scheduler.amazonaws.com"
+  source_arn    = aws_scheduler_schedule.notifier_daily.arn
 }
+
