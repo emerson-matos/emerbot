@@ -14,10 +14,17 @@ export TMPDIR := $(HOME)/.tmp/buildah
 $(shell mkdir -p $(TMPDIR))
 
 TOFU_DIR := infra/opentofu/environments/dev
+BOOTSTRAP_DIR := infra/opentofu/bootstrap
 LAMBDA_DIR := $(TOFU_DIR)/.lambdas
 LAMBDA_ZIP := $(LAMBDA_DIR)/webhook.zip
 DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
 NOTIFIER_ZIP := $(LAMBDA_DIR)/notifier.zip
+
+# Every Lambda links against the shared packages/, so any Go change can affect
+# any zip. We over-approximate each zip's dependency set to all non-test Go
+# sources plus the module files and let Make decide when a zip is stale — this
+# is what removes the old "remember to rm the zips before apply" footgun.
+GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mod go.sum
 
 .PHONY: build test fmt lint \
         run-webhook run-api run-cli run-lambda \
@@ -25,8 +32,9 @@ NOTIFIER_ZIP := $(LAMBDA_DIR)/notifier.zip
         logs-webhook logs-api \
         seed demo \
         web-dev \
-        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-plan tofu-apply tofu-destroy
+        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas clean-lambdas \
+        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
+        tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
 # Go
@@ -35,27 +43,43 @@ build:
 	$(GO) build ./...
 
 # ---------------------------------------------------------------------------
-# Lambda zips (Go -> Linux/arm64 -> bootstrap.zip)
-# ---------------------------------------------------------------------------
-$(LAMBDA_ZIP):
-	mkdir -p $(LAMBDA_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/webhook-bin ./apps/webhook/cmd/lambda
-	cd $(LAMBDA_DIR) && mv webhook-bin bootstrap && zip webhook.zip bootstrap && rm bootstrap
+# Lambda zips (Go -> Linux/arm64 -> a single `bootstrap` inside the zip)
+#
+# Each zip lists $(GO_SOURCES) as a prerequisite, so `make build-lambdas` (and
+# therefore tofu-plan/tofu-apply, which depend on it) rebuilds a zip whenever a
+# Go source is newer than it — no more deleting zips by hand to force a fresh
+# build. Builds are reproducible (-trimpath, CGO off, zeroed mtime, `zip -X`),
+# so a rebuild that produces a byte-identical binary keeps the same
+# source_code_hash and Tofu shows no diff for that Lambda.
+#
+# Staged in a per-Lambda .build dir (never the shared $(LAMBDA_DIR)) so parallel
+# `make -j` runs don't fight over one `bootstrap` file.
+#   $(1) = Lambda name (produces $(LAMBDA_DIR)/$(1).zip)
+#   $(2) = Go package to compile
+define build_lambda
+@mkdir -p $(LAMBDA_DIR)/$(1).build
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $(LAMBDA_DIR)/$(1).build/bootstrap $(2)
+cd $(LAMBDA_DIR)/$(1).build && touch -d @0 bootstrap && rm -f ../$(1).zip && zip -X -q ../$(1).zip bootstrap
+@rm -rf $(LAMBDA_DIR)/$(1).build
+endef
 
-$(DASHBOARD_ZIP):
-	mkdir -p $(LAMBDA_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/dashboard-bin ./apps/dashboard-api/cmd/lambda
-	cd $(LAMBDA_DIR) && mv dashboard-bin bootstrap && zip dashboard-api.zip bootstrap && rm bootstrap
+$(LAMBDA_ZIP): $(GO_SOURCES)
+	$(call build_lambda,webhook,./apps/webhook/cmd/lambda)
 
-$(NOTIFIER_ZIP):
-	mkdir -p $(LAMBDA_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(LAMBDA_DIR)/notifier-bin ./apps/notifier/cmd/lambda
-	cd $(LAMBDA_DIR) && mv notifier-bin bootstrap && zip notifier.zip bootstrap && rm bootstrap
+$(DASHBOARD_ZIP): $(GO_SOURCES)
+	$(call build_lambda,dashboard-api,./apps/dashboard-api/cmd/lambda)
+
+$(NOTIFIER_ZIP): $(GO_SOURCES)
+	$(call build_lambda,notifier,./apps/notifier/cmd/lambda)
 
 build-lambda-webhook: $(LAMBDA_ZIP)
 build-lambda-dashboard-api: $(DASHBOARD_ZIP)
 build-lambda-notifier: $(NOTIFIER_ZIP)
 build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier
+
+# Escape hatch only — the zips now rebuild themselves when Go sources change.
+clean-lambdas:
+	rm -rf $(LAMBDA_DIR)
 
 # ---------------------------------------------------------------------------
 # Test / fmt / lint
@@ -173,6 +197,24 @@ export TF_VAR_cloudflare_zone_id
 
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
+
+# One-time-per-account: create the S3 state bucket + GitHub OIDC deploy role.
+# Uses your local admin AWS creds. See docs/deploy.md.
+tofu-bootstrap:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) apply
+
+# One-time: push the existing local terraform.tfstate up to the S3 backend
+# (run after tofu-bootstrap, the first time you switch to remote state).
+tofu-migrate-state:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(TOFU_DIR) init -migrate-state
+
+# Copy the deploy secrets from your local env into GitHub Actions (needs `gh`).
+# Load your values first, e.g.:  set -a && . ./.env && set +a
+gh-secrets:
+	./scripts/gh-secrets.sh
 
 tofu-plan: build-lambdas
 	eval "$$(aws configure export-credentials --format env)" && \

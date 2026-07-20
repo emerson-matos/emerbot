@@ -98,15 +98,18 @@ make demo        # up + seed + mensagem de boas-vindas
 
 Deploy via OpenTofu em `infra/opentofu/environments/dev/`. Provisiona:
 
-- Lambda (webhook + dashboard API)
+- Lambda (webhook + dashboard API + notifier)
 - API Gateway HTTP (rotas explícitas + `/{proxy+}`)
 - DynamoDB (single-table: entries, goals, categories, users, tokens)
-- Secrets Manager (webhook secret, JWT secret, Gemini key, Meta token)
+- segredos (webhook secret, Gemini key, Meta token) como env vars da Lambda, injetadas via `TF_VAR_*`
 - Cloudflare DNS (CNAME apontando pro API Gateway)
 
 O DNS tem `lifecycle.ignore_changes` no content para não ser alterado acidentalmente se o gateway mudar.
 
+**Ship**: o deploy roda no GitHub Actions (botão manual, `workflow_dispatch`) autenticado por OIDC — sem chaves AWS estáticas; PRs recebem um comentário com o `tofu plan`. O state fica remoto no S3. Runbook completo (bootstrap, secrets, migração de state): [`docs/deploy.md`](docs/deploy.md).
+
 ```bash
+# break-glass local (mesmo state remoto):
 make tofu-plan
 make tofu-apply
 ```
