@@ -13,7 +13,7 @@ import {
 
 export default function ToPayToday() {
   const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), now.getDay() - 1), 'yyyy-MM-dd')
+  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
 
   const entriesQuery = useEntries(firstDay, lastDay)
