@@ -12,18 +12,16 @@ import {
 } from '../api/queries'
 
 export default function ToPayToday() {
-  const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const today = format(new Date(), 'yyyy-MM-dd')
 
-  const entriesQuery = useEntries(firstDay, lastDay)
-  const markPaid = useMarkPaidMutation(firstDay, lastDay)
+  // Only ever cares about entries due today, so ask the server for just that
+  // one day instead of pulling the whole month and filtering client-side.
+  const entriesQuery = useEntries(today, today)
+  const markPaid = useMarkPaidMutation(today, today)
 
   const entries = entriesQuery.data?.entries ?? []
 
-
-  const todaysDueExpenses = entries.filter(e => e.Type === 'expense' && e.PaymentStatus === 'pending' &&
-    e.DueDate && e.DueDate.startsWith(format(new Date(), 'yyyy-MM-dd')))
+  const todaysDueExpenses = entries.filter(e => e.Type === 'expense' && e.PaymentStatus === 'pending')
   const payableToday = todaysDueExpenses.reduce((sum, e) => sum + e.Amount, 0)
 
 
