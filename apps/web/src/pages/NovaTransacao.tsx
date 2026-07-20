@@ -38,7 +38,7 @@ export default function NovaTransacao() {
     setCreated(false)
   }
 
-  const invalid = !desc.trim() || !amount || !date
+  const invalid = !desc.trim() || !date || !(Number(amount) > 0)
 
   function submit() {
     if (invalid) return

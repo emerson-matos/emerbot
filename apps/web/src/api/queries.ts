@@ -177,6 +177,9 @@ export function useCreateEntryMutation() {
     onError: () => {
       notify("Não foi possível registrar a transação.", "error");
     },
+    onSuccess: () => {
+      notify("Transação registrada.", "success");
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });

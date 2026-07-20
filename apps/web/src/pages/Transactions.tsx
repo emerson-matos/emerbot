@@ -75,7 +75,7 @@ export default function Transactions() {
           <h1 className="text-3xl font-semibold tracking-tight">Transações</h1>
           <p className="mt-1 text-muted-foreground">Todas as entradas e saídas registradas</p>
         </div>
-        <Button render={<Link to="/nova-transacao" />}>
+        <Button render={<Link to="/nova-transacao" />} nativeButton={false}>
           <Plus className="size-4" /> Nova Transação
         </Button>
       </div>
