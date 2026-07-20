@@ -7,20 +7,6 @@ cap (S3 state is pennies; OIDC and Actions are free at this scale).
 
 Pipeline: `.github/workflows/deploy.yml`.
 
-> **One-time install of the workflow file.** The pipeline definition lives in
-> this repo as [`docs/deploy-workflow.yml`](deploy-workflow.yml) because it was
-> committed from an environment whose token can't write under
-> `.github/workflows/`. Put it in place once:
->
-> ```sh
-> git mv docs/deploy-workflow.yml .github/workflows/deploy.yml
-> git commit -m "ci: add deploy workflow" && git push
-> ```
->
-> (or paste it into the GitHub web UI → **Add file** at
-> `.github/workflows/deploy.yml`). A normal local push or the web UI has the
-> `workflow` scope this needs.
-
 - **Pull request** touching `apps/`, `packages/`, `infra/`, `go.*` or the
   `Makefile` → runs `tofu plan` and posts it as a PR comment. Never applies.
 - **Actions → deploy → Run workflow** (`workflow_dispatch`) → builds the Lambda
