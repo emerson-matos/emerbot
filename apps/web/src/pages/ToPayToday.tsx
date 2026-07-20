@@ -1,8 +1,9 @@
 import { format } from 'date-fns'
-import { CalendarClock } from 'lucide-react'
+import { CalendarClock, Check } from 'lucide-react'
 import { formatBRL } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
-import { useEntries } from '../api/queries'
+import { Button } from '@/components/ui/button'
+import { useEntries, useMarkPaidMutation } from '../api/queries'
 
 export default function ToPayToday() {
   const today = format(new Date(), 'yyyy-MM-dd')
@@ -10,12 +11,17 @@ export default function ToPayToday() {
   // Only ever cares about entries due today, so ask the server for just that
   // one day instead of pulling the whole month and filtering client-side.
   const entriesQuery = useEntries(today, today)
+  const markPaid = useMarkPaidMutation()
 
   const entries = entriesQuery.data?.entries ?? []
 
-  const payableToday = entries
-    .filter(e => e.Type === 'expense' && e.PaymentStatus === 'pending')
-    .reduce((sum, e) => sum + e.Amount, 0)
+  const pendingToday = entries.filter(e => e.Type === 'expense' && e.PaymentStatus === 'pending')
+  const payableToday = pendingToday.reduce((sum, e) => sum + e.Amount, 0)
+
+  const payAllToday = () => {
+    if (!window.confirm('Marcar todos os pagamentos de hoje como pagos?')) return
+    pendingToday.forEach(e => markPaid.mutate(e.EntryID))
+  }
 
   return (
     <Card className="relative overflow-hidden">
@@ -30,6 +36,19 @@ export default function ToPayToday() {
           <CalendarClock className="size-[18px]" />
         </span>
       </CardContent>
+      {pendingToday.length > 0 && (
+        <CardContent className="pt-0 pl-5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full border-warning text-warning hover:bg-warning/10 hover:text-warning"
+            disabled={markPaid.isPending}
+            onClick={payAllToday}
+          >
+            <Check className="size-3.5" /> Pagar
+          </Button>
+        </CardContent>
+      )}
     </Card>
   )
 }

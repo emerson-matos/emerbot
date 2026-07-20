@@ -10,7 +10,7 @@ import KpiCard from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
 import IncomeExpenseChart from '../components/IncomeExpenseChart'
-import CategoryDonut from '../components/CategoryDonut'
+import CategoryBars from '../components/CategoryBars'
 import TransactionsTable from '../components/TransactionsTable'
 import WorstMonth from './WorstMonth';
 import MonthlyExpent from './MonthlyExpent';
@@ -83,7 +83,7 @@ function Receivables() {
 export default function Dashboard() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), now.getDay()), 'yyyy-MM-dd')
+  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
   const cashflowQuery = useCashFlow(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
@@ -120,7 +120,7 @@ export default function Dashboard() {
       {/* Breakdown */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <MonthlyExpent />
-        <CategoryDonut />
+        <CategoryBars />
       </div>
 
       <TransactionsTable

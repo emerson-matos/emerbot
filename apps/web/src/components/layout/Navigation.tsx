@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   ArrowLeftRight,
+  Bell,
   Landmark,
   LayoutDashboard,
   PlusCircle,
@@ -23,6 +24,7 @@ const nav: NavItem[] = [
   { label: "Transações", icon: Receipt, to: "/transacoes" },
   { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
   { label: "Metas", icon: Target, to: "/metas" },
+  { label: "Notificações", icon: Bell, to: "/notificacoes" },
   { label: "Estoque", icon: ArrowLeftRight, soon: true },
   { label: "Contas", icon: Landmark, soon: true },
   { label: "Ajustes", icon: Settings, to: "/ajustes" },

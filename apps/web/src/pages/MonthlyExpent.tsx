@@ -1,10 +1,11 @@
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import {
   Flame, Info,
 } from 'lucide-react'
 import { formatBRL } from '../api/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { categoricalPalette } from '@/lib/chart'
+import { categoryLabels } from '@/lib/categories'
 import {
   useCategorySummary, useEntries,
 } from '../api/queries'
@@ -12,10 +13,10 @@ import EmptyState from '../components/EmptyState'
 
 export default function MonthlyExpent() {
   const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), now.getDay() - 1), 'yyyy-MM-dd')
+  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
 
-  const categoriesQuery = useCategorySummary()
+  const categoriesQuery = useCategorySummary(firstDay, lastDay)
   const entriesQuery = useEntries(firstDay, lastDay)
 
 
@@ -32,7 +33,7 @@ export default function MonthlyExpent() {
 
   const worstDayEntry = Object.entries(expenseByDay).sort((a, b) => b[1] - a[1])[0]
   const worstDay = worstDayEntry
-    ? { date: format(new Date(worstDayEntry[0]), 'dd/MM'), total: worstDayEntry[1] }
+    ? { date: format(parseISO(worstDayEntry[0]), 'dd/MM'), total: worstDayEntry[1] }
     : null
   const topExpenses = categories
     .filter(c => c.Type === 'expense')
@@ -54,7 +55,7 @@ export default function MonthlyExpent() {
               <div key={cat.Category} className="flex items-center gap-3">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: categoricalPalette[i % categoricalPalette.length] }} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium capitalize">{cat.Category.replace(/_/g, ' ')}</p>
+                  <p className="truncate text-sm font-medium capitalize">{categoryLabels[cat.Category] ?? cat.Category.replace(/_/g, ' ')}</p>
                   <p className="text-xs text-muted-foreground">{cat.Count} registro(s)</p>
                 </div>
                 <span className="text-sm font-semibold tabular-nums">{formatBRL(cat.Total)}</span>
