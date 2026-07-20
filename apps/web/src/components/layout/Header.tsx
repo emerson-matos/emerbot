@@ -1,4 +1,5 @@
-import { Bell, Menu, Moon, Sun } from "lucide-react";
+import { Menu, Moon, Sun } from "lucide-react";
+import NotificationBell from "../NotificationBell";
 
 interface HeaderProps {
   theme: "light" | "dark";
@@ -24,12 +25,7 @@ export default function Header({
       <div className="min-w-0 flex-1" />
 
       <div className="flex items-center gap-2">
-        <button
-          aria-label="Notificações"
-          className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <Bell className="size-4" />
-        </button>
+        <NotificationBell />
 
         <button
           onClick={onToggleTheme}
