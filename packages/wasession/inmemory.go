@@ -45,6 +45,16 @@ func (s *InMemoryStore) MarkProcessed(_ context.Context, messageID string, now t
 	return true, nil
 }
 
+func (s *InMemoryStore) Unmark(_ context.Context, messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.processed, messageID)
+	return nil
+}
+
 func (s *InMemoryStore) Active(_ context.Context, phone string, now time.Time) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

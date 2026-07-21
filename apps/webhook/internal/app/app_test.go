@@ -453,6 +453,30 @@ func TestHandleDedupsRetriedMessageID(t *testing.T) {
 	}
 }
 
+// TestHandleReprocessesAfterFailedTurn proves the dedup marker is compensated:
+// a turn that ends without a 2xx (here a 500 from a failing orchestrator) drops
+// the marker, so WhatsApp's retry of the same message ID is reprocessed rather
+// than silently swallowed as a duplicate.
+func TestHandleReprocessesAfterFailedTurn(t *testing.T) {
+	t.Parallel()
+
+	stores := memory.NewInMemoryStores()
+	svc := orchestrator.NewService(failingLLM{}, stores, stores, tools.NewRegistry(tools.EchoTool{}))
+	sessions := wasession.NewInMemoryStore()
+	app := New(svc, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions, false)
+
+	req := Request{UserID: "u1", MessageID: "wamid.FAIL", Text: "olá"}
+
+	// First delivery fails at the orchestrator → 500 (a retryable transient).
+	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
+		t.Fatalf("first delivery: expected 500, got %d", status)
+	}
+	// The retry must be reprocessed (500 again), NOT short-circuited to 200.
+	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
+		t.Fatalf("retry after a failed turn must reprocess (500), got %d", status)
+	}
+}
+
 // TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled proves the current
 // behavior is preserved when the app has no natural-language-capable agent
 // wired (nlFinance = false, the default/regex-only setup): free text still

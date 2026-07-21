@@ -35,4 +35,8 @@ type Store interface {
 	// this is the first time it was seen (true = process it; false = a retry to
 	// ignore). An empty messageID always returns true (nothing to dedup on).
 	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
+	// Unmark removes a message's dedup marker. It compensates a MarkProcessed
+	// whose turn then failed without a 2xx, so WhatsApp's retry is reprocessed
+	// instead of being swallowed as a duplicate. An empty messageID is a no-op.
+	Unmark(ctx context.Context, messageID string) error
 }

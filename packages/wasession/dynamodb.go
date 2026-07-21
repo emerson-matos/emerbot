@@ -90,6 +90,22 @@ func (s *DynamoDBStore) MarkProcessed(ctx context.Context, messageID string, now
 	return true, nil
 }
 
+func (s *DynamoDBStore) Unmark(ctx context.Context, messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"Phone": &types.AttributeValueMemberS{Value: dedupKeyPrefix + messageID},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("unmark processed: %w", err)
+	}
+	return nil
+}
+
 func (s *DynamoDBStore) Active(ctx context.Context, phone string, now time.Time) (bool, error) {
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),

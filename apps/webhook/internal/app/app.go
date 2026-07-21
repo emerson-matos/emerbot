@@ -139,6 +139,9 @@ type SessionStore interface {
 	// MarkProcessed records that a message ID was handled and reports whether
 	// this is the first time it was seen (false = a WhatsApp retry to ignore).
 	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
+	// Unmark drops a message's dedup marker so a WhatsApp retry is reprocessed
+	// when the original turn ended without a 2xx.
+	Unmark(ctx context.Context, messageID string) error
 }
 
 type App struct {
@@ -230,7 +233,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	return New(svc, finHandler, waClient, secret, verifyToken, sessions, nlFinance)
 }
 
-func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
+func (a *App) Handle(ctx context.Context, req Request) (resp Response, status int, err error) {
 	message, err := normalize(req)
 	if err != nil {
 		return Response{}, http.StatusBadRequest, err
@@ -256,12 +259,25 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	// (and re-bill Gemini) a second time. Best-effort: on a store error we fall
 	// through and process, favoring a possible duplicate over a dropped message.
 	if a.sessions != nil && message.MessageID != "" {
-		first, err := a.sessions.MarkProcessed(ctx, message.MessageID, message.Timestamp)
-		if err != nil {
-			log.Printf("dedup check: %v", err)
-		} else if !first {
+		marked, derr := a.sessions.MarkProcessed(ctx, message.MessageID, message.Timestamp)
+		if derr != nil {
+			log.Printf("dedup check: %v", derr)
+		} else if !marked {
 			log.Printf("ignoring duplicate message_id=%s", message.MessageID)
 			return Response{}, http.StatusOK, nil
+		} else {
+			// We claimed the marker before processing (so a near-simultaneous
+			// retry is short-circuited). If the turn then ends without a 2xx —
+			// a path WhatsApp will retry — drop the marker so that retry is
+			// reprocessed instead of swallowed. Use a detached context so the
+			// cleanup still runs when ctx is the reason we failed.
+			defer func() {
+				if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
+					if uerr := a.sessions.Unmark(context.WithoutCancel(ctx), message.MessageID); uerr != nil {
+						log.Printf("dedup unmark message_id=%s: %v", message.MessageID, uerr)
+					}
+				}
+			}()
 		}
 	}
 

@@ -61,6 +61,24 @@ func TestInMemoryMarkProcessedDedups(t *testing.T) {
 	}
 }
 
+func TestInMemoryUnmarkAllowsReprocessing(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryStore()
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now); !first {
+		t.Fatal("first mark must report first=true")
+	}
+	// A failed turn drops the marker...
+	if err := s.Unmark(ctx, "wamid.X"); err != nil {
+		t.Fatal(err)
+	}
+	// ...so the retry is treated as fresh again.
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now.Add(time.Minute)); !first {
+		t.Fatal("after Unmark, the retry must report first=true")
+	}
+}
+
 func TestInMemoryRecordOnlyExtends(t *testing.T) {
 	ctx := context.Background()
 	s := NewInMemoryStore()
