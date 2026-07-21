@@ -50,6 +50,7 @@ func FinanceTools(store Store) ([]*genai.Tool, map[string]ToolHandler) {
 
 	tools := []*genai.Tool{
 		createEntryTool(handlers, store),
+		editEntryTool(handlers, store),
 		monthSummaryTool(handlers, store),
 		listDueEntriesTool(handlers, store),
 		searchEntriesTool(handlers, store),
@@ -151,6 +152,100 @@ func createEntryTool(handlers map[string]ToolHandler, store Store) *genai.Tool {
 		return map[string]any{
 			"entry_id": entry.EntryID,
 			"status":   "created",
+			"amount":   centavosToReais(entry.Amount),
+			"category": entry.Category,
+		}, nil
+	}
+
+	return &genai.Tool{FunctionDeclarations: []*genai.FunctionDeclaration{decl}}
+}
+
+// --- edit_financial_entry ---
+
+func editEntryTool(handlers map[string]ToolHandler, store Store) *genai.Tool {
+	const name = "edit_financial_entry"
+
+	decl := &genai.FunctionDeclaration{
+		Name: name,
+		Description: "Edita um lançamento financeiro existente (encontrado via " +
+			"search_entries ou list_due_entries). Só os campos informados são alterados.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"entry_id":    {Type: genai.TypeString, Description: "ID do lançamento a editar"},
+				"amount":      {Type: genai.TypeNumber, Description: "Novo valor em reais (ex: 500.00)"},
+				"category":    {Type: genai.TypeString, Enum: financialCategories, Description: "Nova categoria do lançamento"},
+				"description": {Type: genai.TypeString, Description: "Nova descrição do lançamento"},
+				"date":        {Type: genai.TypeString, Description: "Nova data da transação YYYY-MM-DD"},
+				"due_date":    {Type: genai.TypeString, Description: "Nova data de vencimento YYYY-MM-DD"},
+				"is_pending":  {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
+			},
+			Required: []string{"entry_id"},
+		},
+	}
+
+	handlers[name] = func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
+		var args struct {
+			EntryID     string  `json:"entry_id"`
+			Amount      float64 `json:"amount"`
+			Category    string  `json:"category"`
+			Description string  `json:"description"`
+			Date        string  `json:"date"`
+			DueDate     string  `json:"due_date"`
+			IsPending   *bool   `json:"is_pending"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, fmt.Errorf("parse args: %w", err)
+		}
+		if args.EntryID == "" {
+			return nil, fmt.Errorf("entry_id is required")
+		}
+
+		entry, err := store.GetEntry(ctx, userID, args.EntryID)
+		if err != nil {
+			return nil, fmt.Errorf("get entry: %w", err)
+		}
+
+		if args.Amount != 0 {
+			if args.Amount <= 0 || args.Amount > maxEntryAmountReais {
+				return nil, fmt.Errorf("invalid amount: %v", args.Amount)
+			}
+			entry.Amount = reaisToCentavos(args.Amount)
+		}
+		if args.Category != "" && knownCategory(args.Category) {
+			entry.Category = args.Category
+		}
+		if args.Description != "" {
+			entry.Description = args.Description
+		}
+		if d, ok := parseDate(args.Date); ok {
+			entry.Date = d
+		}
+		if d, ok := parseDate(args.DueDate); ok {
+			entry.DueDate = &d
+		}
+		if args.IsPending != nil {
+			if *args.IsPending {
+				entry.PaymentStatus = domain.PaymentStatusPending
+				entry.PaymentDate = nil
+			} else {
+				entry.PaymentStatus = domain.PaymentStatusPaid
+				if entry.PaymentDate == nil {
+					now := time.Now().UTC()
+					entry.PaymentDate = &now
+				}
+			}
+		}
+
+		entry.UpdatedAt = time.Now().UTC()
+
+		if err := store.UpdateEntry(ctx, entry); err != nil {
+			return nil, fmt.Errorf("update entry: %w", err)
+		}
+
+		return map[string]any{
+			"entry_id": entry.EntryID,
+			"status":   "updated",
 			"amount":   centavosToReais(entry.Amount),
 			"category": entry.Category,
 		}, nil

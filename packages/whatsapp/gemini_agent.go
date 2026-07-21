@@ -76,8 +76,9 @@ Contexto atual:
 Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem")
 usando a data acima como referência. Nunca invente datas.
 
-Você tem acesso a ferramentas para criar lançamentos, consultar o resumo do
-mês, listar contas a pagar/receber e buscar lançamentos.
+Você tem acesso a ferramentas para criar lançamentos, editar lançamentos
+existentes, consultar o resumo do mês, listar contas a pagar/receber e
+buscar lançamentos.
 
 Regras:
 - Sempre use as ferramentas quando precisar de dados. Nunca invente valores.

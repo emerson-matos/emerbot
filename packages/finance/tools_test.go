@@ -269,3 +269,98 @@ func TestListDueEntriesToolDefaultsToPending(t *testing.T) {
 		t.Fatalf("expected only the pending entry, got %+v", results)
 	}
 }
+
+func TestEditEntryToolUpdatesFields(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+		UserID: "u1", EntryID: "e1", Date: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		Amount: 1000, Category: "outros_despesas", Type: domain.EntryTypeExpense,
+		Description: "old", PaymentStatus: domain.PaymentStatusPaid,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h := handlerFor(t, store, "edit_financial_entry")
+	callTool(t, h, "u1", map[string]any{
+		"entry_id":    "e1",
+		"amount":      50.0,
+		"category":    "aluguel",
+		"description": "new",
+	})
+
+	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry.Amount != 5000 || entry.Category != "aluguel" || entry.Description != "new" {
+		t.Fatalf("unexpected entry after edit: %+v", entry)
+	}
+}
+
+func TestEditEntryToolMarkingPaidSetsPaymentDate(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	due := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+		UserID: "u1", EntryID: "e1", Date: time.Now().UTC(), Amount: 5000,
+		Category: "aluguel", Type: domain.EntryTypeExpense, DueDate: &due,
+		PaymentStatus: domain.PaymentStatusPending,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h := handlerFor(t, store, "edit_financial_entry")
+	callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": false})
+
+	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry.PaymentStatus != domain.PaymentStatusPaid {
+		t.Fatalf("expected paid status, got %s", entry.PaymentStatus)
+	}
+	if entry.PaymentDate == nil {
+		t.Fatal("expected PaymentDate to be set")
+	}
+}
+
+func TestEditEntryToolUnknownEntryReturnsError(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "edit_financial_entry")
+
+	raw, _ := json.Marshal(map[string]any{"entry_id": "missing", "amount": 10.0})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected an error for an unknown entry_id")
+	}
+}
+
+func TestEditEntryToolRejectsAmountOverCap(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+		UserID: "u1", EntryID: "e1", Date: time.Now().UTC(), Amount: 1000,
+		Category: "aluguel", Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h := handlerFor(t, store, "edit_financial_entry")
+	raw, _ := json.Marshal(map[string]any{"entry_id": "e1", "amount": maxEntryAmountReais + 1})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected an error for an amount over the cap")
+	}
+
+	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry.Amount != 1000 {
+		t.Fatalf("expected amount unchanged after rejected edit, got %d", entry.Amount)
+	}
+}
