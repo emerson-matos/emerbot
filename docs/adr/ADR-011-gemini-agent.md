@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposto
+Aceito — implementado (Fase 2 da migração Gemini).
 
 ## Contexto
 

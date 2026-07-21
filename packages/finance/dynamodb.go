@@ -291,6 +291,17 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 		filters = append(filters, "Category = :cat")
 		exprValues[":cat"] = &types.AttributeValueMemberS{Value: filter.Category}
 	}
+	if filter.Description != "" {
+		// DynamoDB's contains() is case-sensitive; the GeminiAgent normalizes
+		// query casing on its side, and callers pass the term as typed. Use a
+		// name placeholder since "Description" is safest quoted.
+		filters = append(filters, "contains(#desc, :desc)")
+		exprValues[":desc"] = &types.AttributeValueMemberS{Value: filter.Description}
+		if filterNames == nil {
+			filterNames = map[string]string{}
+		}
+		filterNames["#desc"] = "Description"
+	}
 	if filter.Status != "" {
 		filters = append(filters, "PaymentStatus = :status")
 		exprValues[":status"] = &types.AttributeValueMemberS{Value: string(filter.Status)}
@@ -298,7 +309,10 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	if filter.Type != "" {
 		filters = append(filters, "#t = :type")
 		exprValues[":type"] = &types.AttributeValueMemberS{Value: string(filter.Type)}
-		filterNames = map[string]string{"#t": "Type"}
+		if filterNames == nil {
+			filterNames = map[string]string{}
+		}
+		filterNames["#t"] = "Type"
 	}
 	if len(filters) > 0 {
 		expr := strings.Join(filters, " AND ")

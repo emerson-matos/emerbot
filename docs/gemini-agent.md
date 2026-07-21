@@ -3,7 +3,7 @@
 | Fase | Status |
 |------|--------|
 | 1 — Prompt dinâmico + validação de data | ✅ Implementada (PR #21) |
-| 2 — GeminiAgent com function calling | 📝 Planejada |
+| 2 — GeminiAgent com function calling | ✅ Implementada |
 
 ---
 
@@ -180,7 +180,24 @@ make build         # compila
 
 ## Fase 2 — GeminiAgent com function calling
 
-**Status: planejada.** Aguarda a Fase 1 estabilizar em produção.
+**Status: implementada.** O `GeminiParser` e a interface `Parser` foram removidos;
+o `GeminiAgent` (`packages/whatsapp/gemini_agent.go`) trata todo o fluxo de
+linguagem natural via function calling, e o `RegexParser` continua como fast
+path para slash commands. As tools vivem em `packages/finance/tools.go`.
+
+Diferenças em relação ao rascunho abaixo (o código é a fonte da verdade):
+
+- O modelo é `geminiModel` (`gemini-3.1-flash-lite`), não `gemini-2.5-flash-lite`.
+- As tools ficam no pacote `finance` (sem prefixo `pkgfinance`); os handlers têm
+  o tipo `finance.ToolHandler`.
+- `create_financial_entry` mantém o enum fechado de categorias e arredonda
+  reais→centavos (19.99 → 1999).
+- O `search_entries` usa o novo campo `EntryFilter.Description` (filtro no store),
+  não filtragem em memória no handler.
+- O loop do agente coleta **todos** os `FunctionCall` de um turno (não só o
+  primeiro) e responde com `{"output": ...}`.
+- O `financial.Handler` recebe `(regex *whatsapp.RegexParser, agent Agent, store)`;
+  `Agent` é uma interface local (nil = deployment regex-only).
 
 **Objetivo**: substituir `GeminiParser` por um agente que usa tools para tudo.
 

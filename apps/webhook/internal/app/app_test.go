@@ -19,7 +19,6 @@ import (
 	"github.com/emerson/emerbot/packages/llm"
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
-	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/tools"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
@@ -385,19 +384,15 @@ func newFailingApp(client *fakeWhatsAppClient) *App {
 }
 
 // TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled proves that,
-// once the app is wired with a natural-language-capable parser (nlFinance =
-// true), free text that isn't a slash command is tried against the financial
-// handler instead of going straight to the orchestrator.
+// once the app is wired with a natural-language-capable agent (nlFinance =
+// true), free text that isn't a slash command is routed to the financial
+// handler (and thus the agent) instead of going straight to the orchestrator.
 func TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	finHandler := financial.NewHandler(fakeNLParser{entry: whatsapp.ParsedEntry{
-		Type:        domain.EntryTypeExpense,
-		Amount:      5000,
-		Category:    "aluguel",
-		Description: "Aluguel",
-	}}, store)
+	agent := &fakeAgent{reply: "💸 Despesa registrada: R$50,00 (aluguel)"}
+	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
 
 	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", nil, true)
 
@@ -412,28 +407,24 @@ func TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled(t *testing.T
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-	if !strings.Contains(resp.Message, "Despesa registrada") {
-		t.Fatalf("expected financial confirmation reply, got %q", resp.Message)
+	if resp.Message != agent.reply {
+		t.Fatalf("expected agent reply, got %q", resp.Message)
 	}
-
-	entries, err := store.ListEntries(context.Background(), shared.FinanceLedgerID, pkgfinance.EntryFilter{})
-	if err != nil {
-		t.Fatalf("ListEntries: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("expected free text to be saved as a financial entry, got %d entries", len(entries))
+	if agent.gotText != "paguei 50 de aluguel" {
+		t.Fatalf("expected free text to reach the agent, got %q", agent.gotText)
 	}
 }
 
 // TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled proves the current
-// behavior is preserved when the app has no natural-language-capable parser
+// behavior is preserved when the app has no natural-language-capable agent
 // wired (nlFinance = false, the default/regex-only setup): free text still
 // goes to the orchestrator, never to the financial handler.
 func TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	finHandler := financial.NewHandler(fakeNLParser{err: fmt.Errorf("should not be called")}, store)
+	agent := &fakeAgent{err: fmt.Errorf("should not be called")}
+	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
 
 	stores := memory.NewInMemoryStores()
 	svc := orchestrator.NewService(llm.StaticClient{}, stores, stores, tools.NewRegistry(tools.EchoTool{}))
@@ -451,28 +442,25 @@ func TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("expected 200, got %d", status)
 	}
-
-	entries, err := store.ListEntries(context.Background(), shared.FinanceLedgerID, pkgfinance.EntryFilter{})
-	if err != nil {
-		t.Fatalf("ListEntries: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("expected free text NOT to reach the financial handler, got %d entries", len(entries))
+	if agent.gotText != "" {
+		t.Fatalf("expected free text NOT to reach the agent, but it got %q", agent.gotText)
 	}
 }
 
-// fakeNLParser is a whatsapp.Parser test double for exercising app-level
-// routing without depending on the real GeminiParser.
-type fakeNLParser struct {
-	entry whatsapp.ParsedEntry
-	err   error
+// fakeAgent is a financial.Agent test double for exercising app-level routing
+// without depending on the real GeminiAgent.
+type fakeAgent struct {
+	reply   string
+	err     error
+	gotText string
 }
 
-func (f fakeNLParser) Parse(context.Context, string, time.Time) (whatsapp.ParsedEntry, error) {
+func (f *fakeAgent) Process(_ context.Context, _, text string, _ time.Time) (string, error) {
+	f.gotText = text
 	if f.err != nil {
-		return whatsapp.ParsedEntry{}, f.err
+		return "", f.err
 	}
-	return f.entry, nil
+	return f.reply, nil
 }
 
 type fakeWhatsAppClient struct {

@@ -94,6 +94,10 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 		if filter.Category != "" && e.Category != filter.Category {
 			continue
 		}
+		if filter.Description != "" &&
+			!strings.Contains(strings.ToLower(e.Description), strings.ToLower(filter.Description)) {
+			continue
+		}
 		if filter.Status != "" && e.PaymentStatus != filter.Status {
 			continue
 		}

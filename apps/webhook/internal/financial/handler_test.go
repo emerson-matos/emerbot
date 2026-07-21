@@ -2,7 +2,6 @@ package financial
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,32 +11,54 @@ import (
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
-func TestHandleReturnsFriendlyMessageOnParseError(t *testing.T) {
+// regexHandler wires the handler with the real regex parser and no agent — the
+// slash-command fast path most tests exercise.
+func regexHandler(store pkgfinance.Store) *Handler {
+	return NewHandler(whatsapp.NewRegexParser(), nil, store)
+}
+
+func TestHandleReturnsFriendlyMessageOnInvalidSlashCommand(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(fakeParser{err: errors.New("bad command")}, pkgfinance.NewInMemoryStore())
+	handler := regexHandler(pkgfinance.NewInMemoryStore())
 
-	msg, err := handler.Handle(context.Background(), "u1", "not a command", time.Now())
+	msg, err := handler.Handle(context.Background(), "u1", "/despesa abc aluguel", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
-	if !strings.Contains(msg, "Não consegui entender") || !strings.Contains(msg, "bad command") {
+	if !strings.Contains(msg, "Não consegui entender") {
 		t.Fatalf("unexpected parse failure message: %s", msg)
 	}
 }
 
-func TestHandleReturnsFriendlyReplyWhenParserSaysNotFinancial(t *testing.T) {
+func TestHandleRoutesFreeTextToAgent(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{err: whatsapp.ErrNotFinancial}, store)
+	agent := &fakeAgent{reply: "💰 Você recebeu R$800,00 este mês."}
+	handler := NewHandler(whatsapp.NewRegexParser(), agent, store)
+
+	msg, err := handler.Handle(context.Background(), "u1", "quanto recebi este mês?", time.Now())
+	if err != nil {
+		t.Fatalf("Handle returned unexpected error: %v", err)
+	}
+	if msg != agent.reply {
+		t.Fatalf("expected agent reply, got: %s", msg)
+	}
+	if agent.gotText != "quanto recebi este mês?" {
+		t.Fatalf("agent did not receive the message text, got: %q", agent.gotText)
+	}
+}
+
+func TestHandleFreeTextWithoutAgentPointsToHelp(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := regexHandler(store) // no agent wired
 
 	msg, err := handler.Handle(context.Background(), "u1", "oi, tudo bem?", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
-	}
-	if strings.Contains(msg, "Não consegui entender") {
-		t.Fatalf("expected friendly non-financial reply, got the parse-error tutorial: %s", msg)
 	}
 	if !strings.Contains(msg, "/help") {
 		t.Fatalf("expected reply to point to /help, got: %s", msg)
@@ -56,8 +77,7 @@ func TestHandleTeachesUsageForBareCommand(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	// A parser that would error proves the usage path short-circuits before parsing.
-	handler := NewHandler(fakeParser{err: errors.New("should not be called")}, store)
+	handler := regexHandler(store)
 
 	msg, err := handler.Handle(context.Background(), "u1", "/despesa", time.Now())
 	if err != nil {
@@ -66,9 +86,6 @@ func TestHandleTeachesUsageForBareCommand(t *testing.T) {
 	// Teaches /despesa syntax and points to /pagar for unpaid expenses.
 	if !strings.Contains(msg, "/despesa <valor>") || !strings.Contains(msg, "/pagar") {
 		t.Fatalf("expected usage teaching /despesa and /pagar, got: %s", msg)
-	}
-	if strings.Contains(msg, "should not be called") {
-		t.Fatalf("parser was invoked for a bare command: %s", msg)
 	}
 
 	// A bare command must not persist anything.
@@ -85,16 +102,7 @@ func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{
-		entry: whatsapp.ParsedEntry{
-			Type:        domain.EntryTypeExpense,
-			Amount:      12345,
-			Category:    "energia_agua",
-			Description: "Conta de luz",
-			DueDate:     ptrTime(mustDate("2026-07-20")),
-			IsPending:   true,
-		},
-	}, store)
+	handler := regexHandler(store)
 
 	msg, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07", time.Now())
 	if err != nil {
@@ -127,16 +135,7 @@ func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{
-		entry: whatsapp.ParsedEntry{
-			Type:        domain.EntryTypeExpense,
-			Amount:      50000,
-			Category:    "aluguel",
-			Description: "Aluguel de julho",
-			Date:        ptrTime(mustDate("2026-07-10")),
-			IsPending:   false,
-		},
-	}, store)
+	handler := regexHandler(store)
 
 	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho", time.Now())
 	if err != nil {
@@ -150,8 +149,9 @@ func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 saved entry, got %d", len(entries))
 	}
-	if got := entries[0].Date; !got.Equal(mustDate("2026-07-10")) {
-		t.Fatalf("expected entry.Date to use parsed date 2026-07-10, got %v", got)
+	want := dateThisYear(time.July, 10)
+	if got := entries[0].Date; !got.Equal(want) {
+		t.Fatalf("expected entry.Date to use parsed date %v, got %v", want, got)
 	}
 	if entries[0].DueDate != nil {
 		t.Fatalf("expected no due date for non-pending entry, got %+v", entries[0].DueDate)
@@ -162,16 +162,7 @@ func TestHandleSetsPaymentDateOnDespesa(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{
-		entry: whatsapp.ParsedEntry{
-			Type:        domain.EntryTypeExpense,
-			Amount:      50000,
-			Category:    "aluguel",
-			Description: "Aluguel de julho",
-			Date:        ptrTime(mustDate("2026-07-10")),
-			IsPending:   false,
-		},
-	}, store)
+	handler := regexHandler(store)
 
 	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho", time.Now())
 	if err != nil {
@@ -198,16 +189,7 @@ func TestHandleDoesNotSetPaymentDateOnPagar(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{
-		entry: whatsapp.ParsedEntry{
-			Type:        domain.EntryTypeExpense,
-			Amount:      12345,
-			Category:    "energia_agua",
-			Description: "Conta de luz",
-			DueDate:     ptrTime(mustDate("2026-07-20")),
-			IsPending:   true,
-		},
-	}, store)
+	handler := regexHandler(store)
 
 	_, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07", time.Now())
 	if err != nil {
@@ -231,13 +213,7 @@ func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{
-		entry: whatsapp.ParsedEntry{
-			Type:     domain.EntryTypeExpense,
-			Amount:   50000,
-			Category: "aluguel",
-		},
-	}, store)
+	handler := regexHandler(store)
 
 	before := time.Now().UTC()
 	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel", time.Now())
@@ -263,7 +239,7 @@ func TestRecorrenteSavesWholeSeriesWithSharedRecurrenceID(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{}, store)
+	handler := regexHandler(store)
 
 	msg, err := handler.Recorrente(context.Background(), "u1", "/recorrente pagar 350 aluguel mensal 12 Aluguel anual")
 	if err != nil {
@@ -316,7 +292,7 @@ func TestRecorrenteReturnsFriendlyMessageOnInvalidInput(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{}, store)
+	handler := regexHandler(store)
 
 	msg, err := handler.Recorrente(context.Background(), "u1", "/recorrente pagar aluguel mensal 12")
 	if err != nil {
@@ -338,7 +314,7 @@ func TestRecorrenteReturnsFriendlyMessageOnInvalidInput(t *testing.T) {
 func TestSetGoalTeachesUsageWhenArgsMissing(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(fakeParser{}, pkgfinance.NewInMemoryStore())
+	handler := regexHandler(pkgfinance.NewInMemoryStore())
 
 	for _, text := range []string{"/meta", "/meta 80000"} {
 		msg, err := handler.SetGoal(context.Background(), "u1", text)
@@ -355,7 +331,7 @@ func TestSetGoalPersistsTargetsAndGoalReadsProgress(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{}, store)
+	handler := regexHandler(store)
 	ctx := context.Background()
 
 	for _, entry := range []domain.FinancialEntry{
@@ -387,7 +363,7 @@ func TestSetGoalPersistsTargetsAndGoalReadsProgress(t *testing.T) {
 func TestGoalWithoutSavedTargetReturnsFriendlyMessage(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(fakeParser{}, pkgfinance.NewInMemoryStore())
+	handler := regexHandler(pkgfinance.NewInMemoryStore())
 
 	msg, err := handler.Goal(context.Background(), "u1")
 	if err != nil {
@@ -402,7 +378,7 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	handler := NewHandler(fakeParser{}, store)
+	handler := regexHandler(store)
 	ctx := context.Background()
 
 	now := time.Now().UTC()
@@ -432,16 +408,21 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 	}
 }
 
-type fakeParser struct {
-	entry whatsapp.ParsedEntry
-	err   error
+// fakeAgent is a financial.Agent test double: it records the text it received
+// and returns a canned reply/error, so handler routing can be tested without a
+// real Gemini call.
+type fakeAgent struct {
+	reply   string
+	err     error
+	gotText string
 }
 
-func (f fakeParser) Parse(context.Context, string, time.Time) (whatsapp.ParsedEntry, error) {
+func (f *fakeAgent) Process(_ context.Context, _, text string, _ time.Time) (string, error) {
+	f.gotText = text
 	if f.err != nil {
-		return whatsapp.ParsedEntry{}, f.err
+		return "", f.err
 	}
-	return f.entry, nil
+	return f.reply, nil
 }
 
 func testFinancialEntry(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
@@ -459,14 +440,8 @@ func testFinancialEntry(userID, entryID string, date time.Time, amount int64, ca
 	}
 }
 
-func mustDate(s string) time.Time {
-	t, err := time.Parse("2006-01-02", s)
-	if err != nil {
-		panic(err)
-	}
-	return t
-}
-
-func ptrTime(t time.Time) *time.Time {
-	return &t
+// dateThisYear builds a UTC calendar date in the current year, matching how the
+// regex parser fills in a year when the command omits it.
+func dateThisYear(month time.Month, day int) time.Time {
+	return time.Date(time.Now().Year(), month, day, 0, 0, 0, 0, time.UTC)
 }

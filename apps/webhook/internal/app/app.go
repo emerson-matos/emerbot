@@ -146,7 +146,7 @@ type App struct {
 	secret           string
 	verifyToken      string
 	// nlFinance is true when financialHandler was wired with a natural-language
-	// capable parser (GeminiParser), so free text (not just slash commands) can
+	// capable agent (GeminiAgent), so free text (not just slash commands) can
 	// be routed to it.
 	nlFinance bool
 }
@@ -179,20 +179,19 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
 
-		var parser whatsapp.Parser
+		regex := whatsapp.NewRegexParser()
 		if apiKey := shared.Getenv("GEMINI_API_KEY", ""); apiKey != "" {
-			geminiParser, err := whatsapp.NewGeminiParser(ctx, apiKey)
+			agent, err := whatsapp.NewGeminiAgent(ctx, apiKey, store)
 			if err != nil {
-				log.Printf("NewFromEnv: gemini parser: %v, falling back to regex parser", err)
-				parser = whatsapp.NewRegexParser()
+				log.Printf("NewFromEnv: gemini agent: %v, falling back to regex-only", err)
+				finHandler = financial.NewHandler(regex, nil, store)
 			} else {
-				parser = geminiParser
+				finHandler = financial.NewHandler(regex, agent, store)
 				nlFinance = true
 			}
 		} else {
-			parser = whatsapp.NewRegexParser()
+			finHandler = financial.NewHandler(regex, nil, store)
 		}
-		finHandler = financial.NewHandler(parser, store)
 	}
 
 	// The 24h-window session store lives in its own table (TTL-managed), so it
@@ -286,11 +285,12 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		return Response{Message: reply}, http.StatusOK, nil
 	}
 
-	// With a natural-language-capable parser wired (GeminiParser), free text
-	// that isn't a slash command may still describe a financial entry (e.g.
-	// "paguei 500 de aluguel ontem") — try the financial handler before
-	// falling back to the orchestrator. Unknown slash commands (/foo) are
-	// never sent to Gemini; they fall through to the orchestrator as before.
+	// With a natural-language-capable agent wired (GeminiAgent), free text
+	// that isn't a slash command may still describe a financial entry or a
+	// query (e.g. "paguei 500 de aluguel ontem", "como estamos este mês?") —
+	// route it to the financial handler before falling back to the
+	// orchestrator. Unknown slash commands (/foo) are never sent to Gemini;
+	// they fall through to the orchestrator as before.
 	if a.financialHandler != nil && a.nlFinance && text != "" && !strings.HasPrefix(text, "/") {
 		ledgerID := shared.FinanceLedgerID
 		reply, err := a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
