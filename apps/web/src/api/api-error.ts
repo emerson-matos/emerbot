@@ -1,10 +1,12 @@
 export class ApiError extends Error {
-  name = "ApiError";
-  constructor(
-    public status: number,
-    public body?: unknown,
-  ) {
-    super(`HTTP ${status}`);
+  name = "ApiError"
+  status: number
+  body?: unknown
+
+  constructor(status: number, body?: unknown) {
+    super(`HTTP ${status}`)
+    this.status = status
+    this.body = body
   }
 }
 
