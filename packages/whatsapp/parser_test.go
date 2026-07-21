@@ -141,3 +141,41 @@ func TestGeminiResponseToParsedRoutesDateToTransactionDateWhenNotPending(t *test
 		t.Fatalf("unexpected transaction date: %+v", entry.Date)
 	}
 }
+
+func TestGeminiResponseToParsedRejectsDateOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	ref := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name    string
+		dueDate string
+		wantErr bool
+	}{
+		{"one year in the past is accepted", "2025-07-21", false},
+		{"two years in the future is accepted", "2028-07-21", false},
+		{"more than one year in the past is rejected", "2024-12-31", true},
+		{"more than two years in the future is rejected", "2029-01-01", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := geminiResponseToParsed(geminiResponse{
+				Type:        "expense",
+				AmountCents: 50000,
+				Category:    "aluguel",
+				Description: "aluguel",
+				DueDate:     tc.dueDate,
+				IsPending:   true,
+			}, ref)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected date-out-of-range error for %s", tc.dueDate)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error for %s: %v", tc.dueDate, err)
+			}
+		})
+	}
+}
