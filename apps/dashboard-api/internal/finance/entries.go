@@ -159,6 +159,9 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	if status == domain.PaymentStatusPaid {
+		entry.PaymentDate = &date
+	}
 
 	if err := h.store.SaveEntry(r.Context(), entry); err != nil {
 		jsonError(w, "failed to save entry", http.StatusInternalServerError)

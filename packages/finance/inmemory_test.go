@@ -270,6 +270,35 @@ func TestInMemoryStoreGoalAndCategoryLifecycle(t *testing.T) {
 	}
 }
 
+func TestInMemoryStorePreservesPaymentDate(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	payDate := mustDate("2026-07-10")
+	entry := testEntry("u1", "e1", "2026-07-10", 10000, "aluguel", domain.EntryTypeExpense)
+	entry.PaymentDate = &payDate
+
+	if err := store.SaveEntry(ctx, entry); err != nil {
+		t.Fatalf("SaveEntry: %v", err)
+	}
+
+	entries, err := store.ListEntries(ctx, "u1", EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].PaymentDate == nil {
+		t.Fatal("expected PaymentDate to survive save/list round-trip")
+	}
+	if !(*entries[0].PaymentDate).Equal(payDate) {
+		t.Fatalf("expected PaymentDate %v, got %v", payDate, *entries[0].PaymentDate)
+	}
+}
+
 func TestInMemoryStoreUpdateAndDeleteMissingEntry(t *testing.T) {
 	t.Parallel()
 

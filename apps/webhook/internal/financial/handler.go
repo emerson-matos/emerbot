@@ -112,6 +112,9 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	if status == domain.PaymentStatusPaid {
+		entry.PaymentDate = &date
+	}
 
 	if err := h.store.SaveEntry(ctx, entry); err != nil {
 		return "❌ Não consegui salvar. Tente novamente.", err

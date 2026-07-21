@@ -180,7 +180,7 @@ func pendingDue(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
 
 func expense(userID string, d time.Time, amount int64, cat, desc, supplier string, status domain.PaymentStatus) domain.FinancialEntry {
 	now := time.Now().UTC()
-	return domain.FinancialEntry{
+	e := domain.FinancialEntry{
 		UserID:        userID,
 		EntryID:       uuid.New().String(),
 		Date:          d,
@@ -194,6 +194,10 @@ func expense(userID string, d time.Time, amount int64, cat, desc, supplier strin
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	if status == domain.PaymentStatusPaid {
+		e.PaymentDate = &d
+	}
+	return e
 }
 
 func income(userID string, d time.Time, amount int64, cat, desc string) domain.FinancialEntry {
@@ -207,6 +211,7 @@ func income(userID string, d time.Time, amount int64, cat, desc string) domain.F
 		Type:          domain.EntryTypeIncome,
 		Description:   desc,
 		PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate:   &d,
 		Source:        "seed",
 		CreatedAt:     now,
 		UpdatedAt:     now,

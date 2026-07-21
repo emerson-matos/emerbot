@@ -132,6 +132,75 @@ func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
 	}
 }
 
+func TestHandleSetsPaymentDateOnDespesa(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:        domain.EntryTypeExpense,
+			Amount:      50000,
+			Category:    "aluguel",
+			Description: "Aluguel de julho",
+			Date:        ptrTime(mustDate("2026-07-10")),
+			IsPending:   false,
+		},
+	}, store)
+
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.PaymentDate == nil {
+		t.Fatal("expected PaymentDate to be set for paid despesa entry")
+	}
+	if !(*entry.PaymentDate).Equal(entry.Date) {
+		t.Fatalf("expected PaymentDate %v to equal Date %v", *entry.PaymentDate, entry.Date)
+	}
+}
+
+func TestHandleDoesNotSetPaymentDateOnPagar(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{
+		entry: whatsapp.ParsedEntry{
+			Type:        domain.EntryTypeExpense,
+			Amount:      12345,
+			Category:    "energia_agua",
+			Description: "Conta de luz",
+			DueDate:     ptrTime(mustDate("2026-07-20")),
+			IsPending:   true,
+		},
+	}, store)
+
+	_, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07")
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 saved entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.PaymentDate != nil {
+		t.Fatal("expected PaymentDate to be nil for pending pagar entry")
+	}
+}
+
 func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
 	t.Parallel()
 
