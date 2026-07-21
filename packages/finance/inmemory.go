@@ -76,6 +76,15 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 		if e.UserID != userID {
 			continue
 		}
+
+		// Cursor is an exclusive upper bound on the GSI2SK value.
+		if filter.Cursor != "" {
+			gsi2sk := effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID
+			if gsi2sk >= filter.Cursor {
+				continue
+			}
+		}
+
 		if filter.From != nil && effectiveDate(e).Before(*filter.From) {
 			continue
 		}

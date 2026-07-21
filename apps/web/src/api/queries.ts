@@ -63,20 +63,18 @@ export function useEntries(from: string, to: string) {
 export function useEntriesInfinite(pageSize = 50) {
   return useInfiniteQuery({
     queryKey: queryKeys.entriesPaged(pageSize),
-    queryFn: ({ pageParam }: { pageParam?: string }) =>
-      api.entries.list({
-        limit: String(pageSize),
-        ...(pageParam ? { to: pageParam } : {}),
-      }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => {
-      if (lastPage.entries.length < pageSize) return undefined;
-      const oldest = lastPage.entries[lastPage.entries.length - 1];
-      const cursor = (oldest.DueDate || oldest.Date).slice(0, 10);
-      const d = new Date(cursor + "T00:00:00");
-      d.setDate(d.getDate() - 1);
-      return d.toISOString().slice(0, 10);
-    },
+	queryFn: ({ pageParam }: { pageParam?: string }) =>
+		api.entries.list({
+			limit: String(pageSize),
+			...(pageParam ? { cursor: pageParam } : {}),
+		}),
+	initialPageParam: undefined as string | undefined,
+	getNextPageParam: (lastPage) => {
+		if (lastPage.entries.length < pageSize) return undefined;
+		const oldest = lastPage.entries[lastPage.entries.length - 1];
+		const effectiveDate = oldest.DueDate || oldest.Date;
+		return effectiveDate.slice(0, 10) + "#" + oldest.EntryID;
+	},
   });
 }
 

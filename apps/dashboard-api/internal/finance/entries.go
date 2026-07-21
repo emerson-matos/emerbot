@@ -54,10 +54,17 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 			filter.To = &t
 		}
 	}
+	filter.Cursor = q.Get("cursor")
 	filter.Category = q.Get("category")
 	filter.Status = domain.PaymentStatus(q.Get("status"))
 	filter.Type = domain.EntryType(q.Get("type"))
-	filter.Limit = defaultEntriesLimit
+	// Default limit only when scanning the full partition (no date range).
+	// Date-bounded queries (used by the Dashboard's monthly view) return all
+	// entries in the range so that summary calculations are not silently
+	// truncated and the TransactionsTable shows every entry for the period.
+	if q.Get("from") == "" && q.Get("to") == "" {
+		filter.Limit = defaultEntriesLimit
+	}
 	if raw := q.Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			filter.Limit = n

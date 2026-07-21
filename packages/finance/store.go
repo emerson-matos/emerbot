@@ -16,6 +16,13 @@ type EntryFilter struct {
 	Category string
 	Status   domain.PaymentStatus
 	Type     domain.EntryType
+	// Cursor is an exclusive upper bound in the form "YYYY-MM-DD#EntryID",
+	// matching the GSI2SK format. When set, ListEntries returns only entries
+	// with GSI2SK < Cursor, most-recent first. This avoids the page-boundary
+	// data loss that happens when cursor-based pagination subtracts a day
+	// from effectiveDate (entries sharing the same effectiveDate across a
+	// page boundary would be silently skipped).
+	Cursor string
 	// Limit caps the number of entries returned, most-recent (by
 	// effectiveDate) first. Zero means "no cap" — callers that page through
 	// results (see apps/dashboard-api/internal/finance/entries.go's List

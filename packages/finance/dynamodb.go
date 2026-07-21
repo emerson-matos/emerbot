@@ -265,7 +265,13 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 		":pk": &types.AttributeValueMemberS{Value: pkPrefix + userID},
 	}
 
-	if filter.From != nil && filter.To != nil {
+	// Cursor takes priority: it provides an exact exclusive upper bound on
+	// GSI2SK, preventing the page-boundary data loss that occurs when
+	// cursor-based pagination uses a date-only bound.
+	if filter.Cursor != "" {
+		keyCondition = "GSI2PK = :pk AND GSI2SK < :cursor"
+		exprValues[":cursor"] = &types.AttributeValueMemberS{Value: filter.Cursor}
+	} else if filter.From != nil && filter.To != nil {
 		keyCondition = "GSI2PK = :pk AND GSI2SK BETWEEN :from AND :to"
 		exprValues[":from"] = &types.AttributeValueMemberS{Value: filter.From.Format("2006-01-02")}
 		exprValues[":to"] = &types.AttributeValueMemberS{Value: filter.To.Format("2006-01-02") + "#\xff"}
