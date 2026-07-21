@@ -146,7 +146,6 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "lambda:*",
       "apigateway:*",
       "dynamodb:*",
-      "events:*",
       "scheduler:*",
       "logs:*",
       "acm:*",
