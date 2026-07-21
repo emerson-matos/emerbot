@@ -12,11 +12,15 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/domain"
+	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/llm"
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
+	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
 func TestHandleLambdaOK(t *testing.T) {
@@ -354,6 +358,7 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 		"test-secret",
 		"test-verify-token",
 		nil,
+		false,
 	)
 }
 
@@ -374,7 +379,99 @@ func newFailingApp(client *fakeWhatsAppClient) *App {
 		"test-secret",
 		"test-verify-token",
 		nil,
+		false,
 	)
+}
+
+// TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled proves that,
+// once the app is wired with a natural-language-capable parser (nlFinance =
+// true), free text that isn't a slash command is tried against the financial
+// handler instead of going straight to the orchestrator.
+func TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	finHandler := financial.NewHandler(fakeNLParser{entry: whatsapp.ParsedEntry{
+		Type:        domain.EntryTypeExpense,
+		Amount:      5000,
+		Category:    "aluguel",
+		Description: "Aluguel",
+	}}, store)
+
+	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", nil, true)
+
+	resp, status, err := app.Handle(context.Background(), Request{
+		UserID:    "u1",
+		MessageID: "m1",
+		Text:      "paguei 50 de aluguel",
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	if !strings.Contains(resp.Message, "Despesa registrada") {
+		t.Fatalf("expected financial confirmation reply, got %q", resp.Message)
+	}
+
+	entries, err := store.ListEntries(context.Background(), shared.FinanceLedgerID, pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected free text to be saved as a financial entry, got %d entries", len(entries))
+	}
+}
+
+// TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled proves the current
+// behavior is preserved when the app has no natural-language-capable parser
+// wired (nlFinance = false, the default/regex-only setup): free text still
+// goes to the orchestrator, never to the financial handler.
+func TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	finHandler := financial.NewHandler(fakeNLParser{err: fmt.Errorf("should not be called")}, store)
+
+	stores := memory.NewInMemoryStores()
+	svc := orchestrator.NewService(llm.StaticClient{}, stores, stores, tools.NewRegistry(tools.EchoTool{}))
+
+	app := New(svc, finHandler, &fakeWhatsAppClient{}, "secret", "verify", nil, false)
+
+	_, status, err := app.Handle(context.Background(), Request{
+		UserID:    "u1",
+		MessageID: "m1",
+		Text:      "paguei 50 de aluguel",
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+
+	entries, err := store.ListEntries(context.Background(), shared.FinanceLedgerID, pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected free text NOT to reach the financial handler, got %d entries", len(entries))
+	}
+}
+
+// fakeNLParser is a whatsapp.Parser test double for exercising app-level
+// routing without depending on the real GeminiParser.
+type fakeNLParser struct {
+	entry whatsapp.ParsedEntry
+	err   error
+}
+
+func (f fakeNLParser) Parse(context.Context, string) (whatsapp.ParsedEntry, error) {
+	if f.err != nil {
+		return whatsapp.ParsedEntry{}, f.err
+	}
+	return f.entry, nil
 }
 
 type fakeWhatsAppClient struct {

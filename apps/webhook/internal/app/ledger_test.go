@@ -19,7 +19,7 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store)
 	// service can be nil: financial commands short-circuit before it is used.
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", wasession.NewInMemoryStore())
+	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", wasession.NewInMemoryStore(), false)
 
 	_, status, err := app.Handle(context.Background(), Request{
 		UserID:        "phone-A",
@@ -64,7 +64,7 @@ func TestHandleRecordsInboundMessage(t *testing.T) {
 	sessions := wasession.NewInMemoryStore()
 	// Inbound recording happens before any routing, so /help (which needs
 	// neither a financial handler nor the orchestrator service) is enough.
-	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions)
+	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions, false)
 
 	when := time.Now().UTC().Add(-time.Hour)
 	if _, _, err := app.Handle(context.Background(), Request{

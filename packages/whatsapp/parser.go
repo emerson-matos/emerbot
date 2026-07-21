@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -13,6 +14,16 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 )
+
+// ErrNotFinancial is returned by GeminiParser.Parse when the model determines
+// the message isn't a financial entry or command at all (greeting, question,
+// chit-chat). Callers should show a friendly hint instead of a parse-error
+// message.
+var ErrNotFinancial = errors.New("message is not a financial entry")
+
+// geminiTimeout bounds how long a single Gemini call may take, so a slow or
+// hanging API call never stalls the webhook handler indefinitely.
+const geminiTimeout = 10 * time.Second
 
 // ParsedEntry is the result of parsing a WhatsApp message into financial data.
 type ParsedEntry struct {
@@ -34,11 +45,23 @@ type Parser interface {
 	Parse(ctx context.Context, text string) (ParsedEntry, error)
 }
 
+// geminiModel is pinned to a specific version (rather than an "-latest"
+// alias) so behavior doesn't shift under us. gemini-2.0-flash was retired
+// 03/03/2026; gemini-2.5-flash-lite has the most generous free tier (15 RPM /
+// ~1000 req/dia) and is sufficient for this structured-extraction task.
+const geminiModel = "gemini-2.5-flash-lite"
+
+// contentGenerator is the slice of *genai.Models the parser needs; it lets
+// tests inject a fake without network access.
+type contentGenerator interface {
+	GenerateContent(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error)
+}
+
 // GeminiParser uses the Gemini API for natural language parsing with a
 // regex-based fallback for well-structured commands.
 type GeminiParser struct {
-	client *genai.Client
-	model  string
+	gen   contentGenerator
+	model string
 }
 
 func NewGeminiParser(ctx context.Context, apiKey string) (*GeminiParser, error) {
@@ -49,7 +72,7 @@ func NewGeminiParser(ctx context.Context, apiKey string) (*GeminiParser, error) 
 	if err != nil {
 		return nil, fmt.Errorf("create gemini client: %w", err)
 	}
-	return &GeminiParser{client: client, model: "gemini-2.0-flash"}, nil
+	return &GeminiParser{gen: client.Models, model: geminiModel}, nil
 }
 
 const systemPrompt = `Você é um assistente de extração de dados financeiros para uma farmácia.
@@ -62,6 +85,10 @@ Extraia informações da mensagem e retorne JSON com os campos:
   - Se o comando for /pagar ou /receber: é a data de vencimento (hoje se não especificada).
   - Se o comando for /despesa ou /receita: é a data em que a transação realmente ocorreu, se mencionada na mensagem (null se não mencionada — assume-se hoje).
 - is_pending: true se for /pagar ou /receber (a pagar/a receber), false se for /despesa ou /receita (já ocorreu)
+- is_financial: true se a mensagem descreve um lançamento financeiro (um gasto,
+  uma receita, uma conta a pagar/receber) ou um dos comandos abaixo. false se a
+  mensagem for uma saudação, pergunta, ou qualquer papo que não seja um
+  lançamento financeiro — nesse caso os demais campos podem ficar vazios/zero.
 
 Comandos reconhecidos:
 /despesa <valor> <categoria> [data] [descrição]  → despesa já paga
@@ -72,9 +99,7 @@ Comandos reconhecidos:
 Regras de valor:
 - "500" ou "500,00" → 50000 centavos (R$500,00)
 - "500,1" ou "500,10" → 50010 centavos (R$500,10)
-- "1500,50" → 150050 centavos (R$1.500,50)
-
-Responda APENAS com JSON válido, sem markdown, sem explicações.`
+- "1500,50" → 150050 centavos (R$1.500,50)`
 
 type geminiResponse struct {
 	Type        string `json:"type"`
@@ -83,6 +108,44 @@ type geminiResponse struct {
 	Description string `json:"description"`
 	DueDate     string `json:"due_date"` // "YYYY-MM-DD" or ""
 	IsPending   bool   `json:"is_pending"`
+	IsFinancial bool   `json:"is_financial"`
+}
+
+// financialCategories lists the closed set of categories the model may pick
+// from — kept in sync with the enum described in systemPrompt.
+var financialCategories = []string{
+	"aluguel", "folha_pagamento", "fornecedor_medicamentos", "fornecedor_geral",
+	"impostos", "emprestimo", "cartao_credito", "energia_agua",
+	"telefone_internet", "manutencao", "venda_balcao", "convenio", "delivery",
+	"outros_despesas", "outros_receitas",
+}
+
+// geminiResponseSchema mirrors geminiResponse and is passed as structured
+// output config, so Gemini returns well-formed JSON instead of relying on
+// prompt instructions alone.
+var geminiResponseSchema = &genai.Schema{
+	Type: genai.TypeObject,
+	Properties: map[string]*genai.Schema{
+		"type":         {Type: genai.TypeString, Enum: []string{"expense", "income"}},
+		"amount_cents": {Type: genai.TypeInteger},
+		"category":     {Type: genai.TypeString, Enum: financialCategories},
+		"description":  {Type: genai.TypeString},
+		"due_date":     {Type: genai.TypeString, Nullable: genai.Ptr(true)},
+		"is_pending":   {Type: genai.TypeBoolean},
+		"is_financial": {Type: genai.TypeBoolean},
+	},
+	Required: []string{"type", "amount_cents", "category", "description", "is_pending", "is_financial"},
+}
+
+// geminiConfig is shared across calls: fixed system instruction, structured
+// JSON output, and low/no randomness since this is extraction, not creative
+// generation.
+var geminiConfig = &genai.GenerateContentConfig{
+	SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
+	ResponseMIMEType:  "application/json",
+	ResponseSchema:    geminiResponseSchema,
+	Temperature:       genai.Ptr[float32](0),
+	MaxOutputTokens:   256,
 }
 
 func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, error) {
@@ -91,11 +154,15 @@ func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, err
 		return entry, nil
 	}
 
-	// Fall back to Gemini for natural language.
+	ctx, cancel := context.WithTimeout(ctx, geminiTimeout)
+	defer cancel()
+
+	// Fall back to Gemini for natural language. The system prompt is set via
+	// config.SystemInstruction, so contents only carry the user message.
 	contents := []*genai.Content{
-		{Parts: []*genai.Part{{Text: systemPrompt + "\n\nMensagem: " + text}}},
+		{Parts: []*genai.Part{{Text: text}}},
 	}
-	resp, err := p.client.Models.GenerateContent(ctx, p.model, contents, nil)
+	resp, err := p.gen.GenerateContent(ctx, p.model, contents, geminiConfig)
 	if err != nil {
 		return ParsedEntry{}, fmt.Errorf("gemini generate: %w", err)
 	}
@@ -104,7 +171,8 @@ func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, err
 	}
 
 	raw := strings.TrimSpace(resp.Candidates[0].Content.Parts[0].Text)
-	// Strip markdown code fences if Gemini adds them despite instructions.
+	// Strip markdown code fences as a safety net, in case Gemini adds them
+	// despite the structured JSON response mode.
 	raw = strings.TrimPrefix(raw, "```json")
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
@@ -113,6 +181,10 @@ func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, err
 	var gr geminiResponse
 	if err := json.Unmarshal([]byte(raw), &gr); err != nil {
 		return ParsedEntry{}, fmt.Errorf("parse gemini response %q: %w", raw, err)
+	}
+
+	if !gr.IsFinancial {
+		return ParsedEntry{}, ErrNotFinancial
 	}
 
 	return geminiResponseToParsed(gr)
