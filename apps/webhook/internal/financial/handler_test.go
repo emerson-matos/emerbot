@@ -17,7 +17,7 @@ func TestHandleReturnsFriendlyMessageOnParseError(t *testing.T) {
 
 	handler := NewHandler(fakeParser{err: errors.New("bad command")}, pkgfinance.NewInMemoryStore())
 
-	msg, err := handler.Handle(context.Background(), "u1", "not a command")
+	msg, err := handler.Handle(context.Background(), "u1", "not a command", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestHandleReturnsFriendlyReplyWhenParserSaysNotFinancial(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	handler := NewHandler(fakeParser{err: whatsapp.ErrNotFinancial}, store)
 
-	msg, err := handler.Handle(context.Background(), "u1", "oi, tudo bem?")
+	msg, err := handler.Handle(context.Background(), "u1", "oi, tudo bem?", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestHandleTeachesUsageForBareCommand(t *testing.T) {
 	// A parser that would error proves the usage path short-circuits before parsing.
 	handler := NewHandler(fakeParser{err: errors.New("should not be called")}, store)
 
-	msg, err := handler.Handle(context.Background(), "u1", "/despesa")
+	msg, err := handler.Handle(context.Background(), "u1", "/despesa", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestHandleSavesParsedEntryWithPendingStatus(t *testing.T) {
 		},
 	}, store)
 
-	msg, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07")
+	msg, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
 		},
 	}, store)
 
-	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho")
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestHandleSetsPaymentDateOnDespesa(t *testing.T) {
 		},
 	}, store)
 
-	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho")
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel 10/07 Aluguel de julho", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestHandleDoesNotSetPaymentDateOnPagar(t *testing.T) {
 		},
 	}, store)
 
-	_, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07")
+	_, err := handler.Handle(context.Background(), "u1", "/pagar 123,45 energia_agua 20/07", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
 	}, store)
 
 	before := time.Now().UTC()
-	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel")
+	_, err := handler.Handle(context.Background(), "u1", "/despesa 500 aluguel", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
@@ -437,7 +437,7 @@ type fakeParser struct {
 	err   error
 }
 
-func (f fakeParser) Parse(context.Context, string) (whatsapp.ParsedEntry, error) {
+func (f fakeParser) Parse(context.Context, string, time.Time) (whatsapp.ParsedEntry, error) {
 	if f.err != nil {
 		return whatsapp.ParsedEntry{}, f.err
 	}

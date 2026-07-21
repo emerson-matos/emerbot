@@ -275,7 +275,7 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		} else if strings.HasPrefix(strings.ToLower(text), "/recorrente") {
 			reply, err = a.financialHandler.Recorrente(ctx, ledgerID, text)
 		} else {
-			reply, err = a.financialHandler.Handle(ctx, ledgerID, text)
+			reply, err = a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
 		}
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
@@ -293,7 +293,7 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	// never sent to Gemini; they fall through to the orchestrator as before.
 	if a.financialHandler != nil && a.nlFinance && text != "" && !strings.HasPrefix(text, "/") {
 		ledgerID := shared.FinanceLedgerID
-		reply, err := a.financialHandler.Handle(ctx, ledgerID, text)
+		reply, err := a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
 		}

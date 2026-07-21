@@ -42,7 +42,7 @@ type ParsedEntry struct {
 
 // Parser extracts financial entries from WhatsApp messages.
 type Parser interface {
-	Parse(ctx context.Context, text string) (ParsedEntry, error)
+	Parse(ctx context.Context, text string, msgTime time.Time) (ParsedEntry, error)
 }
 
 const geminiModel = "gemini-3.1-flash-lite"
@@ -71,7 +71,18 @@ func NewGeminiParser(ctx context.Context, apiKey string) (*GeminiParser, error) 
 	return &GeminiParser{gen: client.Models, model: geminiModel}, nil
 }
 
-const systemPrompt = `Você é um assistente de extração de dados financeiros para uma farmácia.
+func buildSystemPrompt(now time.Time) string {
+	return fmt.Sprintf(
+		`Você é um assistente de extração de dados financeiros para uma farmácia.
+
+Contexto atual:
+- Hoje é %s
+- Fuso horário: America/Sao_Paulo
+
+Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem", etc.)
+usando a data acima como referência. Nunca invente datas.
+Se a mensagem contém uma data explícita, preserve-a exatamente.
+
 Extraia informações da mensagem e retorne JSON com os campos:
 - type: "expense" ou "income"
 - amount_cents: valor em centavos. R$500,00 = 50000. R$500,10 = 50010. "500" = 50000. "500,1" = 50010. "1500,50" = 150050.
@@ -95,7 +106,10 @@ Comandos reconhecidos:
 Regras de valor:
 - "500" ou "500,00" → 50000 centavos (R$500,00)
 - "500,1" ou "500,10" → 50010 centavos (R$500,10)
-- "1500,50" → 150050 centavos (R$1.500,50)`
+- "1500,50" → 150050 centavos (R$1.500,50)`,
+		now.Format("02/01/2006"),
+	)
+}
 
 type geminiResponse struct {
 	Type        string `json:"type"`
@@ -133,18 +147,7 @@ var geminiResponseSchema = &genai.Schema{
 	Required: []string{"type", "amount_cents", "category", "description", "is_pending", "is_financial"},
 }
 
-// geminiConfig is shared across calls: fixed system instruction, structured
-// JSON output, and low/no randomness since this is extraction, not creative
-// generation.
-var geminiConfig = &genai.GenerateContentConfig{
-	SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
-	ResponseMIMEType:  "application/json",
-	ResponseSchema:    geminiResponseSchema,
-	Temperature:       genai.Ptr[float32](0),
-	MaxOutputTokens:   256,
-}
-
-func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, error) {
+func (p *GeminiParser) Parse(ctx context.Context, text string, msgTime time.Time) (ParsedEntry, error) {
 	// Try regex first for well-structured commands — faster and free.
 	if entry, ok := parseRegex(text); ok {
 		return entry, nil
@@ -153,12 +156,20 @@ func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, err
 	ctx, cancel := context.WithTimeout(ctx, geminiTimeout)
 	defer cancel()
 
-	// Fall back to Gemini for natural language. The system prompt is set via
-	// config.SystemInstruction, so contents only carry the user message.
+	// Fall back to Gemini for natural language. Build the config per-call so
+	// the system instruction includes the current date as a temporal reference.
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: buildSystemPrompt(msgTime)}}},
+		ResponseMIMEType:  "application/json",
+		ResponseSchema:    geminiResponseSchema,
+		Temperature:       genai.Ptr[float32](0),
+		MaxOutputTokens:   256,
+	}
+
 	contents := []*genai.Content{
 		{Parts: []*genai.Part{{Text: text}}},
 	}
-	resp, err := p.gen.GenerateContent(ctx, p.model, contents, geminiConfig)
+	resp, err := p.gen.GenerateContent(ctx, p.model, contents, config)
 	if err != nil {
 		return ParsedEntry{}, fmt.Errorf("gemini generate: %w", err)
 	}
@@ -183,10 +194,10 @@ func (p *GeminiParser) Parse(ctx context.Context, text string) (ParsedEntry, err
 		return ParsedEntry{}, ErrNotFinancial
 	}
 
-	return geminiResponseToParsed(gr)
+	return geminiResponseToParsed(gr, msgTime)
 }
 
-func geminiResponseToParsed(gr geminiResponse) (ParsedEntry, error) {
+func geminiResponseToParsed(gr geminiResponse, reference time.Time) (ParsedEntry, error) {
 	entryType := domain.EntryTypeExpense
 	if gr.Type == "income" {
 		entryType = domain.EntryTypeIncome
@@ -196,6 +207,17 @@ func geminiResponseToParsed(gr geminiResponse) (ParsedEntry, error) {
 	if gr.DueDate != "" {
 		t, err := time.Parse("2006-01-02", gr.DueDate)
 		if err == nil {
+			// Validate the date is within a reasonable range around the
+			// reference date, to catch hallucinated years.
+			y := t.Year()
+			ry := reference.Year()
+			if y < ry-1 || y > ry+2 {
+				return ParsedEntry{}, fmt.Errorf(
+					"date out of range: %s (reference: %s)",
+					t.Format("2006-01-02"),
+					reference.Format("2006-01-02"),
+				)
+			}
 			parsedDate = &t
 		}
 	}
@@ -229,7 +251,7 @@ func NewRegexParser() *RegexParser {
 	return &RegexParser{}
 }
 
-func (p *RegexParser) Parse(_ context.Context, text string) (ParsedEntry, error) {
+func (p *RegexParser) Parse(_ context.Context, text string, _ time.Time) (ParsedEntry, error) {
 	entry, ok := parseRegex(text)
 	if !ok {
 		return ParsedEntry{}, fmt.Errorf("could not parse command, use format: /despesa 500 aluguel")

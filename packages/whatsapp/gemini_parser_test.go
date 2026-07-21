@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -45,7 +46,7 @@ func TestGeminiParserParsesCleanJSONPendingEntry(t *testing.T) {
 	)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	entry, err := parser.Parse(context.Background(), "vou pagar 300 de luz dia 20/07")
+	entry, err := parser.Parse(context.Background(), "vou pagar 300 de luz dia 20/07", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestGeminiParserParsesCleanJSONNonPendingEntry(t *testing.T) {
 	)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	entry, err := parser.Parse(context.Background(), "recebi 800 de venda ontem")
+	entry, err := parser.Parse(context.Background(), "recebi 800 de venda ontem", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestGeminiParserParsesFencedJSON(t *testing.T) {
 	)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	entry, err := parser.Parse(context.Background(), "paguei 50 de aluguel")
+	entry, err := parser.Parse(context.Background(), "paguei 50 de aluguel", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -109,7 +110,7 @@ func TestGeminiParserReturnsErrNotFinancialForChitChat(t *testing.T) {
 	gen := &fakeContentGenerator{resp: geminiResponseText(`{"is_financial":false}`)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	_, err := parser.Parse(context.Background(), "oi, tudo bem?")
+	_, err := parser.Parse(context.Background(), "oi, tudo bem?", time.Now())
 	if !errors.Is(err, ErrNotFinancial) {
 		t.Fatalf("expected ErrNotFinancial, got %v", err)
 	}
@@ -123,7 +124,7 @@ func TestGeminiParserRejectsNonPositiveAmount(t *testing.T) {
 	)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	if _, err := parser.Parse(context.Background(), "gastei nada"); err == nil {
+	if _, err := parser.Parse(context.Background(), "gastei nada", time.Now()); err == nil {
 		t.Fatal("expected error for non-positive amount")
 	}
 }
@@ -134,7 +135,7 @@ func TestGeminiParserSkipsGeminiForSlashCommands(t *testing.T) {
 	gen := &fakeContentGenerator{resp: geminiResponseText(`{}`)}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel")
+	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestGeminiParserPropagatesGeneratorError(t *testing.T) {
 	gen := &fakeContentGenerator{err: errors.New("network down")}
 	parser := &GeminiParser{gen: gen, model: geminiModel}
 
-	if _, err := parser.Parse(context.Background(), "gastei 50 no mercado"); err == nil {
+	if _, err := parser.Parse(context.Background(), "gastei 50 no mercado", time.Now()); err == nil {
 		t.Fatal("expected error to propagate from generator")
 	}
 }
