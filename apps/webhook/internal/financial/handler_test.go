@@ -26,6 +26,32 @@ func TestHandleReturnsFriendlyMessageOnParseError(t *testing.T) {
 	}
 }
 
+func TestHandleReturnsFriendlyReplyWhenParserSaysNotFinancial(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	handler := NewHandler(fakeParser{err: whatsapp.ErrNotFinancial}, store)
+
+	msg, err := handler.Handle(context.Background(), "u1", "oi, tudo bem?")
+	if err != nil {
+		t.Fatalf("Handle returned unexpected error: %v", err)
+	}
+	if strings.Contains(msg, "Não consegui entender") {
+		t.Fatalf("expected friendly non-financial reply, got the parse-error tutorial: %s", msg)
+	}
+	if !strings.Contains(msg, "/help") {
+		t.Fatalf("expected reply to point to /help, got: %s", msg)
+	}
+
+	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no entry saved for a non-financial message, got %d", len(entries))
+	}
+}
+
 func TestHandleTeachesUsageForBareCommand(t *testing.T) {
 	t.Parallel()
 

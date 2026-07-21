@@ -145,9 +145,13 @@ type App struct {
 	sessions         SessionStore
 	secret           string
 	verifyToken      string
+	// nlFinance is true when financialHandler was wired with a natural-language
+	// capable parser (GeminiParser), so free text (not just slash commands) can
+	// be routed to it.
+	nlFinance bool
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore, nlFinance bool) *App {
 	if verifyToken == "" {
 		verifyToken = secret
 	}
@@ -158,12 +162,14 @@ func New(service *orchestrator.Service, finHandler *financial.Handler, waClient 
 		sessions:         sessions,
 		secret:           secret,
 		verifyToken:      verifyToken,
+		nlFinance:        nlFinance,
 	}
 }
 
 func NewFromEnv(secret, graphAPIToken string) *App {
 	var finHandler *financial.Handler
 	var sessions SessionStore
+	nlFinance := false
 	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
 	if finTable != "" {
@@ -172,7 +178,20 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		if err != nil {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
-		parser := whatsapp.NewRegexParser()
+
+		var parser whatsapp.Parser
+		if apiKey := shared.Getenv("GEMINI_API_KEY", ""); apiKey != "" {
+			geminiParser, err := whatsapp.NewGeminiParser(ctx, apiKey)
+			if err != nil {
+				log.Printf("NewFromEnv: gemini parser: %v, falling back to regex parser", err)
+				parser = whatsapp.NewRegexParser()
+			} else {
+				parser = geminiParser
+				nlFinance = true
+			}
+		} else {
+			parser = whatsapp.NewRegexParser()
+		}
 		finHandler = financial.NewHandler(parser, store)
 	}
 
@@ -206,7 +225,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
 	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, finHandler, waClient, secret, verifyToken, sessions)
+	return New(svc, finHandler, waClient, secret, verifyToken, sessions, nlFinance)
 }
 
 func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
@@ -258,6 +277,23 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		} else {
 			reply, err = a.financialHandler.Handle(ctx, ledgerID, text)
 		}
+		if err != nil {
+			log.Printf("financial handler error: %v", err)
+		}
+		if reply != "" {
+			a.sendReply(ctx, req, reply)
+		}
+		return Response{Message: reply}, http.StatusOK, nil
+	}
+
+	// With a natural-language-capable parser wired (GeminiParser), free text
+	// that isn't a slash command may still describe a financial entry (e.g.
+	// "paguei 500 de aluguel ontem") — try the financial handler before
+	// falling back to the orchestrator. Unknown slash commands (/foo) are
+	// never sent to Gemini; they fall through to the orchestrator as before.
+	if a.financialHandler != nil && a.nlFinance && text != "" && !strings.HasPrefix(text, "/") {
+		ledgerID := shared.FinanceLedgerID
+		reply, err := a.financialHandler.Handle(ctx, ledgerID, text)
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
 		}

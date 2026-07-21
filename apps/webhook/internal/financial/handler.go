@@ -2,6 +2,7 @@ package financial
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -84,6 +85,9 @@ func (h *Handler) Handle(ctx context.Context, userID, text string) (string, erro
 	}
 
 	parsed, err := h.parser.Parse(ctx, text)
+	if errors.Is(err, whatsapp.ErrNotFinancial) {
+		return "🤖 Sou um assistente financeiro. Envie /help para ver os comandos, ou descreva um gasto/receita (ex: \"paguei 500 de aluguel ontem\").", nil
+	}
 	if err != nil {
 		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel 10/07\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
 	}
