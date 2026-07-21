@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/emerson/emerbot/apps/webhook/internal/financial"
@@ -467,7 +468,7 @@ type fakeNLParser struct {
 	err   error
 }
 
-func (f fakeNLParser) Parse(context.Context, string) (whatsapp.ParsedEntry, error) {
+func (f fakeNLParser) Parse(context.Context, string, time.Time) (whatsapp.ParsedEntry, error) {
 	if f.err != nil {
 		return whatsapp.ParsedEntry{}, f.err
 	}

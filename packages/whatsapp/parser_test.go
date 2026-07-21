@@ -12,7 +12,7 @@ func TestRegexParserParsesPendingExpenseWithDueDate(t *testing.T) {
 	t.Parallel()
 
 	parser := NewRegexParser()
-	entry, err := parser.Parse(context.Background(), "/pagar 1500,50 fornecedor_medicamentos 20/07 compra mensal")
+	entry, err := parser.Parse(context.Background(), "/pagar 1500,50 fornecedor_medicamentos 20/07 compra mensal", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestRegexParserParsesExpenseWithTransactionDate(t *testing.T) {
 	t.Parallel()
 
 	parser := NewRegexParser()
-	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel 10/07 Aluguel de julho")
+	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel 10/07 Aluguel de julho", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestRegexParserExpenseWithoutDateLeavesDateNil(t *testing.T) {
 	t.Parallel()
 
 	parser := NewRegexParser()
-	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel")
+	entry, err := parser.Parse(context.Background(), "/despesa 500 aluguel", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRegexParserUsesDefaultCategoryAndHumanDescription(t *testing.T) {
 	t.Parallel()
 
 	parser := NewRegexParser()
-	entry, err := parser.Parse(context.Background(), "/receita 800")
+	entry, err := parser.Parse(context.Background(), "/receita 800", time.Now())
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -85,13 +85,15 @@ func TestRegexParserRejectsInvalidCommand(t *testing.T) {
 	t.Parallel()
 
 	parser := NewRegexParser()
-	if _, err := parser.Parse(context.Background(), "despesa aluguel"); err == nil {
+	if _, err := parser.Parse(context.Background(), "despesa aluguel", time.Now()); err == nil {
 		t.Fatal("expected parse error for invalid command")
 	}
 }
 
 func TestGeminiResponseToParsedValidatesAmountAndDueDate(t *testing.T) {
 	t.Parallel()
+
+	ref := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 
 	entry, err := geminiResponseToParsed(geminiResponse{
 		Type:        "income",
@@ -100,7 +102,7 @@ func TestGeminiResponseToParsedValidatesAmountAndDueDate(t *testing.T) {
 		Description: "repasse",
 		DueDate:     "2026-07-15",
 		IsPending:   true,
-	})
+	}, ref)
 	if err != nil {
 		t.Fatalf("geminiResponseToParsed returned error: %v", err)
 	}
@@ -111,13 +113,15 @@ func TestGeminiResponseToParsedValidatesAmountAndDueDate(t *testing.T) {
 		t.Fatalf("unexpected due date: %+v", entry.DueDate)
 	}
 
-	if _, err := geminiResponseToParsed(geminiResponse{AmountCents: 0}); err == nil {
+	if _, err := geminiResponseToParsed(geminiResponse{AmountCents: 0}, ref); err == nil {
 		t.Fatal("expected invalid amount error")
 	}
 }
 
 func TestGeminiResponseToParsedRoutesDateToTransactionDateWhenNotPending(t *testing.T) {
 	t.Parallel()
+
+	ref := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 
 	entry, err := geminiResponseToParsed(geminiResponse{
 		Type:        "expense",
@@ -126,7 +130,7 @@ func TestGeminiResponseToParsedRoutesDateToTransactionDateWhenNotPending(t *test
 		Description: "Aluguel de julho",
 		DueDate:     "2026-07-10",
 		IsPending:   false,
-	})
+	}, ref)
 	if err != nil {
 		t.Fatalf("geminiResponseToParsed returned error: %v", err)
 	}

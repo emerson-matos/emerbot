@@ -77,14 +77,14 @@ func bareCommandUsage(text string) string {
 
 // Handle parses a WhatsApp command, saves the entry, and returns
 // a confirmation message in Portuguese for the bot to reply with.
-func (h *Handler) Handle(ctx context.Context, userID, text string) (string, error) {
+func (h *Handler) Handle(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
 	// A bare command (just the verb, no arguments) is treated as a request for
 	// help — teach the syntax instead of failing to parse it.
 	if usage := bareCommandUsage(text); usage != "" {
 		return usage, nil
 	}
 
-	parsed, err := h.parser.Parse(ctx, text)
+	parsed, err := h.parser.Parse(ctx, text, msgTime)
 	if errors.Is(err, whatsapp.ErrNotFinancial) {
 		return "🤖 Sou um assistente financeiro. Envie /help para ver os comandos, ou descreva um gasto/receita (ex: \"paguei 500 de aluguel ontem\").", nil
 	}
