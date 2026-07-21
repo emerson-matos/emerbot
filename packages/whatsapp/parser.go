@@ -45,11 +45,7 @@ type Parser interface {
 	Parse(ctx context.Context, text string) (ParsedEntry, error)
 }
 
-// geminiModel is pinned to a specific version (rather than an "-latest"
-// alias) so behavior doesn't shift under us. gemini-2.0-flash was retired
-// 03/03/2026; gemini-2.5-flash-lite has the most generous free tier (15 RPM /
-// ~1000 req/dia) and is sufficient for this structured-extraction task.
-const geminiModel = "gemini-2.5-flash-lite"
+const geminiModel = "gemini-3.1-flash-lite"
 
 // contentGenerator is the slice of *genai.Models the parser needs; it lets
 // tests inject a fake without network access.
