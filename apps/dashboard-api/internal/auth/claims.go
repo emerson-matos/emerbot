@@ -7,4 +7,5 @@ type Claims struct {
 	UserID string
 	Email  string
 	Name   string
+	Phone  string // Cognito's phone_number attribute, E.164 (e.g. "+5511987654321")
 }

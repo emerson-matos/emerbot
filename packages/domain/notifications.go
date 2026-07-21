@@ -1,9 +1,10 @@
 package domain
 
 // NotificationPrefs holds a user's WhatsApp alert preferences (the settings
-// managed on the dashboard's Notificações page). Phone is stored as E.164
-// digits — country code + number, no leading "+" — which is what the Meta
-// Cloud API's `to` field expects.
+// managed on the dashboard's Notificações page). Phone mirrors the user's
+// Cognito phone_number attribute — it is never entered by hand — stored as
+// E.164 digits (country code + number, no leading "+"), which is what the
+// Meta Cloud API's `to` field expects.
 type NotificationPrefs struct {
 	UserID         string
 	WAEnabled      bool

@@ -152,8 +152,8 @@ demo: up
 # ---------------------------------------------------------------------------
 # Create one user in the deployed Cognito user pool. Password is generated and
 # printed once unless PASSWORD is supplied. PHONE (E.164, e.g. +5511999999999)
-# is prep for the WhatsApp bot's phone->account linking — not yet read by any
-# app code, just stored on the Cognito user.
+# is the number the dashboard uses for WhatsApp alerts — see
+# packages/domain/notifications.go.
 #   make create-user EMAIL=someone@example.com [NAME="Someone"] [PHONE=+5511999999999] [PASSWORD=...]
 create-user:
 	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com"; exit 1; }

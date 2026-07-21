@@ -77,9 +77,10 @@ func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID st
 
 			sub, _ := claims["sub"].(string)
 			username, _ := claims["username"].(string)
-			email, _ := claims["email"].(string) // access tokens don't carry email; best-effort, matches gatewayClaims
+			email, _ := claims["email"].(string)        // access tokens don't carry email; best-effort, matches gatewayClaims
+			phone, _ := claims["phone_number"].(string) // same best-effort caveat as email
 
-			reqCtx := WithClaims(r.Context(), Claims{UserID: sub, Email: email, Name: username})
+			reqCtx := WithClaims(r.Context(), Claims{UserID: sub, Email: email, Name: username, Phone: phone})
 			gw.ServeHTTP(w, r.WithContext(reqCtx))
 		})
 	}, nil

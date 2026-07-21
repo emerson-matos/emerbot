@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type notifPrefsResp struct {
@@ -28,9 +30,11 @@ func decodePrefs(t *testing.T, body []byte) notifPrefsResp {
 func TestNotificationPrefsDefaultsThenSave(t *testing.T) {
 	t.Parallel()
 	app, key := newTestApp(t)
-	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
+	token := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo",
+		jwt.MapClaims{"phone_number": "+5511987654321"})
 
-	// GET before saving anything -> opt-in defaults (WhatsApp off).
+	// GET before saving anything -> opt-in defaults (WhatsApp off), phone
+	// already reflects the Cognito account (not yet saved anywhere).
 	rec := do(t, app, http.MethodGet, "/notifications/preferences", token, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get defaults: expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -39,20 +43,23 @@ func TestNotificationPrefsDefaultsThenSave(t *testing.T) {
 	if def.Preferences.WAEnabled {
 		t.Fatal("WhatsApp delivery should default off (opt-in)")
 	}
+	if def.Preferences.Phone != "5511987654321" {
+		t.Fatalf("phone should mirror the Cognito claim, got %q", def.Preferences.Phone)
+	}
 	if !def.Preferences.NotifyDueToday || !def.Preferences.NotifyOverdue {
 		t.Fatal("due-today and overdue alert types should default on")
 	}
 
-	// PUT normalizes the phone to E.164 and persists.
+	// PUT ignores any client-supplied phone and stores the Cognito one instead.
 	rec = do(t, app, http.MethodPut, "/notifications/preferences", token, map[string]any{
-		"waEnabled": true, "phone": "(11) 98765-4321", "notifyGoal": true,
+		"waEnabled": true, "phone": "5599999999999", "notifyGoal": true,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("save prefs: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	saved := decodePrefs(t, rec.Body.Bytes())
 	if saved.Preferences.Phone != "5511987654321" {
-		t.Fatalf("phone should be normalized to E.164, got %q", saved.Preferences.Phone)
+		t.Fatalf("phone should come from the Cognito claim, got %q", saved.Preferences.Phone)
 	}
 	if !saved.Preferences.WAEnabled || !saved.Preferences.NotifyGoal {
 		t.Fatalf("saved prefs not applied: %+v", saved.Preferences)
@@ -70,10 +77,11 @@ func TestNotificationPrefsDefaultsThenSave(t *testing.T) {
 func TestNotificationPrefsEnableRequiresPhone(t *testing.T) {
 	t.Parallel()
 	app, key := newTestApp(t)
+	// No phone_number claim on this account.
 	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 
 	rec := do(t, app, http.MethodPut, "/notifications/preferences", token, map[string]any{
-		"waEnabled": true, "phone": "",
+		"waEnabled": true,
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("enabling with no phone should be 400, got %d (%s)", rec.Code, rec.Body.String())

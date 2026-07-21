@@ -30,7 +30,7 @@ func GatewayMiddleware(next http.Handler) http.Handler {
 		}
 		// TODO(mock): all authenticated users share one finance ledger until
 		// phone→account linking exists. Override the storage identity only;
-		// claims.Email/Name stay real.
+		// claims.Email/Name/Phone stay real.
 		claims.UserID = shared.FinanceLedgerID
 		next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
 	})

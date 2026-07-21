@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Bell, CheckCircle2, History, MessageCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth'
 import EmptyState from '../components/EmptyState'
 import NotificationList from '../components/NotificationList'
 import { useNotifications } from '@/lib/notifications'
 import { useNotificationPrefs, useSaveNotificationPrefsMutation } from '../api/queries'
 
-// Renders stored/typed phone digits as "(11) 98765-4321". Drops the BR country
-// code (the server stores E.164) and caps at 11 local digits.
+// Renders the Cognito phone (E.164) as "(11) 98765-4321". Drops the BR
+// country code and caps at 11 local digits.
 function formatPhoneBR(raw: string): string {
   let d = raw.replace(/\D/g, '')
   if (d.startsWith('55') && d.length > 11) d = d.slice(2)
@@ -58,11 +58,11 @@ const ALERT_CHECKS = [
 ] as const
 
 function WhatsAppPreferences() {
+  const { user } = useAuth()
   const prefsQuery = useNotificationPrefs()
   const save = useSaveNotificationPrefsMutation()
 
   const [waEnabled, setWaEnabled] = useState(false)
-  const [phone, setPhone] = useState('')
   const [checks, setChecks] = useState({
     notifyDueToday: true,
     notifyOverdue: true,
@@ -75,7 +75,6 @@ function WhatsAppPreferences() {
     const p = prefsQuery.data
     if (!p) return
     setWaEnabled(p.waEnabled)
-    setPhone(formatPhoneBR(p.phone))
     setChecks({
       notifyDueToday: p.notifyDueToday,
       notifyOverdue: p.notifyOverdue,
@@ -83,12 +82,14 @@ function WhatsAppPreferences() {
     })
   }, [prefsQuery.data])
 
-  const phoneDigits = phone.replace(/\D/g, '')
-  const missingPhone = waEnabled && phoneDigits.length < 10
+  // The delivery number is always the phone registered on the Cognito
+  // account — there's nothing to type here, only to enable/disable.
+  const phone = user?.phone ?? ''
+  const missingPhone = waEnabled && phone.replace(/\D/g, '').length < 10
 
   function submit() {
     save.mutate(
-      { waEnabled, phone, ...checks },
+      { waEnabled, ...checks },
       { onSuccess: () => setSaved(true) },
     )
   }
@@ -115,21 +116,19 @@ function WhatsAppPreferences() {
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="wa-phone" className="text-xs font-medium text-muted-foreground">
+          <p className="text-xs font-medium text-muted-foreground">
             Número de WhatsApp
-          </label>
-          <Input
-            id="wa-phone"
-            type="tel"
-            inputMode="tel"
-            placeholder="(11) 98765-4321"
-            value={phone}
-            onChange={e => { setPhone(formatPhoneBR(e.target.value)); setSaved(false) }}
-            aria-invalid={missingPhone}
-          />
+          </p>
+          <p className={cn('text-sm', !phone && 'text-muted-foreground italic')}>
+            {phone ? formatPhoneBR(phone) : 'Nenhum número cadastrado na sua conta'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Os alertas são enviados para o telefone da sua conta. Para
+            trocá-lo, atualize seu cadastro.
+          </p>
           {missingPhone && (
             <p className="text-xs text-destructive">
-              Informe um número para ativar os alertas.
+              Cadastre um número na sua conta para ativar os alertas.
             </p>
           )}
         </div>
