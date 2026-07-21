@@ -4,6 +4,13 @@ import type { CognitoAuthResult } from "./cognito";
 export { CognitoAuthError };
 export type { CognitoAuthResult };
 
+// Display profile derived from the Cognito ID token.
+export interface UserProfile {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface Entry {
   UserID: string;
   EntryID: string;

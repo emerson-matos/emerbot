@@ -228,29 +228,15 @@ export function useLoginMutation() {
       }
     },
     onSuccess: (result) => {
-      auth.login({ accessToken: result.AccessToken, refreshToken: result.RefreshToken });
-      const { name, email } = decodeIdTokenSafe(result.IdToken);
-      if (name) localStorage.setItem("user_name", name);
-      else if (email) localStorage.setItem("user_name", email);
+      // AuthService derives the display profile from the ID token, so just
+      // hand it the tokens.
+      auth.login({
+        accessToken: result.AccessToken,
+        refreshToken: result.RefreshToken,
+        idToken: result.IdToken,
+      });
       navigate("/");
     },
   });
 }
 
-function base64UrlDecode(input: string): string {
-  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64.padEnd(
-    base64.length + ((4 - (base64.length % 4)) % 4),
-    "=",
-  );
-  const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function decodeIdTokenSafe(idToken: string): { name?: string; email?: string } {
-  try {
-    return JSON.parse(base64UrlDecode(idToken.split(".")[1]));
-  } catch {
-    return {};
-  }
-}

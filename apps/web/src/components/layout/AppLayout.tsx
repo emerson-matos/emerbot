@@ -10,15 +10,15 @@ import { useAuth } from "@/lib/auth";
 
 export default function AppLayout() {
   const { theme, toggle } = useTheme();
-  const auth = useAuth();
+  const { user, logout } = useAuth();
 
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const userName = localStorage.getItem("user_name") ?? "você";
+  const userName = user?.name ?? user?.email ?? "você";
   const initials = userName.slice(0, 2).toUpperCase();
 
   function handleLogout() {
-    auth.logout();
+    logout();
   }
 
   return (
