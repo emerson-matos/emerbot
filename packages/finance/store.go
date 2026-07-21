@@ -14,8 +14,12 @@ type EntryFilter struct {
 	From     *time.Time
 	To       *time.Time
 	Category string
-	Status   domain.PaymentStatus
-	Type     domain.EntryType
+	// Description, when set, keeps only entries whose Description contains this
+	// substring (case-insensitive). Used by the GeminiAgent's search_entries
+	// tool to answer free-text lookups ("quanto paguei de aluguel?").
+	Description string
+	Status      domain.PaymentStatus
+	Type        domain.EntryType
 	// Cursor is an exclusive upper bound in the form "YYYY-MM-DD#EntryID",
 	// matching the GSI2SK format. When set, ListEntries returns only entries
 	// with GSI2SK < Cursor, most-recent first. This avoids the page-boundary

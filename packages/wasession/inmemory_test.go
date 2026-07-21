@@ -33,6 +33,52 @@ func TestInMemoryActiveUnknownPhone(t *testing.T) {
 	}
 }
 
+func TestInMemoryMarkProcessedDedups(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryStore()
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+
+	first, err := s.MarkProcessed(ctx, "wamid.ABC", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first {
+		t.Fatal("first delivery of a message ID must report first=true")
+	}
+
+	// A retry of the same ID within the dedup window is a duplicate.
+	again, err := s.MarkProcessed(ctx, "wamid.ABC", now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		t.Fatal("a retry of the same message ID must report first=false")
+	}
+
+	// An empty ID has nothing to dedup on and always processes.
+	if ok, _ := s.MarkProcessed(ctx, "", now); !ok {
+		t.Fatal("empty message ID must report first=true")
+	}
+}
+
+func TestInMemoryUnmarkAllowsReprocessing(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryStore()
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now); !first {
+		t.Fatal("first mark must report first=true")
+	}
+	// A failed turn drops the marker...
+	if err := s.Unmark(ctx, "wamid.X"); err != nil {
+		t.Fatal(err)
+	}
+	// ...so the retry is treated as fresh again.
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now.Add(time.Minute)); !first {
+		t.Fatal("after Unmark, the retry must report first=true")
+	}
+}
+
 func TestInMemoryRecordOnlyExtends(t *testing.T) {
 	ctx := context.Background()
 	s := NewInMemoryStore()

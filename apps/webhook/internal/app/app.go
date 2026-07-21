@@ -136,6 +136,12 @@ func firstToken(s string) string {
 // messages are only allowed within it). packages/wasession satisfies this.
 type SessionStore interface {
 	RecordInbound(ctx context.Context, phone string, at time.Time) error
+	// MarkProcessed records that a message ID was handled and reports whether
+	// this is the first time it was seen (false = a WhatsApp retry to ignore).
+	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
+	// Unmark drops a message's dedup marker so a WhatsApp retry is reprocessed
+	// when the original turn ended without a 2xx.
+	Unmark(ctx context.Context, messageID string) error
 }
 
 type App struct {
@@ -146,7 +152,7 @@ type App struct {
 	secret           string
 	verifyToken      string
 	// nlFinance is true when financialHandler was wired with a natural-language
-	// capable parser (GeminiParser), so free text (not just slash commands) can
+	// capable agent (GeminiAgent), so free text (not just slash commands) can
 	// be routed to it.
 	nlFinance bool
 }
@@ -179,20 +185,19 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
 
-		var parser whatsapp.Parser
+		regex := whatsapp.NewRegexParser()
 		if apiKey := shared.Getenv("GEMINI_API_KEY", ""); apiKey != "" {
-			geminiParser, err := whatsapp.NewGeminiParser(ctx, apiKey)
+			agent, err := whatsapp.NewGeminiAgent(ctx, apiKey, store)
 			if err != nil {
-				log.Printf("NewFromEnv: gemini parser: %v, falling back to regex parser", err)
-				parser = whatsapp.NewRegexParser()
+				log.Printf("NewFromEnv: gemini agent: %v, falling back to regex-only", err)
+				finHandler = financial.NewHandler(regex, nil, store)
 			} else {
-				parser = geminiParser
+				finHandler = financial.NewHandler(regex, agent, store)
 				nlFinance = true
 			}
 		} else {
-			parser = whatsapp.NewRegexParser()
+			finHandler = financial.NewHandler(regex, nil, store)
 		}
-		finHandler = financial.NewHandler(parser, store)
 	}
 
 	// The 24h-window session store lives in its own table (TTL-managed), so it
@@ -228,7 +233,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	return New(svc, finHandler, waClient, secret, verifyToken, sessions, nlFinance)
 }
 
-func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
+func (a *App) Handle(ctx context.Context, req Request) (resp Response, status int, err error) {
 	message, err := normalize(req)
 	if err != nil {
 		return Response{}, http.StatusBadRequest, err
@@ -246,6 +251,33 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	if a.sessions != nil && message.UserID != "" {
 		if err := a.sessions.RecordInbound(ctx, message.UserID, message.Timestamp); err != nil {
 			log.Printf("record inbound message: %v", err)
+		}
+	}
+
+	// WhatsApp re-delivers a message (same ID) until it gets a 200, so dedup by
+	// message ID before doing any work — otherwise a retry would write the entry
+	// (and re-bill Gemini) a second time. Best-effort: on a store error we fall
+	// through and process, favoring a possible duplicate over a dropped message.
+	if a.sessions != nil && message.MessageID != "" {
+		marked, derr := a.sessions.MarkProcessed(ctx, message.MessageID, message.Timestamp)
+		if derr != nil {
+			log.Printf("dedup check: %v", derr)
+		} else if !marked {
+			log.Printf("ignoring duplicate message_id=%s", message.MessageID)
+			return Response{}, http.StatusOK, nil
+		} else {
+			// We claimed the marker before processing (so a near-simultaneous
+			// retry is short-circuited). If the turn then ends without a 2xx —
+			// a path WhatsApp will retry — drop the marker so that retry is
+			// reprocessed instead of swallowed. Use a detached context so the
+			// cleanup still runs when ctx is the reason we failed.
+			defer func() {
+				if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
+					if uerr := a.sessions.Unmark(context.WithoutCancel(ctx), message.MessageID); uerr != nil {
+						log.Printf("dedup unmark message_id=%s: %v", message.MessageID, uerr)
+					}
+				}
+			}()
 		}
 	}
 
@@ -286,11 +318,12 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 		return Response{Message: reply}, http.StatusOK, nil
 	}
 
-	// With a natural-language-capable parser wired (GeminiParser), free text
-	// that isn't a slash command may still describe a financial entry (e.g.
-	// "paguei 500 de aluguel ontem") — try the financial handler before
-	// falling back to the orchestrator. Unknown slash commands (/foo) are
-	// never sent to Gemini; they fall through to the orchestrator as before.
+	// With a natural-language-capable agent wired (GeminiAgent), free text
+	// that isn't a slash command may still describe a financial entry or a
+	// query (e.g. "paguei 500 de aluguel ontem", "como estamos este mês?") —
+	// route it to the financial handler before falling back to the
+	// orchestrator. Unknown slash commands (/foo) are never sent to Gemini;
+	// they fall through to the orchestrator as before.
 	if a.financialHandler != nil && a.nlFinance && text != "" && !strings.HasPrefix(text, "/") {
 		ledgerID := shared.FinanceLedgerID
 		reply, err := a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
