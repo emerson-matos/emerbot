@@ -1,13 +1,28 @@
 # GeminiAgent — implementação
 
-Duas fases independentes. A Fase 1 é o mínimo para corrigir o bug de datas; a
-Fase 2 substitui o parser por um agente com function calling.
+| Fase | Status |
+|------|--------|
+| 1 — Prompt dinâmico + validação de data | ✅ Implementada (PR #21) |
+| 2 — GeminiAgent com function calling | 📝 Planejada |
 
 ---
 
 ## Fase 1 — Prompt dinâmico + validação de data
 
+**Status: implementada** no PR #21 (`gemini-refactor`).
+
 **Objetivo**: o Gemini saber que "hoje" é 21/07/2026 e não alucinar 31/05/2025.
+
+### Arquivos alterados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `packages/whatsapp/parser.go` | `Parser.Parse` recebe `msgTime`; `systemPrompt` vira `buildSystemPrompt(now)`; `geminiConfig` por chamada; validação de ano |
+| `apps/webhook/internal/financial/handler.go` | `Handle` recebe `msgTime` e repassa ao parser |
+| `apps/webhook/internal/app/app.go` | Passa `message.Timestamp` (do webhook da Meta) |
+| Testes | Chamadas de `Parse` e `Handle` ajustadas; `fakeParser`/`fakeNLParser` atualizados |
+
+### O que foi feito
 
 ### 1. `packages/whatsapp/parser.go`
 
@@ -164,6 +179,8 @@ make build         # compila
 ---
 
 ## Fase 2 — GeminiAgent com function calling
+
+**Status: planejada.** Aguarda a Fase 1 estabilizar em produção.
 
 **Objetivo**: substituir `GeminiParser` por um agente que usa tools para tudo.
 
@@ -825,8 +842,8 @@ make build-lambdas # zips para deploy
 
 ## Dependências entre fases
 
-- **Fase 1** é independente — pode ser implementada e deployada sem a Fase 2.
+- **Fase 1** está implementada (PR #21, branch `gemini-refactor`).
 - **Fase 2** substitui o `GeminiParser`. A Fase 1 (prompt dinâmico) é naturalmente
   absorvida pelo prompt do agente.
 
-Ordem recomendada: Fase 1 → testar em produção → Fase 2.
+Ordem recomendada: ~~Fase 1~~ ✅ → testar em produção → Fase 2.
