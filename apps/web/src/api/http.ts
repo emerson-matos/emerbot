@@ -1,7 +1,34 @@
-import { cognitoInitiateAuth, CognitoAuthError } from "./cognito"
-import type { CognitoAuthResult } from "./cognito"
-import { authService } from "./auth-service"
-import { ApiError, NetworkError, UnauthorizedError, ForbiddenError } from "./api-error"
+import { authService } from "./auth-service";
+import {
+  ApiError,
+  NetworkError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "./api-error";
+import { cognitoInitiateAuth } from "./cognito";
+import type {
+  Entry,
+  CreateEntryInput,
+  MonthlySummary,
+  CategorySummary,
+  CashFlowPoint,
+  Goal,
+  NotificationPrefs,
+  Category,
+} from "./types";
+
+export { CognitoAuthError } from "./cognito";
+export type { CognitoAuthResult } from "./cognito";
+export type {
+  Entry,
+  CreateEntryInput,
+  MonthlySummary,
+  CategorySummary,
+  CashFlowPoint,
+  Goal,
+  NotificationPrefs,
+  Category,
+} from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8081";
 
@@ -94,7 +121,9 @@ export const api = {
       );
     },
     cashflow: (month: string) =>
-      httpClient<{ points: CashFlowPoint[] }>(`/summary/cashflow?month=${month}`),
+      httpClient<{ points: CashFlowPoint[] }>(
+        `/summary/cashflow?month=${month}`,
+      ),
   },
 
   categories: {
@@ -122,87 +151,15 @@ export const api = {
         "/notifications/preferences",
       ),
     savePreferences: (data: Partial<NotificationPrefs>) =>
-      httpClient<{ preferences: NotificationPrefs }>("/notifications/preferences", {
-        method: "PUT",
-        body: JSON.stringify(data),
-      }),
+      httpClient<{ preferences: NotificationPrefs }>(
+        "/notifications/preferences",
+        {
+          method: "PUT",
+          body: JSON.stringify(data),
+        },
+      ),
   },
 };
-
-// --- Types ---
-
-export { CognitoAuthError }
-export type { CognitoAuthResult }
-
-export interface Entry {
-  UserID: string;
-  EntryID: string;
-  Date: string;
-  Amount: number;
-  Category: string;
-  Type: "expense" | "income";
-  Description: string;
-  DueDate: string | null;
-  PaymentStatus: "pending" | "paid";
-  PaymentDate: string | null;
-  Supplier: string;
-  Source: string;
-}
-
-export interface CreateEntryInput {
-  date: string;
-  amount: number;
-  category: string;
-  type: "expense" | "income";
-  description: string;
-  due_date?: string;
-  payment_status: "pending" | "paid";
-  supplier?: string;
-}
-
-export interface MonthlySummary {
-  Month: string;
-  TotalIncome: number;
-  TotalExpense: number;
-  Balance: number;
-}
-
-export interface CategorySummary {
-  Category: string;
-  Type: "expense" | "income";
-  Total: number;
-  Count: number;
-}
-
-export interface CashFlowPoint {
-  Date: string;
-  ProjectedIncome: number;
-  ProjectedExpense: number;
-  RunningBalance: number;
-}
-
-export interface Goal {
-  UserID: string;
-  Month: string;
-  RevenueTarget: number;
-  ExpenseTarget: number;
-}
-
-export interface NotificationPrefs {
-  waEnabled: boolean;
-  phone: string;
-  notifyDueToday: boolean;
-  notifyOverdue: boolean;
-  notifyGoal: boolean;
-}
-
-export interface Category {
-  UserID: string;
-  Slug: string;
-  Label: string;
-  Type: "expense" | "income";
-  Default: boolean;
-}
 
 export function formatBRL(centavos: number): string {
   return (centavos / 100).toLocaleString("pt-BR", {

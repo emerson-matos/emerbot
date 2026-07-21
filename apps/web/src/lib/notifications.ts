@@ -1,7 +1,7 @@
 import { format } from 'date-fns'
 import { AlertTriangle, CalendarClock, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { formatBRL } from '../api/http'
+import { formatBRL } from '@/lib/format'
 import { effectiveDate, formatEffectiveDate } from './entries'
 import { useEntries, useGoal, useMonthlySummary } from '../api/queries'
 

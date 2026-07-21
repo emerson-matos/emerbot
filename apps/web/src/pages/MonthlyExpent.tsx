@@ -2,7 +2,7 @@ import { format, parseISO } from 'date-fns'
 import {
   Flame, Info,
 } from 'lucide-react'
-import { formatBRL } from '../api/http'
+import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { categoricalPalette } from '@/lib/chart'
 import { categoryLabels } from '@/lib/categories'

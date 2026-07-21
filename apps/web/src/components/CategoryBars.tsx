@@ -1,7 +1,7 @@
 import { format } from 'date-fns'
 import { PieChart } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { formatBRL } from '../api/http'
+import { formatBRL } from '@/lib/format'
 import { categoricalPalette } from '@/lib/chart'
 import { categoryLabels } from '@/lib/categories'
 import { useCategorySummary } from '../api/queries'

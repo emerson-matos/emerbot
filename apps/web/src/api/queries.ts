@@ -7,8 +7,9 @@ import {
 } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { api, CognitoAuthError } from "./http";
-import type { CreateEntryInput, Entry, NotificationPrefs } from "./http";
+import { CognitoAuthError } from "./types";
+import type { CreateEntryInput, Entry, NotificationPrefs } from "./types";
+import { api } from "./http";
 import { useAuth } from "@/lib/auth";
 
 export const queryKeys = {

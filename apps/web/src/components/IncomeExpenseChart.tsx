@@ -4,7 +4,7 @@ import {
 } from 'recharts'
 import { BarChart3 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { formatBRL } from '../api/http'
+import { formatBRL } from '@/lib/format'
 import { chartColor, tooltipProps } from '@/lib/chart'
 import { format } from 'date-fns';
 import { useMonthlyTrend } from '@/api/queries';

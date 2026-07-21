@@ -9,8 +9,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatBRL } from "../api/http";
-import type { Entry } from "../api/http";
+import { formatBRL } from "@/lib/format";
+import type { Entry } from "../api/types";
 import { categoryLabels } from "@/lib/categories";
 import { formatEffectiveDate, formatPaidAt } from "@/lib/entries";
 

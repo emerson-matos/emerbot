@@ -1,6 +1,6 @@
 import { format, isValid, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import type { Entry } from '../api/http'
+import type { Entry } from '../api/types'
 
 // Tables are about *due* transactions: pending entries show when they're
 // due, and already-settled ones (no DueDate) fall back to when they happened.
