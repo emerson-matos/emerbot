@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 const geminiModel = "gemini-3.1-flash-lite"
 
 // agentTimeout bounds a whole agent turn (which may chain several Gemini calls
-// plus DynamoDB tool executions), so a slow API never stalls the webhook.
-const agentTimeout = 30 * time.Second
+// plus DynamoDB tool executions), so a slow API never stalls the webhook. Kept
+// under the API Gateway HTTP integration limit (30s) so the handler can still
+// return a graceful reply if the turn runs long.
+const agentTimeout = 25 * time.Second
 
 // maxToolRounds caps how many function-calling round-trips a single message may
 // trigger, so a model that keeps calling tools can't loop forever.
@@ -122,17 +125,23 @@ func (a *GeminiAgent) Process(ctx context.Context, userID, text string, msgTime 
 			return "", fmt.Errorf("gemini returned neither text nor function call (round %d)", round)
 		}
 
-		// Execute every requested tool and feed the results back in one turn.
+		// Execute every requested tool and feed the results back in one turn. A
+		// tool error (bad LLM args, unknown tool, store failure) is returned to
+		// the model as the function response so it can recover — pick valid
+		// arguments or apologize — instead of aborting the whole turn. The round
+		// budget still bounds how long this can go.
 		responseParts := make([]*genai.Part, 0, len(calls))
 		for _, fc := range calls {
 			result, err := a.runTool(ctx, userID, fc)
+			response := map[string]any{"output": result}
 			if err != nil {
-				return "", err
+				log.Printf("gemini agent tool %s error: %v", fc.Name, err)
+				response = map[string]any{"error": err.Error()}
 			}
 			responseParts = append(responseParts, &genai.Part{
 				FunctionResponse: &genai.FunctionResponse{
 					Name:     fc.Name,
-					Response: map[string]any{"output": result},
+					Response: response,
 				},
 			})
 		}

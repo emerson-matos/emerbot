@@ -65,6 +65,31 @@ func (s *DynamoDBStore) RecordInbound(ctx context.Context, phone string, at time
 	return nil
 }
 
+func (s *DynamoDBStore) MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error) {
+	if messageID == "" {
+		return true, nil
+	}
+	exp := strconv.FormatInt(now.Add(DedupWindow).Unix(), 10)
+	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.tableName),
+		Item: map[string]types.AttributeValue{
+			"Phone":     &types.AttributeValueMemberS{Value: dedupKeyPrefix + messageID},
+			"ExpiresAt": &types.AttributeValueMemberN{Value: exp},
+		},
+		// The write only succeeds the first time; a retry of the same message ID
+		// fails the condition and is reported as a duplicate.
+		ConditionExpression: aws.String("attribute_not_exists(Phone)"),
+	})
+	if err != nil {
+		var cond *types.ConditionalCheckFailedException
+		if errors.As(err, &cond) {
+			return false, nil
+		}
+		return false, fmt.Errorf("mark processed: %w", err)
+	}
+	return true, nil
+}
+
 func (s *DynamoDBStore) Active(ctx context.Context, phone string, now time.Time) (bool, error) {
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),

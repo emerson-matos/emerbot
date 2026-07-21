@@ -110,6 +110,74 @@ func TestCreateEntryToolRejectsNonPositiveAmount(t *testing.T) {
 	}
 }
 
+func TestCreateEntryToolRejectsAmountOverCap(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "create_financial_entry")
+
+	raw, _ := json.Marshal(map[string]any{
+		"type": "expense", "amount": maxEntryAmountReais + 1, "category": "aluguel", "is_pending": false,
+	})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected an error for an amount over the cap")
+	}
+}
+
+func TestCreateEntryToolRejectsInvalidType(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "create_financial_entry")
+
+	raw, _ := json.Marshal(map[string]any{
+		"type": "transfer", "amount": 100.0, "category": "aluguel", "is_pending": false,
+	})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected an error for an invalid type")
+	}
+}
+
+func TestCreateEntryToolCoercesUnknownCategory(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "create_financial_entry")
+
+	callTool(t, h, "u1", map[string]any{
+		"type": "income", "amount": 100.0, "category": "criptomoedas", "is_pending": false,
+	})
+
+	entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	// An out-of-set category falls back to the income default, not persisted verbatim.
+	if entries[0].Category != "outros_receitas" {
+		t.Fatalf("expected coerced category outros_receitas, got %q", entries[0].Category)
+	}
+}
+
+func TestCreateEntryToolIgnoresDueDateWhenNotPending(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "create_financial_entry")
+
+	callTool(t, h, "u1", map[string]any{
+		"type": "expense", "amount": 100.0, "category": "aluguel",
+		"due_date": "2026-08-20", "is_pending": false,
+	})
+
+	entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].DueDate != nil {
+		t.Fatalf("expected no due date on a settled entry, got %+v", entries[0].DueDate)
+	}
+}
+
 func TestMonthSummaryToolReturnsReais(t *testing.T) {
 	t.Parallel()
 

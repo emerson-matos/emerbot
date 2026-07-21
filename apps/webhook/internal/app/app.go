@@ -136,6 +136,9 @@ func firstToken(s string) string {
 // messages are only allowed within it). packages/wasession satisfies this.
 type SessionStore interface {
 	RecordInbound(ctx context.Context, phone string, at time.Time) error
+	// MarkProcessed records that a message ID was handled and reports whether
+	// this is the first time it was seen (false = a WhatsApp retry to ignore).
+	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
 }
 
 type App struct {
@@ -245,6 +248,20 @@ func (a *App) Handle(ctx context.Context, req Request) (Response, int, error) {
 	if a.sessions != nil && message.UserID != "" {
 		if err := a.sessions.RecordInbound(ctx, message.UserID, message.Timestamp); err != nil {
 			log.Printf("record inbound message: %v", err)
+		}
+	}
+
+	// WhatsApp re-delivers a message (same ID) until it gets a 200, so dedup by
+	// message ID before doing any work — otherwise a retry would write the entry
+	// (and re-bill Gemini) a second time. Best-effort: on a store error we fall
+	// through and process, favoring a possible duplicate over a dropped message.
+	if a.sessions != nil && message.MessageID != "" {
+		first, err := a.sessions.MarkProcessed(ctx, message.MessageID, message.Timestamp)
+		if err != nil {
+			log.Printf("dedup check: %v", err)
+		} else if !first {
+			log.Printf("ignoring duplicate message_id=%s", message.MessageID)
+			return Response{}, http.StatusOK, nil
 		}
 	}
 

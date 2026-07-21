@@ -26,6 +26,22 @@ var financialCategories = []string{
 	"outros_despesas", "outros_receitas",
 }
 
+// knownCategory reports whether c is one of financialCategories. Tool args come
+// from LLM output, so a hallucinated category is coerced to a default rather
+// than persisted verbatim.
+func knownCategory(c string) bool {
+	for _, known := range financialCategories {
+		if c == known {
+			return true
+		}
+	}
+	return false
+}
+
+// maxEntryAmountReais bounds a single entry's value. Tool args are LLM-generated
+// from user text; a hallucinated absurd amount is rejected rather than saved.
+const maxEntryAmountReais = 10_000_000
+
 // FinanceTools returns the Gemini tool declarations exposed to the agent and a
 // map from function name to the handler that runs it against store. The two are
 // built together so a declaration can never drift from its handler.
@@ -78,8 +94,11 @@ func createEntryTool(handlers map[string]ToolHandler, store Store) *genai.Tool {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, fmt.Errorf("parse args: %w", err)
 		}
-		if args.Amount <= 0 {
+		if args.Amount <= 0 || args.Amount > maxEntryAmountReais {
 			return nil, fmt.Errorf("invalid amount: %v", args.Amount)
+		}
+		if args.Type != "expense" && args.Type != "income" {
+			return nil, fmt.Errorf("invalid type: %q (expected expense or income)", args.Type)
 		}
 
 		now := time.Now().UTC()
@@ -94,14 +113,17 @@ func createEntryTool(handlers map[string]ToolHandler, store Store) *genai.Tool {
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
-		if args.Category == "" {
-			entry.Category = "outros_despesas"
-		}
 
 		entry.Type = domain.EntryTypeExpense
 		if args.Type == "income" {
 			entry.Type = domain.EntryTypeIncome
-			if args.Category == "" {
+		}
+
+		// Coerce an empty or hallucinated category to the type's default rather
+		// than persisting an out-of-set value.
+		if !knownCategory(entry.Category) {
+			entry.Category = "outros_despesas"
+			if entry.Type == domain.EntryTypeIncome {
 				entry.Category = "outros_receitas"
 			}
 		}
@@ -109,13 +131,15 @@ func createEntryTool(handlers map[string]ToolHandler, store Store) *genai.Tool {
 		if d, ok := parseDate(args.Date); ok {
 			entry.Date = d
 		}
-		if d, ok := parseDate(args.DueDate); ok {
-			entry.DueDate = &d
-		}
 
 		entry.PaymentStatus = domain.PaymentStatusPaid
 		if args.IsPending {
 			entry.PaymentStatus = domain.PaymentStatusPending
+			// A due date only means something for a pending (a-pagar/receber)
+			// entry; ignore it for one already settled.
+			if d, ok := parseDate(args.DueDate); ok {
+				entry.DueDate = &d
+			}
 		} else {
 			entry.PaymentDate = &entry.Date
 		}

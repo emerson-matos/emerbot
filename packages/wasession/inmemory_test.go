@@ -33,6 +33,34 @@ func TestInMemoryActiveUnknownPhone(t *testing.T) {
 	}
 }
 
+func TestInMemoryMarkProcessedDedups(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryStore()
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+
+	first, err := s.MarkProcessed(ctx, "wamid.ABC", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first {
+		t.Fatal("first delivery of a message ID must report first=true")
+	}
+
+	// A retry of the same ID within the dedup window is a duplicate.
+	again, err := s.MarkProcessed(ctx, "wamid.ABC", now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		t.Fatal("a retry of the same message ID must report first=false")
+	}
+
+	// An empty ID has nothing to dedup on and always processes.
+	if ok, _ := s.MarkProcessed(ctx, "", now); !ok {
+		t.Fatal("empty message ID must report first=true")
+	}
+}
+
 func TestInMemoryRecordOnlyExtends(t *testing.T) {
 	ctx := context.Background()
 	s := NewInMemoryStore()

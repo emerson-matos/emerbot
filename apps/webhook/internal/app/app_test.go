@@ -20,6 +20,7 @@ import (
 	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -412,6 +413,43 @@ func TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled(t *testing.T
 	}
 	if agent.gotText != "paguei 50 de aluguel" {
 		t.Fatalf("expected free text to reach the agent, got %q", agent.gotText)
+	}
+}
+
+// TestHandleDedupsRetriedMessageID proves a WhatsApp retry (same message ID)
+// is ignored, so the financial handler — and any store write — runs only once.
+func TestHandleDedupsRetriedMessageID(t *testing.T) {
+	t.Parallel()
+
+	store := pkgfinance.NewInMemoryStore()
+	agent := &fakeAgent{reply: "💸 Despesa registrada"}
+	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
+	sessions := wasession.NewInMemoryStore()
+
+	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", sessions, true)
+
+	req := Request{UserID: "u1", MessageID: "wamid.DUP", Text: "paguei 50 de aluguel"}
+
+	// First delivery: processed, reply returned.
+	resp, status, err := app.Handle(context.Background(), req)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("first delivery: status=%d err=%v", status, err)
+	}
+	if resp.Message != agent.reply {
+		t.Fatalf("expected agent reply on first delivery, got %q", resp.Message)
+	}
+
+	// Retry of the same message ID: short-circuited, agent not called again.
+	agent.gotText = ""
+	resp, status, err = app.Handle(context.Background(), req)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("retry: status=%d err=%v", status, err)
+	}
+	if agent.gotText != "" {
+		t.Fatalf("expected retry to be ignored, but agent got %q", agent.gotText)
+	}
+	if resp.Message != "" {
+		t.Fatalf("expected empty reply on ignored retry, got %q", resp.Message)
 	}
 }
 

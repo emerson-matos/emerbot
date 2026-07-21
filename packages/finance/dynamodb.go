@@ -64,29 +64,33 @@ func NewDynamoDBStore(ctx context.Context, tableName, endpoint string) (*DynamoD
 // --- DynamoDB item shapes ---
 
 type entryItem struct {
-	PK              string `dynamodbav:"PK"`
-	SK              string `dynamodbav:"SK"`
-	GSI1PK          string `dynamodbav:"GSI1PK"`
-	GSI1SK          string `dynamodbav:"GSI1SK"`
-	GSI2PK          string `dynamodbav:"GSI2PK"`
-	GSI2SK          string `dynamodbav:"GSI2SK"`
-	EntryID         string `dynamodbav:"EntryID"`
-	UserID          string `dynamodbav:"UserID"`
-	Date            string `dynamodbav:"Date"` // RFC3339
-	Amount          int64  `dynamodbav:"Amount"`
-	Category        string `dynamodbav:"Category"`
-	Type            string `dynamodbav:"Type"`
-	Description     string `dynamodbav:"Description"`
-	DueDate         string `dynamodbav:"DueDate"` // RFC3339 or ""
-	PaymentStatus   string `dynamodbav:"PaymentStatus"`
-	PaymentDate     string `dynamodbav:"PaymentDate"` // RFC3339 or ""
-	Supplier        string `dynamodbav:"Supplier"`
-	Source          string `dynamodbav:"Source"`
-	CreatedAt       string `dynamodbav:"CreatedAt"`
-	UpdatedAt       string `dynamodbav:"UpdatedAt"`
-	RecurrenceID    string `dynamodbav:"RecurrenceID,omitempty"`
-	RecurrenceIndex int    `dynamodbav:"RecurrenceIndex,omitempty"`
-	RecurrenceTotal int    `dynamodbav:"RecurrenceTotal,omitempty"`
+	PK          string `dynamodbav:"PK"`
+	SK          string `dynamodbav:"SK"`
+	GSI1PK      string `dynamodbav:"GSI1PK"`
+	GSI1SK      string `dynamodbav:"GSI1SK"`
+	GSI2PK      string `dynamodbav:"GSI2PK"`
+	GSI2SK      string `dynamodbav:"GSI2SK"`
+	EntryID     string `dynamodbav:"EntryID"`
+	UserID      string `dynamodbav:"UserID"`
+	Date        string `dynamodbav:"Date"` // RFC3339
+	Amount      int64  `dynamodbav:"Amount"`
+	Category    string `dynamodbav:"Category"`
+	Type        string `dynamodbav:"Type"`
+	Description string `dynamodbav:"Description"`
+	// DescriptionLower is the lowercased Description, stored so search filters can
+	// do case-insensitive contains() (DynamoDB has no lower() in expressions),
+	// matching the in-memory store's ToLower-on-both-sides behavior.
+	DescriptionLower string `dynamodbav:"DescriptionLower"`
+	DueDate          string `dynamodbav:"DueDate"` // RFC3339 or ""
+	PaymentStatus    string `dynamodbav:"PaymentStatus"`
+	PaymentDate      string `dynamodbav:"PaymentDate"` // RFC3339 or ""
+	Supplier         string `dynamodbav:"Supplier"`
+	Source           string `dynamodbav:"Source"`
+	CreatedAt        string `dynamodbav:"CreatedAt"`
+	UpdatedAt        string `dynamodbav:"UpdatedAt"`
+	RecurrenceID     string `dynamodbav:"RecurrenceID,omitempty"`
+	RecurrenceIndex  int    `dynamodbav:"RecurrenceIndex,omitempty"`
+	RecurrenceTotal  int    `dynamodbav:"RecurrenceTotal,omitempty"`
 }
 
 type categoryItem struct {
@@ -121,24 +125,25 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		// Date) — see effectiveDate's doc comment in store.go for why this,
 		// not registration Date, is the field callers actually want to
 		// query and bucket by.
-		GSI2SK:          effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID,
-		EntryID:         e.EntryID,
-		UserID:          e.UserID,
-		Date:            e.Date.UTC().Format(time.RFC3339),
-		Amount:          e.Amount,
-		Category:        e.Category,
-		Type:            string(e.Type),
-		Description:     e.Description,
-		DueDate:         dueDate,
-		PaymentStatus:   status,
-		PaymentDate:     payDate,
-		Supplier:        e.Supplier,
-		Source:          e.Source,
-		CreatedAt:       e.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:       e.UpdatedAt.UTC().Format(time.RFC3339),
-		RecurrenceID:    e.RecurrenceID,
-		RecurrenceIndex: e.RecurrenceIndex,
-		RecurrenceTotal: e.RecurrenceTotal,
+		GSI2SK:           effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID,
+		EntryID:          e.EntryID,
+		UserID:           e.UserID,
+		Date:             e.Date.UTC().Format(time.RFC3339),
+		Amount:           e.Amount,
+		Category:         e.Category,
+		Type:             string(e.Type),
+		Description:      e.Description,
+		DescriptionLower: strings.ToLower(e.Description),
+		DueDate:          dueDate,
+		PaymentStatus:    status,
+		PaymentDate:      payDate,
+		Supplier:         e.Supplier,
+		Source:           e.Source,
+		CreatedAt:        e.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:        e.UpdatedAt.UTC().Format(time.RFC3339),
+		RecurrenceID:     e.RecurrenceID,
+		RecurrenceIndex:  e.RecurrenceIndex,
+		RecurrenceTotal:  e.RecurrenceTotal,
 	}
 }
 
@@ -292,15 +297,16 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 		exprValues[":cat"] = &types.AttributeValueMemberS{Value: filter.Category}
 	}
 	if filter.Description != "" {
-		// DynamoDB's contains() is case-sensitive; the GeminiAgent normalizes
-		// query casing on its side, and callers pass the term as typed. Use a
-		// name placeholder since "Description" is safest quoted.
+		// DynamoDB's contains() is case-sensitive, so match against the stored
+		// lowercased attribute with a lowercased term — case-insensitive, and
+		// consistent with the in-memory store. Use a name placeholder since the
+		// attribute is safest quoted.
 		filters = append(filters, "contains(#desc, :desc)")
-		exprValues[":desc"] = &types.AttributeValueMemberS{Value: filter.Description}
+		exprValues[":desc"] = &types.AttributeValueMemberS{Value: strings.ToLower(filter.Description)}
 		if filterNames == nil {
 			filterNames = map[string]string{}
 		}
-		filterNames["#desc"] = "Description"
+		filterNames["#desc"] = "DescriptionLower"
 	}
 	if filter.Status != "" {
 		filters = append(filters, "PaymentStatus = :status")

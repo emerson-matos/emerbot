@@ -149,6 +149,66 @@ func TestAgentAnswersSummaryQuery(t *testing.T) {
 	}
 }
 
+func TestAgentChainsMultipleToolRounds(t *testing.T) {
+	t.Parallel()
+
+	store := finance.NewInMemoryStore()
+	month := time.Now().UTC().Format("2006-01")
+	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
+		functionCallResponse("create_financial_entry", map[string]any{
+			"type": "expense", "amount": 500.0, "category": "aluguel", "is_pending": false,
+		}),
+		functionCallResponse("get_month_summary", map[string]any{"month": month}),
+		textResponse("Registrei e o saldo do mês está atualizado."),
+	}}
+	agent := newTestAgent(gen, store)
+
+	reply, err := agent.Process(context.Background(), "ledger", "paguei 500 de aluguel, como ficou o mês?", time.Now())
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if reply == "" {
+		t.Fatal("expected a non-empty reply")
+	}
+	if gen.calls != 3 {
+		t.Fatalf("expected 3 Gemini calls across two tool rounds + final, got %d", gen.calls)
+	}
+	entries, _ := store.ListEntries(context.Background(), "ledger", finance.EntryFilter{})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 persisted entry, got %d", len(entries))
+	}
+}
+
+func TestAgentRecoversFromToolError(t *testing.T) {
+	t.Parallel()
+
+	store := finance.NewInMemoryStore()
+	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
+		// Invalid amount → the tool handler errors; the error is fed back to the
+		// model, which then apologizes instead of the whole turn aborting.
+		functionCallResponse("create_financial_entry", map[string]any{
+			"type": "expense", "amount": 0.0, "category": "aluguel", "is_pending": false,
+		}),
+		textResponse("Desculpe, não consegui registrar: valor inválido."),
+	}}
+	agent := newTestAgent(gen, store)
+
+	reply, err := agent.Process(context.Background(), "ledger", "gastei nada em aluguel", time.Now())
+	if err != nil {
+		t.Fatalf("expected recovery, got error: %v", err)
+	}
+	if !strings.Contains(reply, "Desculpe") {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+	if gen.calls != 2 {
+		t.Fatalf("expected 2 Gemini calls (failed tool + recovery), got %d", gen.calls)
+	}
+	entries, _ := store.ListEntries(context.Background(), "ledger", finance.EntryFilter{})
+	if len(entries) != 0 {
+		t.Fatalf("expected no entry persisted after a rejected amount, got %d", len(entries))
+	}
+}
+
 func TestAgentExposesAllFinanceTools(t *testing.T) {
 	t.Parallel()
 
