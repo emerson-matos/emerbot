@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import { useState } from "react";
 
 import Sidebar from "./Sidebar";
@@ -6,10 +6,11 @@ import Header from "./Header";
 import MobileSidebar from "./MobileSidebar";
 
 import { useTheme } from "@/lib/theme";
+import { useAuth } from "@/lib/auth";
 
 export default function AppLayout() {
   const { theme, toggle } = useTheme();
-  const navigate = useNavigate();
+  const auth = useAuth();
 
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -17,8 +18,7 @@ export default function AppLayout() {
   const initials = userName.slice(0, 2).toUpperCase();
 
   function handleLogout() {
-    localStorage.clear();
-    navigate("/login", { replace: true });
+    auth.logout();
   }
 
   return (

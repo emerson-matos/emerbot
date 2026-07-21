@@ -5,9 +5,11 @@ import {
   useQueryClient,
   useQuery,
 } from "@tanstack/react-query";
-import { api, CognitoAuthError } from "./client";
-import type { CreateEntryInput, Entry, NotificationPrefs } from "./client";
-import { useToast } from "@/lib/toast";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { api, CognitoAuthError } from "./http";
+import type { CreateEntryInput, Entry, NotificationPrefs } from "./http";
+import { useAuth } from "@/lib/auth";
 
 export const queryKeys = {
   summaryMonthly: (month: string) => ["summary", "monthly", month] as const,
@@ -57,11 +59,6 @@ export function useEntries(from: string, to: string) {
   });
 }
 
-// Cursor-paginated entry history for the Transações page, which browses/
-// searches across many months rather than one. Each page asks the server for
-// at most `pageSize` entries (server-side `limit`, capped independently —
-// see entries.go) older than the previous page's oldest entry, instead of
-// pulling the whole table into the browser in one shot.
 export function useEntriesInfinite(pageSize = 50) {
   return useInfiniteQuery({
     queryKey: queryKeys.entriesPaged(pageSize),
@@ -91,16 +88,15 @@ export function useGoal(month: string) {
 
 export function useSaveGoalMutation(month: string) {
   const queryClient = useQueryClient();
-  const notify = useToast();
 
   return useMutation({
     mutationFn: (data: { revenue_target?: number; expense_target?: number }) =>
       api.goals.save(month, data),
     onError: () => {
-      notify("Não foi possível salvar a meta.", "error");
+      toast.error("Não foi possível salvar a meta.");
     },
     onSuccess: () => {
-      notify("Meta salva.", "success");
+      toast.success("Meta salva.");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.goal(month) });
@@ -118,19 +114,16 @@ export function useNotificationPrefs() {
 
 export function useSaveNotificationPrefsMutation() {
   const queryClient = useQueryClient();
-  const notify = useToast();
 
   return useMutation({
     mutationFn: (data: Partial<NotificationPrefs>) =>
       api.notifications.savePreferences(data),
     onError: () => {
-      notify("Não foi possível salvar as preferências.", "error");
+      toast.error("Não foi possível salvar as preferências.");
     },
     onSuccess: (result) => {
-      // The server normalizes the phone, so seed the cache from its response
-      // instead of the values we sent.
       queryClient.setQueryData(queryKeys.notificationPrefs(), result);
-      notify("Preferências salvas.", "success");
+      toast.success("Preferências salvas.");
     },
   });
 }
@@ -154,14 +147,8 @@ function markEntryPaid<T extends EntriesPage | InfiniteEntriesData>(
   return { ...old, entries: old.entries.map(flip) };
 }
 
-// Optimistically flips an entry to "paid" across every cached entries query
-// (both the ranged `useEntries` shape and the cursor-paginated
-// `useEntriesInfinite` shape used by the Transações page), rolling back on
-// failure; on settle, revalidates entries + every summary so KPIs/charts
-// catch up.
 export function useMarkPaidMutation() {
   const queryClient = useQueryClient();
-  const notify = useToast();
   const entriesKey = { queryKey: ["entries"] };
 
   return useMutation({
@@ -182,10 +169,10 @@ export function useMarkPaidMutation() {
       context?.previous?.forEach(([key, data]) => {
         queryClient.setQueryData(key, data);
       });
-      notify("Não foi possível marcar como pago.", "error");
+      toast.error("Não foi possível marcar como pago.");
     },
     onSuccess: () => {
-      notify("Transação marcada como paga.", "success");
+      toast.success("Transação marcada como paga.");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
@@ -194,19 +181,16 @@ export function useMarkPaidMutation() {
   });
 }
 
-// Creates a new manual entry (the "Nova Transação" form), then revalidates
-// entries + every summary so KPIs/charts/tables catch up.
 export function useCreateEntryMutation() {
   const queryClient = useQueryClient();
-  const notify = useToast();
 
   return useMutation({
     mutationFn: (data: CreateEntryInput) => api.entries.create(data),
     onError: () => {
-      notify("Não foi possível registrar a transação.", "error");
+      toast.error("Não foi possível registrar a transação.");
     },
     onSuccess: () => {
-      notify("Transação registrada.", "success");
+      toast.success("Transação registrada.");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
@@ -222,21 +206,50 @@ type LoginRequest = {
 };
 
 export function useLoginMutation() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+
   return useMutation({
     mutationFn: async ({ email, password }: LoginRequest) => {
       try {
-        await api.auth.login(email, password);
+        const result = await api.auth.login(email, password);
+        return result;
       } catch (err) {
         if (
           err instanceof CognitoAuthError &&
           (err.type === "NotAuthorizedException" ||
+            err.type === "InvalidPasswordException" ||
             err.type === "UserNotFoundException")
         ) {
           throw new InvalidCredentialsError();
         }
-
         throw err;
       }
     },
+    onSuccess: (result) => {
+      auth.login({ accessToken: result.AccessToken, refreshToken: result.RefreshToken });
+      const { name, email } = decodeIdTokenSafe(result.IdToken);
+      if (name) localStorage.setItem("user_name", name);
+      else if (email) localStorage.setItem("user_name", email);
+      navigate("/");
+    },
   });
+}
+
+function base64UrlDecode(input: string): string {
+  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(
+    base64.length + ((4 - (base64.length % 4)) % 4),
+    "=",
+  );
+  const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeIdTokenSafe(idToken: string): { name?: string; email?: string } {
+  try {
+    return JSON.parse(base64UrlDecode(idToken.split(".")[1]));
+  } catch {
+    return {};
+  }
 }

@@ -1,6 +1,6 @@
 import { format } from 'date-fns'
 import { CalendarClock, Check } from 'lucide-react'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '../api/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useEntries, useMarkPaidMutation } from '../api/queries'

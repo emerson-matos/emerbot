@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '../api/http'
 
 export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral'
 

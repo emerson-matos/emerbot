@@ -1,9 +1,7 @@
 import { QueryCache, QueryClient } from '@tanstack/react-query'
-import { notifyError } from '@/lib/toast'
+import { toast } from 'sonner'
+import { ApiError, NetworkError, ForbiddenError, UnauthorizedError } from './api-error'
 
-// PT-BR read-failure message per resource; keeps backend error strings (in
-// English) out of the UI. Mutation success/failure messages are handled
-// per-mutation instead, since those are inherently action-specific.
 const resourceMessages: Record<string, string> = {
   summary: 'Não foi possível carregar o resumo financeiro.',
   entries: 'Não foi possível carregar as transações.',
@@ -11,10 +9,30 @@ const resourceMessages: Record<string, string> = {
 }
 
 export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry(failureCount, error) {
+        if (error instanceof NetworkError) return false
+        if (error instanceof UnauthorizedError) return false
+        if (error instanceof ForbiddenError) return false
+        if (error instanceof ApiError && error.status < 500) return false
+        return failureCount < 3
+      },
+    },
+  },
   queryCache: new QueryCache({
-    onError: (_error, query) => {
+    onError: (error, query) => {
+      if (error instanceof UnauthorizedError) return
+      if (error instanceof ForbiddenError) {
+        toast.error('Acesso negado. Você não tem permissão para acessar este recurso.')
+        return
+      }
+      if (error instanceof NetworkError) {
+        toast.error('Erro de conexão. Verifique sua internet.')
+        return
+      }
       const resource = typeof query.queryKey[0] === 'string' ? query.queryKey[0] : ''
-      notifyError(resourceMessages[resource] ?? 'Não foi possível carregar os dados. Verifique sua conexão.')
+      toast.error(resourceMessages[resource] ?? 'Não foi possível carregar os dados. Verifique sua conexão.')
     },
   }),
 })

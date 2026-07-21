@@ -2,7 +2,7 @@ import { format } from 'date-fns'
 import { Target } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '../api/http'
 import { useGoal, useMonthlySummary } from '../api/queries'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {

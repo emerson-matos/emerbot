@@ -3,7 +3,7 @@ import { ptBR } from 'date-fns/locale'
 import {
   CalendarX,
 } from 'lucide-react'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '../api/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { useMonthlyTrend } from '../api/queries'
 

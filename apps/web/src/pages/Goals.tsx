@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3, CheckCircle2, Target, TrendingDown, TrendingUp,
 } from 'lucide-react'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '../api/http'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
