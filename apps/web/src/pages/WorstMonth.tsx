@@ -3,7 +3,7 @@ import { ptBR } from 'date-fns/locale'
 import {
   CalendarX,
 } from 'lucide-react'
-import { formatBRL } from '../api/client'
+import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { useMonthlyTrend } from '../api/queries'
 
@@ -47,7 +47,7 @@ export default function WorstMonth() {
           )}
         </div>
         <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-destructive/15 text-destructive">
-          <CalendarX className="size-[18px]" />
+          <CalendarX className="size-4.5" />
         </span>
       </CardContent>
     </Card>

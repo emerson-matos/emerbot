@@ -1,19 +1,29 @@
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { AlertCircle, Clock, Loader2, Pill } from "lucide-react";
+
 import { InvalidCredentialsError, useLoginMutation } from "@/api/queries";
-import { useState } from "react";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./PasswordInput";
 import { Button } from "./ui/button";
-import { useNavigate } from "react-router-dom";
-import { AlertCircle, Loader2, Pill } from "lucide-react";
 
 export function LoginForm() {
   const [form, setForm] = useState({
     email: "",
     password: "",
   })
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const [expired, setExpired] = useState(false)
+
+  useEffect(() => {
+    if (searchParams.has("expired")) {
+      setExpired(true)
+      setSearchParams({}, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = useLoginMutation()
-  const navigate = useNavigate()
   const error =
     login.isError &&
       login.error instanceof InvalidCredentialsError
@@ -24,15 +34,9 @@ export function LoginForm() {
   const canSubmit =
     form.email.trim() !== "" &&
     form.password.trim() !== "";
-  const submit: NonNullable<React.ComponentProps<"form">["onSubmit"]> = async (
-    e,
-  ) => {
+  const submit: NonNullable<React.ComponentProps<"form">["onSubmit"]> = (e) => {
     e.preventDefault()
-
-    try {
-      await login.mutateAsync(form)
-      navigate("/")
-    } catch { }
+    login.mutate(form)
   }
 
   return (
@@ -46,6 +50,14 @@ export function LoginForm() {
           <p className="m-1 text-sm text-muted-foreground">Painel Financeiro</p>
         </div>
       </div>
+
+      {expired && (
+        <p className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <Clock className="size-4 shrink-0" />
+          Sua sessão expirou. Faça login novamente.
+        </p>
+      )}
+
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-1.5">
           <label htmlFor="email" className="text-sm font-medium">Email</label>

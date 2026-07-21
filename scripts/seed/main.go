@@ -109,6 +109,19 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 	lastDay := daysInMonth(year, month)
 	save(income(userID, date(year, month, lastDay), randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio"))
 
+	// --- Receitas avulsas no meio do mês ---
+
+	// Convênio adicional — dia 15 (ex.: Unimed)
+	save(income(userID, date(year, month, 15), randBetween(rng, 400000, 700000), "convenio", "Repasse Convênio Unimed"))
+
+	// Delivery / retirada — dias 10 e 20
+	for _, day := range []int{10, 20} {
+		save(income(userID, date(year, month, day), randBetween(rng, 80000, 250000), "delivery", "Delivery / Tele-entrega"))
+	}
+
+	// Outras receitas (bonificação, comissão, etc.) — dia 8
+	save(income(userID, date(year, month, 8), randBetween(rng, 50000, 150000), "outros_receitas", "Bonificação Laboratório"))
+
 	// --- Pending items for the current/future month only ---
 	now := time.Now().UTC()
 	if base.Year() == now.Year() && base.Month() == now.Month() {

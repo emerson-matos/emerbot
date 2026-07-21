@@ -1,11 +1,13 @@
 import { Moon, Sun } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
+import { useAuth } from '@/lib/auth'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function Settings() {
-  const userName = localStorage.getItem('user_name') ?? 'você'
-  const userEmail = localStorage.getItem('user_email') ?? '—'
-  const userPhone = localStorage.getItem('user_phone') ?? '—'
+  const { user } = useAuth()
+  const userName = user?.name ?? 'você'
+  const userEmail = user?.email ?? '—'
+  const userPhone = user?.phone ?? '—'
   const { theme, toggle } = useTheme()
   const initials = userName.trim().slice(0, 2).toUpperCase() || '??'
 

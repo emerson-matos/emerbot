@@ -16,8 +16,8 @@ import { ptBR } from "date-fns/locale";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chartColor, tooltipProps } from "@/lib/chart";
-import { formatBRL } from "../api/client";
-import type { CashFlowPoint } from "../api/client";
+import { formatBRL } from "@/lib/format";
+import type { CashFlowPoint } from "../api/types";
 
 interface Props {
   data: CashFlowPoint[];
