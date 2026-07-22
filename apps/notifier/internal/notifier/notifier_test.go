@@ -7,6 +7,8 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator"
+	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/wasession"
 )
 
@@ -74,14 +76,17 @@ func seedUser(t *testing.T, s stores, inboundAt time.Time, prefs domain.Notifica
 }
 
 func newNotifier(s stores, wa *fakeWA) *Notifier {
-	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC)
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return runDay })
 	return n
 }
 
+// dueExpense creates an entry on the one shared financial ledger — every
+// recipient's prefs point at their own real Cognito user, but they all read
+// this same ledger.
 func dueExpense(id string, amount int64) domain.FinancialEntry {
 	return domain.FinancialEntry{
-		UserID: "u1", EntryID: id, Description: id, Amount: amount,
+		UserID: shared.FinanceLedgerID, EntryID: id, Description: id, Amount: amount,
 		Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending,
 		DueDate: ptr(runDay),
 	}
@@ -153,11 +158,9 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true},
-		domain.FinancialEntry{UserID: "off", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
+		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true})
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true},
-		domain.FinancialEntry{UserID: "nophone", EntryID: "e", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending, DueDate: ptr(runDay)})
+		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true})
 
 	res, err := newNotifier(s, wa).Run(context.Background())
 	if err != nil {
@@ -200,7 +203,7 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	seedUser(
 		t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
-		domain.FinancialEntry{UserID: "u1", EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(runDay)},
+		domain.FinancialEntry{UserID: shared.FinanceLedgerID, EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(runDay)},
 	)
 
 	res, err := newNotifier(s, wa).Run(context.Background())
@@ -209,5 +212,64 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	}
 	if len(wa.sent) != 0 || res.Sent != 0 || res.Skipped != 1 {
 		t.Fatalf("want no send, res=%+v sent=%d", res, len(wa.sent))
+	}
+}
+
+// TestRunNotifiesMultipleCognitoUsersFromSharedLedger is the regression test
+// for the identity-collapsing bug: two distinct Cognito users, each with
+// their own prefs/phone, both watching the one shared financial ledger, must
+// each get their own digest.
+func TestRunNotifiesMultipleCognitoUsersFromSharedLedger(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	if err := s.fin.SaveEntry(ctx, dueExpense("Fornecedor", 285000)); err != nil {
+		t.Fatal(err)
+	}
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511900000001", NotifyDueToday: true})
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u2", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true})
+
+	res, err := newNotifier(s, wa).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 2 || len(wa.sent) != 2 {
+		t.Fatalf("want 2 independent sends, got res=%+v sent=%d", res, len(wa.sent))
+	}
+	gotPhones := map[string]bool{wa.sent[0].to: true, wa.sent[1].to: true}
+	if !gotPhones["5511900000001"] || !gotPhones["5511900000002"] {
+		t.Fatalf("want both recipients to receive their own digest, got %v", wa.sent)
+	}
+}
+
+// TestRunDedupeIsPerRecipientNotPerLedger seeds two recipients on the same
+// shared ledger, but only one of them as already notified today — a single
+// Run must still send to the other. Dedupe keys on the real recipient's
+// UserID, not on the shared ledger they both read from.
+func TestRunDedupeIsPerRecipientNotPerLedger(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	if err := s.fin.SaveEntry(ctx, dueExpense("Fornecedor", 285000)); err != nil {
+		t.Fatal(err)
+	}
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511900000001", NotifyDueToday: true})
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u2", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true})
+	if err := s.fin.RecordNotificationSent(ctx, "u1", runDay.Format("2006-01-02"), runDay); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := newNotifier(s, wa).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 1 || len(wa.sent) != 1 || wa.sent[0].to != "5511900000002" {
+		t.Fatalf("want only u2 sent (u1 already deduped), got res=%+v sent=%v", res, wa.sent)
 	}
 }

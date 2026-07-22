@@ -47,12 +47,13 @@ func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.UserID)
+	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
 	if err != nil {
 		// No saved prefs yet — hand back the defaults rather than an error so
 		// the form has something to render.
-		prefs = domain.DefaultNotificationPrefs(claims.UserID)
+		prefs = domain.DefaultNotificationPrefs(claims.Subject)
 	}
+	prefs.Phone = normalizePhone(claims.Phone)
 	jsonOK(w, map[string]any{"preferences": toResponse(prefs)})
 }
 
@@ -65,11 +66,10 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		WAEnabled      *bool   `json:"waEnabled"`
-		Phone          *string `json:"phone"`
-		NotifyDueToday *bool   `json:"notifyDueToday"`
-		NotifyOverdue  *bool   `json:"notifyOverdue"`
-		NotifyGoal     *bool   `json:"notifyGoal"`
+		WAEnabled      *bool `json:"waEnabled"`
+		NotifyDueToday *bool `json:"notifyDueToday"`
+		NotifyOverdue  *bool `json:"notifyOverdue"`
+		NotifyGoal     *bool `json:"notifyGoal"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -78,16 +78,13 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	// Start from what's stored (or defaults) so a partial PUT only changes the
 	// fields it sends.
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.UserID)
+	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
 	if err != nil {
-		prefs = domain.DefaultNotificationPrefs(claims.UserID)
+		prefs = domain.DefaultNotificationPrefs(claims.Subject)
 	}
 
 	if body.WAEnabled != nil {
 		prefs.WAEnabled = *body.WAEnabled
-	}
-	if body.Phone != nil {
-		prefs.Phone = normalizePhoneBR(*body.Phone)
 	}
 	if body.NotifyDueToday != nil {
 		prefs.NotifyDueToday = *body.NotifyDueToday
@@ -99,9 +96,13 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		prefs.NotifyGoal = *body.NotifyGoal
 	}
 
+	// The phone is never client-supplied — it's always the Cognito account's
+	// registered number, so alerts can't be redirected to an arbitrary number.
+	prefs.Phone = normalizePhone(claims.Phone)
+
 	// Can't enable WhatsApp delivery without a phone number to deliver to.
 	if prefs.WAEnabled && prefs.Phone == "" {
-		jsonError(w, "informe um número de WhatsApp para ativar os alertas", http.StatusBadRequest)
+		jsonError(w, "cadastre um número de telefone na sua conta para ativar os alertas", http.StatusBadRequest)
 		return
 	}
 
@@ -114,29 +115,15 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"preferences": toResponse(prefs)})
 }
 
-// normalizePhoneBR reduces a Brazilian phone to E.164 digits (country code +
-// number, no "+"). It strips formatting, then ensures the "55" country code:
-// 10–11 digit inputs (DDD + number) get "55" prepended; inputs that already
-// carry it are left as-is. Anything that doesn't look like a BR number is
-// returned digits-only, unchanged otherwise.
-func normalizePhoneBR(raw string) string {
+// normalizePhone reduces a Cognito phone_number attribute (E.164, e.g.
+// "+5511987654321") to bare digits — what the Meta Cloud API's `to` field
+// expects.
+func normalizePhone(raw string) string {
 	var digits strings.Builder
 	for _, r := range raw {
 		if r >= '0' && r <= '9' {
 			digits.WriteRune(r)
 		}
 	}
-	d := digits.String()
-	if d == "" {
-		return ""
-	}
-	// Already prefixed with the 55 country code (12–13 digits total).
-	if strings.HasPrefix(d, "55") && (len(d) == 12 || len(d) == 13) {
-		return d
-	}
-	// Bare DDD + number.
-	if len(d) == 10 || len(d) == 11 {
-		return "55" + d
-	}
-	return d
+	return digits.String()
 }

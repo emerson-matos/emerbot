@@ -43,7 +43,7 @@ async function httpClient<T>(
   const tokens = authService.getTokens();
   const headers: HeadersInit = {
     "Content-Type": "application/json",
-    ...(tokens ? { Authorization: `Bearer ${tokens.accessToken}` } : {}),
+    ...(tokens?.idToken ? { Authorization: `Bearer ${tokens.idToken}` } : {}),
     ...(options.headers ?? {}),
   };
 

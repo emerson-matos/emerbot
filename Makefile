@@ -152,16 +152,18 @@ demo: up
 # ---------------------------------------------------------------------------
 # Create one user in the deployed Cognito user pool. Password is generated and
 # printed once unless PASSWORD is supplied. PHONE (E.164, e.g. +5511999999999)
-# is prep for the WhatsApp bot's phone->account linking — not yet read by any
-# app code, just stored on the Cognito user.
-#   make create-user EMAIL=someone@example.com [NAME="Someone"] [PHONE=+5511999999999] [PASSWORD=...]
+# is required — it's the number the dashboard uses for WhatsApp alerts (see
+# packages/domain/notifications.go) and the pool's schema rejects users
+# without one.
+#   make create-user EMAIL=someone@example.com PHONE=+5511999999999 [NAME="Someone"] [PASSWORD=...]
 create-user:
-	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com"; exit 1; }
+	@test -n "$(EMAIL)" || { echo "EMAIL is required: make create-user EMAIL=you@example.com PHONE=+5511999999999"; exit 1; }
+	@test -n "$(PHONE)" || { echo "PHONE is required: make create-user EMAIL=you@example.com PHONE=+5511999999999"; exit 1; }
 	eval "$$(aws configure export-credentials --format env)" && \
 	POOL_ID=$$($(TOFU) -chdir=$(TOFU_DIR) output -raw cognito_user_pool_id) && \
 	PASSWORD="$(if $(PASSWORD),$(PASSWORD),$$(openssl rand -base64 12))" && \
 	aws cognito-idp admin-create-user --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
-		--user-attributes Name=email,Value="$(EMAIL)" Name=email_verified,Value=true $(if $(NAME),Name=name$(comma)Value="$(NAME)") $(if $(PHONE),Name=phone_number$(comma)Value="$(PHONE)") \
+		--user-attributes Name=email,Value="$(EMAIL)" Name=email_verified,Value=true Name=phone_number,Value="$(PHONE)" $(if $(NAME),Name=name$(comma)Value="$(NAME)") \
 		--message-action SUPPRESS && \
 	aws cognito-idp admin-set-user-password --user-pool-id "$$POOL_ID" --username "$(EMAIL)" \
 		--password "$$PASSWORD" --permanent && \

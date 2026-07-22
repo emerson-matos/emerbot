@@ -64,5 +64,11 @@ func gatewayClaims(event events.APIGatewayV2HTTPRequest) apiauth.Claims {
 		return apiauth.Claims{}
 	}
 	claims := event.RequestContext.Authorizer.JWT.Claims
-	return apiauth.Claims{UserID: claims["sub"], Email: claims["email"], Name: claims["username"]}
+	return apiauth.Claims{
+		UserID:  claims["sub"],
+		Email:   claims["email"],
+		Name:    claims["name"],
+		Phone:   claims["phone_number"],
+		Subject: claims["sub"],
+	}
 }

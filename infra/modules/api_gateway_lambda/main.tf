@@ -336,11 +336,11 @@ resource "aws_apigatewayv2_route" "dashboard_protected" {
   target             = "integrations/${aws_apigatewayv2_integration.dashboard_api.id}"
   authorizer_id      = aws_apigatewayv2_authorizer.dashboard_jwt.id
   authorization_type = "JWT"
-  # "aws.cognito.signin.user.admin" is Cognito's implicit default scope granted
-  # to access tokens minted via direct auth flows (USER_PASSWORD_AUTH), since
-  # the app client (infra/modules/cognito_user_pool) sets no allowed_oauth_flows/
-  # allowed_oauth_scopes — there's no custom resource-server scope to reference.
-  authorization_scopes = ["aws.cognito.signin.user.admin"]
+  # No authorization_scopes: the dashboard authenticates with the Cognito ID
+  # token (see apps/dashboard-api/internal/auth/local_middleware.go), which
+  # carries no `scope` claim at all — only access tokens do. This app has no
+  # OAuth scope/resource-server model; the JWT authorizer's issuer + audience
+  # + signature check above is the actual authorization mechanism.
 }
 
 resource "aws_apigatewayv2_route" "dashboard_public" {

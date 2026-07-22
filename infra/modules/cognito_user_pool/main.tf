@@ -34,6 +34,17 @@ resource "aws_cognito_user_pool" "dashboard" {
     name                = "email"
     required            = true
   }
+
+  # phone_number is deliberately NOT declared as a required schema attribute
+  # here. Cognito user pool schema is immutable after creation and the AWS
+  # provider marks `schema` as ForceNew, so adding this on an
+  # already-provisioned pool would destroy and recreate the whole pool (every
+  # existing user deleted, pool ID/issuer rotated) on the next apply.
+  # phone_number is still a standard Cognito attribute usable without a
+  # schema declaration — `make create-user` requires PHONE and sets it via
+  # `admin-create-user` regardless; that's enforced at the tooling layer
+  # instead. Revisit declaring it required here only as a deliberate,
+  # standalone change once recreating the pool is acceptable.
 }
 
 resource "aws_cognito_user_pool_client" "dashboard" {
