@@ -22,7 +22,6 @@ type Service struct {
 	generator        TextGenerator
 	shortTerm        ShortTermStore
 	longTerm         LongTermStore
-	tools            *Registry
 	shortTermLimit   int
 	defaultResponder string
 }
@@ -34,7 +33,6 @@ func NewService(cfg Config) *Service {
 		generator:        gen,
 		shortTerm:        stores,
 		longTerm:         stores,
-		tools:            NewRegistry(EchoTool{}),
 		shortTermLimit:   10,
 		defaultResponder: "Não consegui gerar uma resposta.",
 	}
@@ -75,7 +73,6 @@ func NewServiceWithGenerator(gen TextGenerator) *Service {
 		generator:        gen,
 		shortTerm:        stores,
 		longTerm:         stores,
-		tools:            NewRegistry(EchoTool{}),
 		shortTermLimit:   10,
 		defaultResponder: "Não consegui gerar uma resposta.",
 	}
@@ -120,15 +117,6 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 	}
 	if response.Text == "" {
 		response.Text = s.defaultResponder
-	}
-
-	if output.ToolCall != nil {
-		result, execErr := s.tools.Execute(ctx, *output.ToolCall, message.UserID)
-		if execErr != nil {
-			return domain.Response{}, fmt.Errorf("execute tool: %w", execErr)
-		}
-		response.ToolResults = append(response.ToolResults, result)
-		response.Text = response.Text + "\n\nTool " + result.Name + ": " + result.Output
 	}
 
 	if err := s.shortTerm.Append(ctx, message.UserID, domain.ConversationMessage{

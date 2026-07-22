@@ -32,45 +32,6 @@ func TestHandleMessageUsesDefaultResponseWhenLLMReturnsBlank(t *testing.T) {
 	}
 }
 
-func TestHandleMessageExecutesToolCall(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(stubLLM{output: Output{
-		Text: "Vou usar uma tool.",
-		ToolCall: &domain.ToolCall{
-			Name:  " echo ",
-			Input: "payload",
-		},
-	}})
-
-	response, err := service.HandleMessage(context.Background(), validMessage("tool"))
-	if err != nil {
-		t.Fatalf("HandleMessage returned error: %v", err)
-	}
-	if len(response.ToolResults) != 1 {
-		t.Fatalf("expected 1 tool result, got %d", len(response.ToolResults))
-	}
-	if response.ToolResults[0].Output != "payload" {
-		t.Fatalf("unexpected tool output: %q", response.ToolResults[0].Output)
-	}
-}
-
-func TestHandleMessageReturnsToolExecutionError(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(stubLLM{output: Output{
-		Text: "Vou usar uma tool.",
-		ToolCall: &domain.ToolCall{
-			Name: "missing",
-		},
-	}})
-
-	_, err := service.HandleMessage(context.Background(), validMessage("tool"))
-	if err == nil {
-		t.Fatal("expected tool execution error")
-	}
-}
-
 // TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender proves the finance
 // agent always sees shared.FinanceLedgerID, not the sender's own user ID —
 // otherwise each sender's natural-language entries would land in their own

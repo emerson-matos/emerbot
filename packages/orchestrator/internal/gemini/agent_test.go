@@ -56,8 +56,18 @@ func functionCallResponse(name string, args map[string]any) *genai.GenerateConte
 }
 
 func newTestAgent(gen contentGenerator, store finance.Store) *Agent {
-	tools, handlers := finance.FinanceTools(store)
-	return &Agent{gen: gen, model: model, tools: tools, toolHandlers: handlers}
+	financeTools := finance.FinanceTools(store)
+	genaiTools := make([]*genai.Tool, len(financeTools))
+	handlers := make(map[string]finance.ToolFunc, len(financeTools))
+	for i, t := range financeTools {
+		genaiTools[i] = &genai.Tool{
+			FunctionDeclarations: []*genai.FunctionDeclaration{{
+				Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+			}},
+		}
+		handlers[t.Name] = t.Handler
+	}
+	return &Agent{gen: gen, model: model, tools: genaiTools, toolHandlers: handlers}
 }
 
 func TestAgentReturnsTextForChitChat(t *testing.T) {

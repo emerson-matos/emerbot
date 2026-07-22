@@ -9,17 +9,18 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-func handlerFor(t *testing.T, store Store, name string) ToolHandler {
+func handlerFor(t *testing.T, store Store, name string) ToolFunc {
 	t.Helper()
-	_, handlers := FinanceTools(store)
-	h, ok := handlers[name]
-	if !ok {
-		t.Fatalf("tool %q not registered", name)
+	for _, tool := range FinanceTools(store) {
+		if tool.Name == name {
+			return tool.Handler
+		}
 	}
-	return h
+	t.Fatalf("tool %q not registered", name)
+	return nil
 }
 
-func callTool(t *testing.T, h ToolHandler, userID string, args map[string]any) any {
+func callTool(t *testing.T, h ToolFunc, userID string, args map[string]any) any {
 	t.Helper()
 	raw, err := json.Marshal(args)
 	if err != nil {
