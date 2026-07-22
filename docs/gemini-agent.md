@@ -181,9 +181,10 @@ make build         # compila
 ## Fase 2 — GeminiAgent com function calling
 
 **Status: implementada.** O `GeminiParser` e a interface `Parser` foram removidos;
-o `GeminiAgent` (`packages/whatsapp/gemini_agent.go`) trata todo o fluxo de
-linguagem natural via function calling, e o `RegexParser` continua como fast
-path para slash commands. As tools vivem em `packages/finance/tools.go`.
+um agente de function calling trata todo o fluxo de linguagem natural (hoje
+`Agent` em `packages/orchestrator/internal/gemini/agent.go` — ver "Atualização
+(pós-implementação)" abaixo), e o `RegexParser` continua como fast path para
+slash commands. As tools vivem em `packages/finance/tools.go`.
 
 Diferenças em relação ao rascunho abaixo (o código é a fonte da verdade):
 
@@ -200,9 +201,32 @@ Diferenças em relação ao rascunho abaixo (o código é a fonte da verdade):
 - O `financial.Handler` recebe `(regex *whatsapp.RegexParser, agent Agent, store)`;
   `Agent` é uma interface local (nil = deployment regex-only).
 
+**Atualização (pós-implementação):** o desenho acima foi novamente movido quando
+`packages/orchestrator` (ADR-006) passou a centralizar todo o fluxo, não só o
+financeiro:
+
+- `GeminiAgent` saiu de `packages/whatsapp/gemini_agent.go` e virou `Agent` em
+  `packages/orchestrator/internal/gemini/agent.go`.
+- `financial.Handler` (`apps/webhook/internal/financial/handler.go`) não trata
+  mais linguagem natural — hoje só resolve slash commands via `RegexParser`
+  (`/despesa`, `/receita`, `/pagar`, `/receber`, `/recorrente`, `/resumo`,
+  `/goal`, `/meta`).
+- O roteamento entre os dois vive em `apps/webhook/internal/app/app.go`:
+  `isFinancialCommand` manda comandos com prefixo conhecido para
+  `financialHandler`; qualquer outra mensagem vai para `orchestrator.Service`,
+  que carrega memória de curto/longo prazo e delega ao `Agent` via
+  `TextGenerator` (`orchestrator.NewTextGenerator` escolhe entre o `Agent` real
+  e `StaticClient` como fallback quando `GEMINI_API_KEY`/`FinanceStore` não
+  estão configurados).
+
 **Objetivo**: substituir `GeminiParser` por um agente que usa tools para tudo.
 
 ### Visão geral dos arquivos
+
+> A tabela e o rascunho abaixo são o plano original desta fase, hoje só de
+> valor histórico — os arquivos `packages/whatsapp/gemini_agent.go` e o
+> `financial.Handler` com `agent` embutido não existem mais; veja a
+> "Atualização (pós-implementação)" acima para a localização atual.
 
 | Arquivo | Ação |
 |---------|------|
