@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
@@ -40,7 +41,7 @@ func TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender(t *testing.T) {
 	t.Parallel()
 
 	agent := &fakeFinanceAgent{reply: "ok"}
-	gen := &geminiGenerator{agent: agent}
+	gen := &agentGenerator{agent: agent}
 
 	history := []domain.ConversationMessage{
 		{Role: domain.RoleUser, Text: "oi", Timestamp: time.Now()},
@@ -65,6 +66,23 @@ func TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender(t *testing.T) {
 	// so the model keeps context across messages.
 	if len(agent.gotHistory) != len(history) {
 		t.Fatalf("expected agent to receive %d history turns, got %d", len(history), len(agent.gotHistory))
+	}
+}
+
+// TestNewTextGeneratorSelectsProvider proves the provider switch: LLMProvider
+// "ollama" builds a real agent, and a missing finance store always degrades to
+// the static responder (an agent has no tools to run without it).
+func TestNewTextGeneratorSelectsProvider(t *testing.T) {
+	t.Parallel()
+
+	ollamaGen := NewTextGenerator(Config{FinanceStore: finance.NewInMemoryStore(), LLMProvider: "ollama"})
+	if _, ok := ollamaGen.(*agentGenerator); !ok {
+		t.Fatalf("expected *agentGenerator for ollama provider, got %T", ollamaGen)
+	}
+
+	staticGen := NewTextGenerator(Config{LLMProvider: "ollama"})
+	if _, ok := staticGen.(StaticClient); !ok {
+		t.Fatalf("expected StaticClient fallback without a finance store, got %T", staticGen)
 	}
 }
 

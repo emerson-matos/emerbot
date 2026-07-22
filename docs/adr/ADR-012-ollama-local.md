@@ -2,7 +2,7 @@
 
 ## Status
 
-Aceito — pendente de implementação.
+Aceito — implementado.
 
 ## Contexto
 

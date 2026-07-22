@@ -235,6 +235,16 @@ janela enviada ao modelo já inclui a mensagem atual. Ver ADR-005.
 
 Longo prazo (fatos/preferências) segue não implementado — Fase 2.
 
+### Provider local para dev (Ollama)
+
+Para rodar o chat localmente com um modelo open source em vez do `StaticClient`,
+existe um segundo agente em `packages/orchestrator/internal/ollama` que fala com o
+Ollama (`/api/chat`), mantendo os mesmos tools financeiros (converte o
+`*genai.Schema` para JSON Schema). A seleção é por env (`LLM_PROVIDER=ollama`,
+`OLLAMA_HOST`, `OLLAMA_MODEL`) em `orchestrator.NewTextGenerator`; o system prompt
+é compartilhado via `internal/agentprompt`. Subir com `make demo-ollama`. A Gemini
+continua o provider de produção. Ver ADR-012.
+
 **Objetivo**: substituir `GeminiParser` por um agente que usa tools para tudo.
 
 ### Visão geral dos arquivos

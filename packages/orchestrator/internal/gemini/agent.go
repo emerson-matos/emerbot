@@ -12,6 +12,7 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/agentprompt"
 )
 
 const model = "gemini-3.1-flash-lite"
@@ -59,32 +60,6 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, 
 	}, nil
 }
 
-func systemPrompt(now time.Time) string {
-	return fmt.Sprintf(
-		`Você é um assistente financeiro de uma farmácia.
-Sua função é ajudar o usuário a gerenciar o fluxo de caixa.
-
-Contexto atual:
-- Hoje é %s
-- Fuso horário: America/Sao_Paulo
-
-Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem")
-usando a data acima como referência. Nunca invente datas.
-
-Você tem acesso a ferramentas para criar lançamentos, editar lançamentos
-existentes, consultar o resumo do mês, listar contas a pagar/receber e
-buscar lançamentos.
-
-Regras:
-- Sempre use as ferramentas quando precisar de dados. Nunca invente valores.
-- Responda em português, de forma clara e direta.
-- Valores em reais (R$).
-- Se a mensagem não for financeira, responda educadamente que você é um
-  assistente financeiro e pode ajudar com o fluxo de caixa.`,
-		now.Format("02/01/2006"),
-	)
-}
-
 // Process runs the tool-calling loop over the recent conversation `history`
 // (oldest-first, ending with the current user turn) so the model keeps context
 // across messages. msgTime dates the system prompt; userID routes tool calls.
@@ -93,7 +68,7 @@ func (a *Agent) Process(ctx context.Context, userID string, history []domain.Con
 	defer cancel()
 
 	config := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt(msgTime)}}},
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: agentprompt.Finance(msgTime)}}},
 		Tools:             a.tools,
 		Temperature:       genai.Ptr[float32](0),
 		MaxOutputTokens:   1024,

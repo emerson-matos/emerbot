@@ -182,6 +182,11 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		finHandler = financial.NewHandler(regex, store)
 		cfg.FinanceStore = store
 		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
+		// LLM_PROVIDER=ollama runs a local open-source model for dev (ADR-012);
+		// unset keeps the Gemini/static path used in production.
+		cfg.LLMProvider = shared.Getenv("LLM_PROVIDER", "")
+		cfg.OllamaHost = shared.Getenv("OLLAMA_HOST", "")
+		cfg.OllamaModel = shared.Getenv("OLLAMA_MODEL", "")
 	}
 
 	// Short-term chat history lives in its own TTL-managed table so the bot keeps

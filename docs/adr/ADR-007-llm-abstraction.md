@@ -27,9 +27,12 @@ descrita originalmente **nunca foi criada**; esse é o seam real de provider.
 implementação. Providers:
 
 - **Gemini** (`packages/orchestrator/internal/gemini`) — provider de produção.
-- **StaticClient** (`packages/orchestrator/static.go`) — fallback sem LLM.
-- **Ollama** — provider local/dev, aprovado e pendente de implementação
+- **Ollama** (`packages/orchestrator/internal/ollama`) — provider local/dev
   (ver ADR-012).
+- **StaticClient** (`packages/orchestrator/static.go`) — fallback sem LLM.
+
+O system prompt do agente vive em `packages/orchestrator/internal/agentprompt`,
+compartilhado pelos providers para não divergir a persona ao trocar de modelo.
 
 A decisão da ADR (não acoplar estruturalmente a um provider) segue válida; muda
 apenas o nome/local do contrato. Os tools ainda são tipados em `*genai.Schema`

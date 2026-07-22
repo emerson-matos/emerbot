@@ -10,6 +10,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/gemini"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/ollama"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
@@ -19,6 +20,11 @@ type Config struct {
 	// ShortTerm persists conversation history. When nil, an in-memory store is
 	// used (fine for local/dev, but lost on every Lambda cold start).
 	ShortTerm ShortTermStore
+	// LLMProvider selects the text generator. "ollama" runs a local open-source
+	// model (dev-only, ADR-012); anything else keeps the Gemini/static path.
+	LLMProvider string
+	OllamaHost  string
+	OllamaModel string
 }
 
 type Service struct {
@@ -46,27 +52,40 @@ func NewService(cfg Config) *Service {
 }
 
 func NewTextGenerator(cfg Config) TextGenerator {
-	if cfg.GeminiAPIKey != "" && cfg.FinanceStore != nil {
+	// Every real agent needs the finance store for its tools; without it there is
+	// nothing to generate against, so fall back to the static responder.
+	if cfg.FinanceStore == nil {
+		return StaticClient{}
+	}
+
+	if cfg.LLMProvider == "ollama" {
+		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore)
+		return &agentGenerator{agent: agent}
+	}
+
+	if cfg.GeminiAPIKey != "" {
 		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore)
 		if err != nil {
 			log.Printf("orchestrator: gemini agent: %v, using static fallback", err)
 		} else {
-			return &geminiGenerator{agent: agent}
+			return &agentGenerator{agent: agent}
 		}
 	}
 	return StaticClient{}
 }
 
-// financeAgent lets tests inject a fake without a real Gemini client.
+// financeAgent is the provider-agnostic agent contract (Gemini or Ollama); tests
+// inject a fake without a real client.
 type financeAgent interface {
 	Process(ctx context.Context, userID string, history []domain.ConversationMessage, msgTime time.Time) (string, error)
 }
 
-type geminiGenerator struct {
+// agentGenerator adapts any financeAgent to the TextGenerator interface.
+type agentGenerator struct {
 	agent financeAgent
 }
 
-func (g *geminiGenerator) Generate(ctx context.Context, input Input) (Output, error) {
+func (g *agentGenerator) Generate(ctx context.Context, input Input) (Output, error) {
 	// input.ShortTerm already ends with the current user turn (HandleMessage
 	// appends it before loading), so it is the full conversation to send.
 	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.ShortTerm, input.UserMessage.Timestamp)

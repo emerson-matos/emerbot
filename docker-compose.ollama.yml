@@ -1,0 +1,54 @@
+# Optional local LLM stack (ADR-012). Layer it on top of the base compose to run
+# the chat against a local open-source model instead of the StaticClient:
+#
+#   make demo-ollama
+#   # or: podman compose -f docker-compose.yml -f docker-compose.ollama.yml up --build
+#
+# Kept out of the base file because the model is heavy (~5GB) and the default
+# `make demo` should stay light. Override OLLAMA_MODEL to try another model
+# (e.g. qwen2.5:7b).
+name: emerbot
+
+services:
+  # Serves the model. First `ollama pull` downloads ~5GB into the named volume;
+  # CPU inference is slow (seconds per reply).
+  ollama:
+    image: ollama/ollama:latest
+    container_name: emerbot-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  # One-shot: pulls the model on the ollama server, then exits. The webhook waits
+  # for this to complete so the first message doesn't race the download.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: emerbot-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+    entrypoint: ["/bin/sh", "-c", "ollama pull $${OLLAMA_MODEL}"]
+    restart: "no"
+
+  # Patch the base webhook to route natural-language chat to the local model.
+  webhook:
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    environment:
+      LLM_PROVIDER: ollama
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+
+volumes:
+  ollama-models:
