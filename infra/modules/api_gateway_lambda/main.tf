@@ -463,6 +463,7 @@ resource "aws_lambda_function" "notifier" {
       META_GRAPH_API_TOKEN     = var.meta_graph_api_token_value
       WHATSAPP_PHONE_NUMBER_ID = var.whatsapp_phone_number_id
       NOTIFIER_TIMEZONE        = var.notifier_timezone
+      GEMINI_API_KEY           = var.gemini_api_key_value
     }
   }
 }
