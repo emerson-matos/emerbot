@@ -341,13 +341,19 @@ locals {
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     "GET /notifications/preferences", "PUT /notifications/preferences",
   ])
-  # No explicit OPTIONS route: an explicit route would shadow API Gateway's
-  # automatic CORS preflight handling (aws_apigatewayv2_api.http's
-  # cors_configuration above) and instead forward OPTIONS to the Lambda,
-  # which has no handler for it since NewGateway no longer answers preflight
-  # itself.
+  # An explicit OPTIONS route is still required: API Gateway's automatic CORS
+  # preflight handling only kicks in for a path with *no* route at all. Every
+  # dashboard path already has a route for some other method (GET/POST/...),
+  # so an OPTIONS request to it is a genuine method mismatch the gateway
+  # answers with its own plain 405 — cors_configuration attaches CORS headers
+  # to that 405, but the status code alone fails the browser's preflight
+  # check regardless of headers present. Routing OPTIONS to the Lambda here
+  # (see withCORS in app.go) gets the required 2xx; cors_configuration above
+  # then overrides whatever headers the Lambda sends with the API's own
+  # (confirmed: API Gateway ignores CORS headers returned by the backend
+  # integration once cors_configuration is set), so there's no conflict.
   dashboard_public_routes = toset([
-    "GET /health",
+    "GET /health", "OPTIONS /{proxy+}",
   ])
 }
 

@@ -19,29 +19,32 @@ type App struct {
 
 // NewGateway is used by the deployed Lambda behind API Gateway's Cognito JWT
 // authorizer, which has already validated the request's JWT before Lambda
-// runs — see bridge.go's gatewayClaims. CORS is handled by API Gateway's own
-// cors_configuration (infra/modules/api_gateway_lambda), not here: that's
-// what puts CORS headers on responses API Gateway generates itself, such as
-// a 401/403 from the JWT authorizer rejecting a request before it ever
-// reaches this Lambda. Adding CORS headers here too would just duplicate
-// them on every response that *does* reach the Lambda.
+// runs — see bridge.go's gatewayClaims. This still adds its own CORS headers
+// via withCORS (needed for the OPTIONS preflight route, which API Gateway
+// forwards straight to the Lambda — see the comment on
+// dashboard_public_routes in infra/modules/api_gateway_lambda/main.tf) even
+// though API Gateway's own cors_configuration also covers this API: once
+// cors_configuration is set, API Gateway overrides whatever CORS headers the
+// backend integration returns with its own, so there's no duplication —
+// cors_configuration's real job is attaching CORS headers to responses API
+// Gateway generates itself, like a 401/403 from the JWT authorizer rejecting
+// a request before it ever reaches this Lambda.
 func NewGateway(finStore pkgfinance.Store) *App {
-	return newApp(finStore, apiauth.GatewayMiddleware, false)
+	return newApp(finStore, apiauth.GatewayMiddleware)
 }
 
 // NewLocal is used by cmd/local, which has no API Gateway in front of it — it
 // verifies Cognito JWTs itself via JWKS (see apiauth.NewLocalCognitoMiddleware)
-// instead of trusting pre-validated claims, and has no API Gateway to add
-// CORS headers for it, so this handler adds its own.
+// instead of trusting pre-validated claims.
 func NewLocal(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
-	return newApp(finStore, authMw, true)
+	return newApp(finStore, authMw)
 }
 
 // newApp wires the routes shared by both entrypoints. NOTE: this route list
 // must stay in sync with the dashboard_protected_routes/dashboard_public_routes
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
-func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler, addCORS bool) *App {
+func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
 	entriesHandler := apifinance.NewEntriesHandler(finStore)
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
@@ -76,11 +79,7 @@ func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler, a
 	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
 	mux.Handle("PUT /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Save)))
 
-	var handler http.Handler = mux
-	if addCORS {
-		handler = withCORS(mux)
-	}
-	return &App{handler: handler}
+	return &App{handler: withCORS(mux)}
 }
 
 // ServeHTTP satisfies http.Handler — used by the local cmd.
