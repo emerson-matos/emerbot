@@ -10,6 +10,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/gemini"
+	"github.com/emerson/emerbot/packages/shared"
 )
 
 type Config struct {
@@ -47,12 +48,22 @@ func NewService(cfg Config) *Service {
 	}
 }
 
-type geminiGenerator struct {
-	agent *gemini.Agent
+// financeAgent is the slice of *gemini.Agent that geminiGenerator needs; it
+// lets tests inject a fake without a real Gemini client.
+type financeAgent interface {
+	Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error)
 }
 
+type geminiGenerator struct {
+	agent financeAgent
+}
+
+// Generate always processes against the shared finance ledger, not the
+// sender's own user ID — the agent reads/writes finance entries, and every
+// sender must land in the same ledger slash commands use (see
+// shared.FinanceLedgerID) until real phone→account linking exists.
 func (g *geminiGenerator) Generate(ctx context.Context, input Input) (Output, error) {
-	reply, err := g.agent.Process(ctx, input.UserMessage.UserID, input.UserMessage.Text, input.UserMessage.Timestamp)
+	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.UserMessage.Text, input.UserMessage.Timestamp)
 	if err != nil {
 		return Output{}, fmt.Errorf("gemini: %w", err)
 	}

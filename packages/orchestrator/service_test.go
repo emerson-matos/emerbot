@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/shared"
 )
 
 func TestHandleMessageRejectsInvalidMessage(t *testing.T) {
@@ -68,6 +69,41 @@ func TestHandleMessageReturnsToolExecutionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected tool execution error")
 	}
+}
+
+// TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender proves the finance
+// agent always sees shared.FinanceLedgerID, not the sender's own user ID —
+// otherwise each sender's natural-language entries would land in their own
+// isolated ledger instead of the one slash commands (e.g. /resumo) read from.
+func TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender(t *testing.T) {
+	t.Parallel()
+
+	agent := &fakeFinanceAgent{reply: "ok"}
+	gen := &geminiGenerator{agent: agent}
+
+	_, err := gen.Generate(context.Background(), Input{
+		UserMessage: domain.Message{
+			UserID:    "5511999999999",
+			Text:      "paguei 50 de aluguel",
+			Timestamp: time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if agent.gotUserID != shared.FinanceLedgerID {
+		t.Fatalf("expected agent to receive shared ledger id %q, got %q", shared.FinanceLedgerID, agent.gotUserID)
+	}
+}
+
+type fakeFinanceAgent struct {
+	reply     string
+	gotUserID string
+}
+
+func (f *fakeFinanceAgent) Process(_ context.Context, userID, _ string, _ time.Time) (string, error) {
+	f.gotUserID = userID
+	return f.reply, nil
 }
 
 type stubLLM struct {
