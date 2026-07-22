@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -125,6 +126,9 @@ func (s *DynamoDBStore) LoadRecent(ctx context.Context, userID string, limit int
 	for _, raw := range out.Items {
 		var it item
 		if err := attributevalue.UnmarshalMap(raw, &it); err != nil {
+			// A malformed item drops out of context; log it so the loss is
+			// diagnosable rather than silent.
+			log.Printf("conversation: skipping unreadable turn: %v", err)
 			continue
 		}
 		ts, _ := time.Parse(time.RFC3339, it.Timestamp)

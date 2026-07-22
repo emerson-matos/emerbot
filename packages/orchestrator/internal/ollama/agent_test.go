@@ -185,4 +185,49 @@ func TestSchemaToJSONConvertsFinanceTool(t *testing.T) {
 	if !ok || len(req) == 0 {
 		t.Fatalf("expected non-empty required list, got %v", got["required"])
 	}
+
+	// Enums are the main constraint the model must respect — a regression that
+	// dropped them (unconstraining category/type) must fail here.
+	typeField, ok := props["type"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected type schema, got %T", props["type"])
+	}
+	enum, ok := typeField["enum"].([]string)
+	if !ok || !containsStr(enum, "expense") || !containsStr(enum, "income") {
+		t.Fatalf("type enum should carry expense/income, got %v", typeField["enum"])
+	}
+}
+
+// TestSchemaToJSONLowercasesIntegerType covers the one integer-typed field
+// (list_due_entries.limit) so the STRING/INTEGER→lowercase mapping stays covered.
+func TestSchemaToJSONLowercasesIntegerType(t *testing.T) {
+	t.Parallel()
+
+	var due finance.Tool
+	for _, tl := range finance.FinanceTools(finance.NewInMemoryStore()) {
+		if tl.Name == "list_due_entries" {
+			due = tl
+		}
+	}
+	if due.Name == "" {
+		t.Fatal("list_due_entries tool not found")
+	}
+
+	props, _ := schemaToJSON(due.Parameters)["properties"].(map[string]any)
+	limit, ok := props["limit"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected limit schema, got %T", props["limit"])
+	}
+	if limit["type"] != "integer" {
+		t.Fatalf("limit type should be lowercase 'integer', got %v", limit["type"])
+	}
+}
+
+func containsStr(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

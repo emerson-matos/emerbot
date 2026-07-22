@@ -90,7 +90,7 @@ func (g *agentGenerator) Generate(ctx context.Context, input Input) (Output, err
 	// appends it before loading), so it is the full conversation to send.
 	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.ShortTerm, input.UserMessage.Timestamp)
 	if err != nil {
-		return Output{}, fmt.Errorf("gemini: %w", err)
+		return Output{}, fmt.Errorf("llm agent: %w", err)
 	}
 	return Output{Text: reply}, nil
 }
@@ -111,15 +111,7 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		return domain.Response{}, err
 	}
 
-	if err := s.shortTerm.Append(ctx, message.UserID, domain.ConversationMessage{
-		Role:      domain.RoleUser,
-		Text:      message.Text,
-		Timestamp: message.Timestamp,
-	}); err != nil {
-		return domain.Response{}, fmt.Errorf("append user message: %w", err)
-	}
-
-	shortTerm, err := s.shortTerm.LoadRecent(ctx, message.UserID, s.shortTermLimit)
+	prior, err := s.shortTerm.LoadRecent(ctx, message.UserID, s.shortTermLimit)
 	if err != nil {
 		return domain.Response{}, fmt.Errorf("load short term memory: %w", err)
 	}
@@ -129,9 +121,19 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		return domain.Response{}, fmt.Errorf("load long term memory: %w", err)
 	}
 
+	userTurn := domain.ConversationMessage{
+		Role:      domain.RoleUser,
+		Text:      message.Text,
+		Timestamp: message.Timestamp,
+	}
+
+	// History sent to the model is the prior turns plus the current message,
+	// assembled in memory. Nothing is persisted until the reply succeeds, so a
+	// failed turn — which the webhook lets WhatsApp re-deliver — can't leave a
+	// duplicate or orphaned user turn behind in the stored history.
 	output, err := s.generator.Generate(ctx, Input{
 		UserMessage:  message,
-		ShortTerm:    shortTerm,
+		ShortTerm:    append(prior, userTurn),
 		LongTerm:     longTerm,
 		SystemPrompt: systemPrompt(),
 	})
@@ -147,6 +149,10 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		response.Text = s.defaultResponder
 	}
 
+	// Persist the exchange as a pair only now that generation succeeded.
+	if err := s.shortTerm.Append(ctx, message.UserID, userTurn); err != nil {
+		return domain.Response{}, fmt.Errorf("append user message: %w", err)
+	}
 	if err := s.shortTerm.Append(ctx, message.UserID, domain.ConversationMessage{
 		Role:      domain.RoleAssistant,
 		Text:      response.Text,
