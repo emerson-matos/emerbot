@@ -49,4 +49,15 @@ create_table \
       }
     ]'
 
+# conversations table (short-term chat history, one item per turn)
+create_table \
+  --table-name emerbot-local-conversations \
+  --attribute-definitions \
+    AttributeName=PK,AttributeType=S \
+    AttributeName=SK,AttributeType=S \
+  --key-schema \
+    AttributeName=PK,KeyType=HASH \
+    AttributeName=SK,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST
+
 echo "All tables ready."

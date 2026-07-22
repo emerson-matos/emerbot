@@ -42,12 +42,18 @@ func TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender(t *testing.T) {
 	agent := &fakeFinanceAgent{reply: "ok"}
 	gen := &geminiGenerator{agent: agent}
 
+	history := []domain.ConversationMessage{
+		{Role: domain.RoleUser, Text: "oi", Timestamp: time.Now()},
+		{Role: domain.RoleAssistant, Text: "olá", Timestamp: time.Now()},
+		{Role: domain.RoleUser, Text: "paguei 50 de aluguel", Timestamp: time.Now()},
+	}
 	_, err := gen.Generate(context.Background(), Input{
 		UserMessage: domain.Message{
 			UserID:    "5511999999999",
 			Text:      "paguei 50 de aluguel",
 			Timestamp: time.Now(),
 		},
+		ShortTerm: history,
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -55,15 +61,22 @@ func TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender(t *testing.T) {
 	if agent.gotUserID != shared.FinanceLedgerID {
 		t.Fatalf("expected agent to receive shared ledger id %q, got %q", shared.FinanceLedgerID, agent.gotUserID)
 	}
+	// The whole short-term history must reach the agent, not just the last turn,
+	// so the model keeps context across messages.
+	if len(agent.gotHistory) != len(history) {
+		t.Fatalf("expected agent to receive %d history turns, got %d", len(history), len(agent.gotHistory))
+	}
 }
 
 type fakeFinanceAgent struct {
-	reply     string
-	gotUserID string
+	reply      string
+	gotUserID  string
+	gotHistory []domain.ConversationMessage
 }
 
-func (f *fakeFinanceAgent) Process(_ context.Context, userID, _ string, _ time.Time) (string, error) {
+func (f *fakeFinanceAgent) Process(_ context.Context, userID string, history []domain.ConversationMessage, _ time.Time) (string, error) {
 	f.gotUserID = userID
+	f.gotHistory = history
 	return f.reply, nil
 }
 

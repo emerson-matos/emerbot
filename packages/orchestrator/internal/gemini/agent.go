@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 )
 
@@ -84,7 +85,10 @@ Regras:
 	)
 }
 
-func (a *Agent) Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
+// Process runs the tool-calling loop over the recent conversation `history`
+// (oldest-first, ending with the current user turn) so the model keeps context
+// across messages. msgTime dates the system prompt; userID routes tool calls.
+func (a *Agent) Process(ctx context.Context, userID string, history []domain.ConversationMessage, msgTime time.Time) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -95,8 +99,9 @@ func (a *Agent) Process(ctx context.Context, userID, text string, msgTime time.T
 		MaxOutputTokens:   1024,
 	}
 
-	contents := []*genai.Content{
-		{Role: "user", Parts: []*genai.Part{{Text: text}}},
+	contents := historyToContents(history)
+	if len(contents) == 0 {
+		return "", fmt.Errorf("gemini agent: empty conversation history")
 	}
 
 	for round := range maxToolRounds {
@@ -158,6 +163,35 @@ func (a *Agent) runTool(ctx context.Context, userID string, fc *genai.FunctionCa
 		return nil, fmt.Errorf("tool %s: %w", fc.Name, err)
 	}
 	return result, nil
+}
+
+// historyToContents maps stored conversation turns onto Gemini contents,
+// translating roles (Gemini expects "model", not "assistant") and dropping
+// turns it can't represent (empty text or non-conversational roles).
+func historyToContents(history []domain.ConversationMessage) []*genai.Content {
+	contents := make([]*genai.Content, 0, len(history))
+	for _, m := range history {
+		role := genaiRole(m.Role)
+		if role == "" || strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		contents = append(contents, &genai.Content{
+			Role:  role,
+			Parts: []*genai.Part{{Text: m.Text}},
+		})
+	}
+	return contents
+}
+
+func genaiRole(role domain.Role) string {
+	switch role {
+	case domain.RoleUser:
+		return "user"
+	case domain.RoleAssistant:
+		return "model"
+	default:
+		return ""
+	}
 }
 
 func functionCalls(c *genai.Content) []*genai.FunctionCall {

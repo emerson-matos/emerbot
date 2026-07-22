@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/emerson/emerbot/apps/webhook/internal/financial"
+	"github.com/emerson/emerbot/packages/conversation"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator"
@@ -181,6 +182,18 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		finHandler = financial.NewHandler(regex, store)
 		cfg.FinanceStore = store
 		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
+	}
+
+	// Short-term chat history lives in its own TTL-managed table so the bot keeps
+	// context across messages and cold starts. When unset, NewService falls back
+	// to an in-memory store (fine locally, lost on every Lambda recycle).
+	if convTable := shared.Getenv("CONVERSATIONS_TABLE", ""); convTable != "" {
+		ctx := context.Background()
+		convStore, err := conversation.NewDynamoDBStore(ctx, convTable, endpoint)
+		if err != nil {
+			log.Fatalf("NewFromEnv: conversation store: %v", err)
+		}
+		cfg.ShortTerm = convStore
 	}
 
 	// The 24h-window session store lives in its own table (TTL-managed), so it

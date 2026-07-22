@@ -16,6 +16,9 @@ import (
 type Config struct {
 	GeminiAPIKey string
 	FinanceStore finance.Store
+	// ShortTerm persists conversation history. When nil, an in-memory store is
+	// used (fine for local/dev, but lost on every Lambda cold start).
+	ShortTerm ShortTermStore
 }
 
 type Service struct {
@@ -29,9 +32,13 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	gen := NewTextGenerator(cfg)
 	stores := NewInMemoryStores()
+	var shortTerm ShortTermStore = stores
+	if cfg.ShortTerm != nil {
+		shortTerm = cfg.ShortTerm
+	}
 	return &Service{
 		generator:        gen,
-		shortTerm:        stores,
+		shortTerm:        shortTerm,
 		longTerm:         stores,
 		shortTermLimit:   10,
 		defaultResponder: "Não consegui gerar uma resposta.",
@@ -52,7 +59,7 @@ func NewTextGenerator(cfg Config) TextGenerator {
 
 // financeAgent lets tests inject a fake without a real Gemini client.
 type financeAgent interface {
-	Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error)
+	Process(ctx context.Context, userID string, history []domain.ConversationMessage, msgTime time.Time) (string, error)
 }
 
 type geminiGenerator struct {
@@ -60,7 +67,9 @@ type geminiGenerator struct {
 }
 
 func (g *geminiGenerator) Generate(ctx context.Context, input Input) (Output, error) {
-	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.UserMessage.Text, input.UserMessage.Timestamp)
+	// input.ShortTerm already ends with the current user turn (HandleMessage
+	// appends it before loading), so it is the full conversation to send.
+	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.ShortTerm, input.UserMessage.Timestamp)
 	if err != nil {
 		return Output{}, fmt.Errorf("gemini: %w", err)
 	}
