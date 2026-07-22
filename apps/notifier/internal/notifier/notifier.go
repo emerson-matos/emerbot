@@ -15,6 +15,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/notifications"
+	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
@@ -31,13 +32,16 @@ type Notifier struct {
 	phoneNumberID string
 	loc           *time.Location
 	now           func() time.Time
+	gen           orchestrator.TextGenerator
 }
 
 // New builds a Notifier. sessions gates delivery to WhatsApp's customer-service
 // window (see packages/wasession). loc is the timezone whose calendar day
-// defines "today" / "vence hoje" (nil falls back to UTC). The clock is time.Now;
+// defines "today" / "vence hoje" (nil falls back to UTC). gen is the text
+// generator used to personalize the daily digest (pass StaticClient{} or
+// NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location) *Notifier {
+func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -48,6 +52,7 @@ func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, p
 		phoneNumberID: phoneNumberID,
 		loc:           loc,
 		now:           time.Now,
+		gen:           gen,
 	}
 }
 
@@ -165,7 +170,8 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, buildMessage(alerts)); err != nil {
+		msg := n.buildDigest(alerts)
+		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
 			fail(fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
 		}
@@ -184,7 +190,31 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	return res, errors.Join(errs...)
 }
 
-func buildMessage(alerts []notifications.Alert) string {
+func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
+	fallback := buildStaticDigest(alerts)
+
+	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	output, err := n.gen.Generate(genCtx, orchestrator.Input{
+		UserMessage: domain.Message{
+			UserID:    "system",
+			Text:      fallback,
+			Timestamp: time.Now().UTC(),
+			MessageID: "notifier-digest",
+		},
+		SystemPrompt: "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
+			"Transforme os alertas abaixo em uma mensagem amigável e objetiva em português. " +
+			"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
+			"Não invente informações. Se não houver alertas, diga que está tudo em ordem.",
+	})
+	if err != nil || strings.TrimSpace(output.Text) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(output.Text)
+}
+
+func buildStaticDigest(alerts []notifications.Alert) string {
 	var b strings.Builder
 	b.WriteString("🔔 *Farmácia Financeira* — resumo de hoje:\n")
 	for _, a := range alerts {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/wasession"
 )
@@ -75,7 +76,7 @@ func seedUser(t *testing.T, s stores, inboundAt time.Time, prefs domain.Notifica
 }
 
 func newNotifier(s stores, wa *fakeWA) *Notifier {
-	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC)
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return runDay })
 	return n
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/emerson/emerbot/apps/notifier/internal/notifier"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
@@ -51,7 +52,11 @@ func main() {
 		loc = time.UTC
 	}
 
-	n := notifier.New(finStore, sessions, wa, phoneNumberID, loc)
+	gen := orchestrator.NewTextGenerator(orchestrator.Config{
+		FinanceStore: finStore,
+		GeminiAPIKey: shared.Getenv("GEMINI_API_KEY", ""),
+	})
+	n := notifier.New(finStore, sessions, wa, phoneNumberID, loc, gen)
 
 	// EventBridge Scheduler invokes with an event we don't need to inspect —
 	// the job is the same every time.
