@@ -1,4 +1,4 @@
-package tools
+package orchestrator
 
 import (
 	"context"
@@ -7,8 +7,18 @@ import (
 	"strings"
 
 	"github.com/emerson/emerbot/packages/domain"
-	"github.com/emerson/emerbot/packages/llm"
 )
+
+type ToolDefinition struct {
+	Name        string
+	Description string
+}
+
+type Tool interface {
+	Name() string
+	Description() string
+	Execute(ctx context.Context, userID string, input string) (domain.ToolResult, error)
+}
 
 type Registry struct {
 	tools map[string]Tool
@@ -29,10 +39,10 @@ func NewRegistry(items ...Tool) *Registry {
 	return registry
 }
 
-func (r *Registry) Definitions() []llm.ToolDefinition {
-	definitions := make([]llm.ToolDefinition, 0, len(r.tools))
+func (r *Registry) Definitions() []ToolDefinition {
+	definitions := make([]ToolDefinition, 0, len(r.tools))
 	for name, tool := range r.tools {
-		definitions = append(definitions, llm.ToolDefinition{
+		definitions = append(definitions, ToolDefinition{
 			Name:        name,
 			Description: tool.Description(),
 		})
@@ -56,4 +66,16 @@ func (r *Registry) Execute(ctx context.Context, call domain.ToolCall, userID str
 	}
 
 	return tool.Execute(ctx, userID, call.Input)
+}
+
+type EchoTool struct{}
+
+func (EchoTool) Name() string { return "echo" }
+
+func (EchoTool) Description() string {
+	return "ecoar de volta a entrada do usuário"
+}
+
+func (EchoTool) Execute(_ context.Context, _ string, input string) (domain.ToolResult, error) {
+	return domain.ToolResult{Name: "echo", Output: input}, nil
 }

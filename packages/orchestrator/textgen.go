@@ -1,4 +1,4 @@
-package llm
+package orchestrator
 
 import (
 	"context"
@@ -10,13 +10,7 @@ type Input struct {
 	UserMessage  domain.Message
 	ShortTerm    []domain.ConversationMessage
 	LongTerm     []domain.Memory
-	Available    []ToolDefinition
 	SystemPrompt string
-}
-
-type ToolDefinition struct {
-	Name        string
-	Description string
 }
 
 type Output struct {
@@ -24,6 +18,6 @@ type Output struct {
 	ToolCall *domain.ToolCall
 }
 
-type Client interface {
+type TextGenerator interface {
 	Generate(ctx context.Context, input Input) (Output, error)
 }

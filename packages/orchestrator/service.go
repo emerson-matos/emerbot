@@ -3,30 +3,69 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
-	"github.com/emerson/emerbot/packages/llm"
-	"github.com/emerson/emerbot/packages/memory"
-	"github.com/emerson/emerbot/packages/tools"
+	"github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/gemini"
 )
 
+type Config struct {
+	GeminiAPIKey string
+	FinanceStore finance.Store
+}
+
 type Service struct {
-	llm              llm.Client
-	shortTerm        memory.ShortTermStore
-	longTerm         memory.LongTermStore
-	tools            *tools.Registry
+	generator        TextGenerator
+	shortTerm        ShortTermStore
+	longTerm         LongTermStore
+	tools            *Registry
 	shortTermLimit   int
 	defaultResponder string
 }
 
-func NewService(client llm.Client, shortTerm memory.ShortTermStore, longTerm memory.LongTermStore, registry *tools.Registry) *Service {
+func NewService(cfg Config) *Service {
+	stores := NewInMemoryStores()
+	var gen TextGenerator = StaticClient{}
+	if cfg.GeminiAPIKey != "" && cfg.FinanceStore != nil {
+		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore)
+		if err != nil {
+			log.Printf("orchestrator: gemini agent: %v, using static fallback", err)
+		} else {
+			gen = &geminiGenerator{agent: agent}
+		}
+	}
 	return &Service{
-		llm:              client,
-		shortTerm:        shortTerm,
-		longTerm:         longTerm,
-		tools:            registry,
+		generator:        gen,
+		shortTerm:        stores,
+		longTerm:         stores,
+		tools:            NewRegistry(EchoTool{}),
+		shortTermLimit:   10,
+		defaultResponder: "Não consegui gerar uma resposta.",
+	}
+}
+
+type geminiGenerator struct {
+	agent *gemini.Agent
+}
+
+func (g *geminiGenerator) Generate(ctx context.Context, input Input) (Output, error) {
+	reply, err := g.agent.Process(ctx, input.UserMessage.UserID, input.UserMessage.Text, input.UserMessage.Timestamp)
+	if err != nil {
+		return Output{}, fmt.Errorf("gemini: %w", err)
+	}
+	return Output{Text: reply}, nil
+}
+
+func NewServiceWithGenerator(gen TextGenerator) *Service {
+	stores := NewInMemoryStores()
+	return &Service{
+		generator:        gen,
+		shortTerm:        stores,
+		longTerm:         stores,
+		tools:            NewRegistry(EchoTool{}),
 		shortTermLimit:   10,
 		defaultResponder: "Não consegui gerar uma resposta.",
 	}
@@ -55,11 +94,10 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		return domain.Response{}, fmt.Errorf("load long term memory: %w", err)
 	}
 
-	output, err := s.llm.Generate(ctx, llm.Input{
+	output, err := s.generator.Generate(ctx, Input{
 		UserMessage:  message,
 		ShortTerm:    shortTerm,
 		LongTerm:     longTerm,
-		Available:    s.tools.Definitions(),
 		SystemPrompt: systemPrompt(),
 	})
 	if err != nil {

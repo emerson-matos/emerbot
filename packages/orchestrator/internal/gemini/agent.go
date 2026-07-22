@@ -1,4 +1,4 @@
-package whatsapp
+package gemini
 
 import (
 	"context"
@@ -13,40 +13,24 @@ import (
 	"github.com/emerson/emerbot/packages/finance"
 )
 
-// geminiModel is the model both the agent and any regex fallback report; kept as
-// a single source of truth for the deployed Gemini model name.
-const geminiModel = "gemini-3.1-flash-lite"
+const model = "gemini-3.1-flash-lite"
 
-// agentTimeout bounds a whole agent turn (which may chain several Gemini calls
-// plus DynamoDB tool executions), so a slow API never stalls the webhook. Kept
-// under the API Gateway HTTP integration limit (30s) so the handler can still
-// return a graceful reply if the turn runs long.
-const agentTimeout = 25 * time.Second
+const timeout = 25 * time.Second
 
-// maxToolRounds caps how many function-calling round-trips a single message may
-// trigger, so a model that keeps calling tools can't loop forever.
 const maxToolRounds = 5
 
-// contentGenerator is the slice of *genai.Models the agent needs; it lets tests
-// inject a fake without network access.
 type contentGenerator interface {
 	GenerateContent(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error)
 }
 
-// GeminiAgent answers free-text financial messages using Gemini function
-// calling: the model decides which finance tool to invoke, the agent runs it
-// against the store, feeds the result back, and repeats until the model returns
-// a plain-text reply for the user.
-type GeminiAgent struct {
+type Agent struct {
 	gen          contentGenerator
 	model        string
 	tools        []*genai.Tool
 	toolHandlers map[string]finance.ToolHandler
 }
 
-// NewGeminiAgent builds an agent backed by the real Gemini API and the given
-// finance store (used by the tools to read/write entries).
-func NewGeminiAgent(ctx context.Context, apiKey string, store finance.Store) (*GeminiAgent, error) {
+func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
@@ -56,15 +40,15 @@ func NewGeminiAgent(ctx context.Context, apiKey string, store finance.Store) (*G
 	}
 
 	tools, handlers := finance.FinanceTools(store)
-	return &GeminiAgent{
+	return &Agent{
 		gen:          client.Models,
-		model:        geminiModel,
+		model:        model,
 		tools:        tools,
 		toolHandlers: handlers,
 	}, nil
 }
 
-func agentSystemPrompt(now time.Time) string {
+func systemPrompt(now time.Time) string {
 	return fmt.Sprintf(
 		`Você é um assistente financeiro de uma farmácia.
 Sua função é ajudar o usuário a gerenciar o fluxo de caixa.
@@ -90,13 +74,12 @@ Regras:
 	)
 }
 
-// Process handles a single free-text message and returns the reply to send.
-func (a *GeminiAgent) Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, agentTimeout)
+func (a *Agent) Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	config := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: agentSystemPrompt(msgTime)}}},
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt(msgTime)}}},
 		Tools:             a.tools,
 		Temperature:       genai.Ptr[float32](0),
 		MaxOutputTokens:   1024,
@@ -118,7 +101,6 @@ func (a *GeminiAgent) Process(ctx context.Context, userID, text string, msgTime 
 		candidate := resp.Candidates[0].Content
 		calls := functionCalls(candidate)
 
-		// No tool calls → the model produced its final answer.
 		if len(calls) == 0 {
 			if reply := candidateText(candidate); reply != "" {
 				return reply, nil
@@ -126,11 +108,6 @@ func (a *GeminiAgent) Process(ctx context.Context, userID, text string, msgTime 
 			return "", fmt.Errorf("gemini returned neither text nor function call (round %d)", round)
 		}
 
-		// Execute every requested tool and feed the results back in one turn. A
-		// tool error (bad LLM args, unknown tool, store failure) is returned to
-		// the model as the function response so it can recover — pick valid
-		// arguments or apologize — instead of aborting the whole turn. The round
-		// budget still bounds how long this can go.
 		responseParts := make([]*genai.Part, 0, len(calls))
 		for _, fc := range calls {
 			result, err := a.runTool(ctx, userID, fc)
@@ -157,7 +134,7 @@ func (a *GeminiAgent) Process(ctx context.Context, userID, text string, msgTime 
 	return "", fmt.Errorf("gemini agent: exceeded %d tool rounds", maxToolRounds)
 }
 
-func (a *GeminiAgent) runTool(ctx context.Context, userID string, fc *genai.FunctionCall) (any, error) {
+func (a *Agent) runTool(ctx context.Context, userID string, fc *genai.FunctionCall) (any, error) {
 	handler, ok := a.toolHandlers[fc.Name]
 	if !ok {
 		return nil, fmt.Errorf("unknown tool: %s", fc.Name)

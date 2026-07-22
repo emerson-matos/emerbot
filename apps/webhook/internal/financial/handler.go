@@ -14,29 +14,15 @@ import (
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
-// Agent turns a free-text financial message into a reply, using tools to read
-// and write the store. *whatsapp.GeminiAgent satisfies it; a nil Agent means
-// this deployment has no natural-language support (regex-only).
-type Agent interface {
-	Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error)
-}
-
-// Handler processes financial commands from WhatsApp messages. Slash commands
-// take a deterministic regex fast path; free text is delegated to the Gemini
-// agent when one is wired.
 type Handler struct {
 	regex *whatsapp.RegexParser
-	agent Agent
 	store pkgfinance.Store
 }
 
-func NewHandler(regex *whatsapp.RegexParser, agent Agent, store pkgfinance.Store) *Handler {
-	return &Handler{regex: regex, agent: agent, store: store}
+func NewHandler(regex *whatsapp.RegexParser, store pkgfinance.Store) *Handler {
+	return &Handler{regex: regex, store: store}
 }
 
-// commandTutorial returns a PT-BR, tutorial-style usage guide for a single
-// command, or "" for an unknown one. It is the single source of the per-command
-// "como usar" text — shown when a command is sent without (enough) arguments.
 func commandTutorial(cmd string) string {
 	switch strings.ToLower(cmd) {
 	case "/despesa":
@@ -73,9 +59,6 @@ func commandTutorial(cmd string) string {
 	}
 }
 
-// bareCommandUsage returns the command tutorial when text is only the command
-// word (e.g. "/despesa" with no arguments), or "" when the text carries
-// arguments so normal parsing proceeds.
 func bareCommandUsage(text string) string {
 	fields := strings.Fields(text)
 	if len(fields) != 1 {
@@ -84,40 +67,22 @@ func bareCommandUsage(text string) string {
 	return commandTutorial(fields[0])
 }
 
-// Handle routes a WhatsApp message: slash commands go through the regex fast
-// path (free, no LLM), and free text goes to the Gemini agent. It returns a
-// Portuguese reply for the bot to send.
 func (h *Handler) Handle(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
-	// A bare command (just the verb, no arguments) is treated as a request for
-	// help — teach the syntax instead of failing to parse it.
 	if usage := bareCommandUsage(text); usage != "" {
 		return usage, nil
 	}
 
-	// Slash commands: deterministic, free, no Gemini call.
-	if strings.HasPrefix(text, "/") {
-		parsed, err := h.regex.Parse(ctx, text, msgTime)
-		if err != nil {
-			return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel 10/07\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
-		}
-		return h.saveAndConfirm(ctx, userID, parsed)
+	if !strings.HasPrefix(text, "/") {
+		return "", nil
 	}
 
-	// Free text: let the agent create or query entries via tools. Without an
-	// agent wired (regex-only deployment), point the user at the commands.
-	if h.agent != nil {
-		reply, err := h.agent.Process(ctx, userID, text, msgTime)
-		if err != nil {
-			return "❌ Não consegui processar sua mensagem agora. Tente /help ou um comando como /despesa 500 aluguel.", err
-		}
-		return reply, nil
+	parsed, err := h.regex.Parse(ctx, text, msgTime)
+	if err != nil {
+		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/despesa 500 aluguel 10/07\n/receita 800 venda_balcao\n/pagar 300 luz 20/07\n\nErro: %s", err.Error()), nil
 	}
-
-	return "🤖 Sou um assistente financeiro. Envie /help para ver os comandos, ou descreva um gasto/receita (ex: \"paguei 500 de aluguel ontem\").", nil
+	return h.saveAndConfirm(ctx, userID, parsed)
 }
 
-// saveAndConfirm persists a regex-parsed entry and returns the confirmation
-// card. Shared by the slash-command path.
 func (h *Handler) saveAndConfirm(ctx context.Context, userID string, parsed whatsapp.ParsedEntry) (string, error) {
 	status := domain.PaymentStatusPaid
 	if parsed.IsPending {
@@ -154,9 +119,6 @@ func (h *Handler) saveAndConfirm(ctx context.Context, userID string, parsed what
 	return formatConfirmation(entry), nil
 }
 
-// Recorrente creates a whole series of pending entries (a shortcut for
-// repeating /pagar or /receber N times, one per period) as a single atomic
-// batch write.
 func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, error) {
 	if usage := bareCommandUsage(text); usage != "" {
 		return usage, nil

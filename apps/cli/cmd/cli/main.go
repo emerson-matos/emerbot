@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
-	"github.com/emerson/emerbot/packages/llm"
-	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
-	"github.com/emerson/emerbot/packages/tools"
 )
 
 func main() {
@@ -23,22 +20,7 @@ func main() {
 		log.Fatal("use -text para enviar uma mensagem")
 	}
 
-	stores := memory.NewInMemoryStores()
-	if err := stores.Save(context.Background(), domain.Memory{
-		UserID: *userID,
-		Type:   "Goal",
-		ID:     "LearnAWS",
-		Value:  "Construir um assistente via WhatsApp gastando menos de R$20 por mês.",
-	}); err != nil {
-		log.Fatal(err)
-	}
-
-	service := orchestrator.NewService(
-		llm.StaticClient{},
-		stores,
-		stores,
-		tools.NewRegistry(tools.EchoTool{}),
-	)
+	service := orchestrator.NewService(orchestrator.Config{})
 
 	response, err := service.HandleMessage(context.Background(), domain.Message{
 		UserID:    *userID,

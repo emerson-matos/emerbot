@@ -6,15 +6,12 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
-	"github.com/emerson/emerbot/packages/llm"
-	"github.com/emerson/emerbot/packages/memory"
-	"github.com/emerson/emerbot/packages/tools"
 )
 
 func TestHandleMessageRejectsInvalidMessage(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(stubLLM{output: llm.Output{Text: "ok"}}, tools.NewRegistry(tools.EchoTool{}))
+	service := newTestService(stubLLM{output: Output{Text: "ok"}})
 	_, err := service.HandleMessage(context.Background(), domain.Message{})
 	if err == nil {
 		t.Fatal("expected validation error")
@@ -24,7 +21,7 @@ func TestHandleMessageRejectsInvalidMessage(t *testing.T) {
 func TestHandleMessageUsesDefaultResponseWhenLLMReturnsBlank(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(stubLLM{output: llm.Output{Text: "   "}}, tools.NewRegistry(tools.EchoTool{}))
+	service := newTestService(stubLLM{output: Output{Text: "   "}})
 	response, err := service.HandleMessage(context.Background(), validMessage("oi"))
 	if err != nil {
 		t.Fatalf("HandleMessage returned error: %v", err)
@@ -37,13 +34,13 @@ func TestHandleMessageUsesDefaultResponseWhenLLMReturnsBlank(t *testing.T) {
 func TestHandleMessageExecutesToolCall(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(stubLLM{output: llm.Output{
+	service := newTestService(stubLLM{output: Output{
 		Text: "Vou usar uma tool.",
 		ToolCall: &domain.ToolCall{
 			Name:  " echo ",
 			Input: "payload",
 		},
-	}}, tools.NewRegistry(tools.EchoTool{}))
+	}})
 
 	response, err := service.HandleMessage(context.Background(), validMessage("tool"))
 	if err != nil {
@@ -60,12 +57,12 @@ func TestHandleMessageExecutesToolCall(t *testing.T) {
 func TestHandleMessageReturnsToolExecutionError(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(stubLLM{output: llm.Output{
+	service := newTestService(stubLLM{output: Output{
 		Text: "Vou usar uma tool.",
 		ToolCall: &domain.ToolCall{
 			Name: "missing",
 		},
-	}}, tools.NewRegistry(tools.EchoTool{}))
+	}})
 
 	_, err := service.HandleMessage(context.Background(), validMessage("tool"))
 	if err == nil {
@@ -74,29 +71,19 @@ func TestHandleMessageReturnsToolExecutionError(t *testing.T) {
 }
 
 type stubLLM struct {
-	output llm.Output
+	output Output
 	err    error
 }
 
-func (s stubLLM) Generate(_ context.Context, _ llm.Input) (llm.Output, error) {
+func (s stubLLM) Generate(_ context.Context, _ Input) (Output, error) {
 	if s.err != nil {
-		return llm.Output{}, s.err
+		return Output{}, s.err
 	}
 	return s.output, nil
 }
 
-func newTestService(client llm.Client, registry *tools.Registry) *Service {
-	stores := memory.NewInMemoryStores()
-	if err := stores.Save(context.Background(), domain.Memory{
-		UserID: "u1",
-		Type:   "Preference",
-		ID:     "Tone",
-		Value:  "Concise",
-	}); err != nil {
-		panic(err)
-	}
-
-	return NewService(client, stores, stores, registry)
+func newTestService(gen TextGenerator) *Service {
+	return NewServiceWithGenerator(gen)
 }
 
 func validMessage(text string) domain.Message {
