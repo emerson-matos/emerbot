@@ -19,23 +19,29 @@ type App struct {
 
 // NewGateway is used by the deployed Lambda behind API Gateway's Cognito JWT
 // authorizer, which has already validated the request's JWT before Lambda
-// runs — see bridge.go's gatewayClaims.
+// runs — see bridge.go's gatewayClaims. CORS is handled by API Gateway's own
+// cors_configuration (infra/modules/api_gateway_lambda), not here: that's
+// what puts CORS headers on responses API Gateway generates itself, such as
+// a 401/403 from the JWT authorizer rejecting a request before it ever
+// reaches this Lambda. Adding CORS headers here too would just duplicate
+// them on every response that *does* reach the Lambda.
 func NewGateway(finStore pkgfinance.Store) *App {
-	return newApp(finStore, apiauth.GatewayMiddleware)
+	return newApp(finStore, apiauth.GatewayMiddleware, false)
 }
 
 // NewLocal is used by cmd/local, which has no API Gateway in front of it — it
 // verifies Cognito JWTs itself via JWKS (see apiauth.NewLocalCognitoMiddleware)
-// instead of trusting pre-validated claims.
+// instead of trusting pre-validated claims, and has no API Gateway to add
+// CORS headers for it, so this handler adds its own.
 func NewLocal(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
-	return newApp(finStore, authMw)
+	return newApp(finStore, authMw, true)
 }
 
 // newApp wires the routes shared by both entrypoints. NOTE: this route list
 // must stay in sync with the dashboard_protected_routes/dashboard_public_routes
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
-func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
+func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler, addCORS bool) *App {
 	entriesHandler := apifinance.NewEntriesHandler(finStore)
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
@@ -70,7 +76,11 @@ func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *
 	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
 	mux.Handle("PUT /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Save)))
 
-	return &App{handler: withCORS(mux)}
+	var handler http.Handler = mux
+	if addCORS {
+		handler = withCORS(mux)
+	}
+	return &App{handler: handler}
 }
 
 // ServeHTTP satisfies http.Handler — used by the local cmd.

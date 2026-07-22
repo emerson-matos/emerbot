@@ -80,3 +80,16 @@ variable "notifier_timezone" {
   default     = "America/Sao_Paulo"
   description = "Fuso horário que define o dia (\"vence hoje\") dos alertas do notifier."
 }
+
+variable "dashboard_origin" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    Origem (esquema+host, ex: https://dashboard.emerson.abc.br) do frontend
+    autorizada via CORS na API Gateway. Precisa ser gerenciado pela própria
+    API Gateway (não pelo Lambda) porque respostas 401/403 do JWT authorizer
+    nunca chegam a invocar o Lambda — só a API Gateway pode anexar cabeçalhos
+    CORS a essas respostas. Vazio desativa o CORS gerenciado pela API Gateway
+    (dev sem domínio de frontend configurado).
+  EOT
+}

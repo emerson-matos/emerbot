@@ -44,6 +44,7 @@ module "assistant" {
   gemini_api_key_value       = var.gemini_api_key_value
   meta_graph_api_token_value = var.meta_graph_api_token_value
   whatsapp_phone_number_id   = var.whatsapp_phone_number_id
+  dashboard_origin           = local.pages_enabled ? "https://${var.dashboard_record_name}.${local.zone_name}" : ""
 }
 
 module "cognito_dashboard" {
