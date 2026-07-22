@@ -11,10 +11,8 @@ import (
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
-// regexHandler wires the handler with the real regex parser and no agent — the
-// slash-command fast path most tests exercise.
 func regexHandler(store pkgfinance.Store) *Handler {
-	return NewHandler(whatsapp.NewRegexParser(), nil, store)
+	return NewHandler(whatsapp.NewRegexParser(), store)
 }
 
 func TestHandleReturnsFriendlyMessageOnInvalidSlashCommand(t *testing.T) {
@@ -31,37 +29,18 @@ func TestHandleReturnsFriendlyMessageOnInvalidSlashCommand(t *testing.T) {
 	}
 }
 
-func TestHandleRoutesFreeTextToAgent(t *testing.T) {
+func TestHandleReturnsEmptyForFreeText(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	agent := &fakeAgent{reply: "💰 Você recebeu R$800,00 este mês."}
-	handler := NewHandler(whatsapp.NewRegexParser(), agent, store)
-
-	msg, err := handler.Handle(context.Background(), "u1", "quanto recebi este mês?", time.Now())
-	if err != nil {
-		t.Fatalf("Handle returned unexpected error: %v", err)
-	}
-	if msg != agent.reply {
-		t.Fatalf("expected agent reply, got: %s", msg)
-	}
-	if agent.gotText != "quanto recebi este mês?" {
-		t.Fatalf("agent did not receive the message text, got: %q", agent.gotText)
-	}
-}
-
-func TestHandleFreeTextWithoutAgentPointsToHelp(t *testing.T) {
-	t.Parallel()
-
-	store := pkgfinance.NewInMemoryStore()
-	handler := regexHandler(store) // no agent wired
+	handler := regexHandler(store)
 
 	msg, err := handler.Handle(context.Background(), "u1", "oi, tudo bem?", time.Now())
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
-	if !strings.Contains(msg, "/help") {
-		t.Fatalf("expected reply to point to /help, got: %s", msg)
+	if msg != "" {
+		t.Fatalf("expected empty reply for free text, got: %s", msg)
 	}
 
 	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
@@ -83,12 +62,10 @@ func TestHandleTeachesUsageForBareCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle returned unexpected error: %v", err)
 	}
-	// Teaches /despesa syntax and points to /pagar for unpaid expenses.
 	if !strings.Contains(msg, "/despesa <valor>") || !strings.Contains(msg, "/pagar") {
 		t.Fatalf("expected usage teaching /despesa and /pagar, got: %s", msg)
 	}
 
-	// A bare command must not persist anything.
 	entries, err := store.ListEntries(context.Background(), "u1", pkgfinance.EntryFilter{})
 	if err != nil {
 		t.Fatalf("ListEntries: %v", err)
@@ -408,23 +385,6 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 	}
 }
 
-// fakeAgent is a financial.Agent test double: it records the text it received
-// and returns a canned reply/error, so handler routing can be tested without a
-// real Gemini call.
-type fakeAgent struct {
-	reply   string
-	err     error
-	gotText string
-}
-
-func (f *fakeAgent) Process(_ context.Context, _, text string, _ time.Time) (string, error) {
-	f.gotText = text
-	if f.err != nil {
-		return "", f.err
-	}
-	return f.reply, nil
-}
-
 func testFinancialEntry(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
 	return domain.FinancialEntry{
 		UserID:        userID,
@@ -440,8 +400,6 @@ func testFinancialEntry(userID, entryID string, date time.Time, amount int64, ca
 	}
 }
 
-// dateThisYear builds a UTC calendar date in the current year, matching how the
-// regex parser fills in a year when the command omits it.
 func dateThisYear(month time.Month, day int) time.Time {
 	return time.Date(time.Now().Year(), month, day, 0, 0, 0, 0, time.UTC)
 }

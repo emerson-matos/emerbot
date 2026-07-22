@@ -1,4 +1,4 @@
-package whatsapp
+package gemini
 
 import (
 	"context"
@@ -13,9 +13,6 @@ import (
 	"github.com/emerson/emerbot/packages/finance"
 )
 
-// scriptedGenerator returns queued responses in order, so a test can script a
-// multi-turn function-calling conversation. It also records the contents passed
-// on each call for assertions.
 type scriptedGenerator struct {
 	responses []*genai.GenerateContentResponse
 	err       error
@@ -32,8 +29,6 @@ func (g *scriptedGenerator) GenerateContent(_ context.Context, _ string, _ []*ge
 		return nil, g.err
 	}
 	if g.calls >= len(g.responses) {
-		// Keep returning the final response; tests that expect a fixed number of
-		// calls assert on g.calls.
 		g.calls++
 		return g.responses[len(g.responses)-1], nil
 	}
@@ -60,9 +55,9 @@ func functionCallResponse(name string, args map[string]any) *genai.GenerateConte
 	}
 }
 
-func newTestAgent(gen contentGenerator, store finance.Store) *GeminiAgent {
+func newTestAgent(gen contentGenerator, store finance.Store) *Agent {
 	tools, handlers := finance.FinanceTools(store)
-	return &GeminiAgent{gen: gen, model: geminiModel, tools: tools, toolHandlers: handlers}
+	return &Agent{gen: gen, model: model, tools: tools, toolHandlers: handlers}
 }
 
 func TestAgentReturnsTextForChitChat(t *testing.T) {
@@ -184,8 +179,6 @@ func TestAgentRecoversFromToolError(t *testing.T) {
 
 	store := finance.NewInMemoryStore()
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
-		// Invalid amount → the tool handler errors; the error is fed back to the
-		// model, which then apologizes instead of the whole turn aborting.
 		functionCallResponse("create_financial_entry", map[string]any{
 			"type": "expense", "amount": 0.0, "category": "aluguel", "is_pending": false,
 		}),
@@ -248,7 +241,6 @@ func TestAgentErrorsOnUnknownTool(t *testing.T) {
 func TestAgentStopsAfterMaxToolRounds(t *testing.T) {
 	t.Parallel()
 
-	// Always returns a function call, so the loop never terminates on its own.
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
 		functionCallResponse("get_month_summary", map[string]any{}),
 	}}

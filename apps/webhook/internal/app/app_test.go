@@ -10,18 +10,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
-	"github.com/emerson/emerbot/packages/llm"
-	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
-	"github.com/emerson/emerbot/packages/tools"
 	"github.com/emerson/emerbot/packages/wasession"
-	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
 func TestHandleLambdaOK(t *testing.T) {
@@ -321,7 +314,7 @@ func TestHandleWebhookHTTPRetriesOnTransientFailure(t *testing.T) {
 
 	client := &fakeWhatsAppClient{}
 	app := newFailingApp(client)
-	body := []byte(testWebhookWithTexts("oi")) // non-command → orchestrator → failing LLM
+	body := []byte(testWebhookWithTexts("oi"))
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
 		Method: http.MethodPost,
@@ -337,7 +330,7 @@ func TestHandleWebhookHTTPRetriesOnTransientFailure(t *testing.T) {
 }
 
 func newTestApp(client *fakeWhatsAppClient) *App {
-	stores := memory.NewInMemoryStores()
+	stores := orchestrator.NewInMemoryStores()
 	if err := stores.Save(context.Background(), domain.Memory{
 		UserID: "u1",
 		Type:   "Goal",
@@ -348,109 +341,30 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 	}
 
 	return New(
-		orchestrator.NewService(
-			llm.StaticClient{},
-			stores,
-			stores,
-			tools.NewRegistry(tools.EchoTool{}),
-		),
+		orchestrator.NewService(orchestrator.Config{}),
 		nil,
 		client,
 		"test-secret",
 		"test-verify-token",
 		nil,
-		false,
 	)
 }
 
-// failingLLM makes orchestrator.HandleMessage return an error, so App.Handle
-// surfaces a 5xx (a transient failure Meta should retry).
 type failingLLM struct{}
 
-func (failingLLM) Generate(context.Context, llm.Input) (llm.Output, error) {
-	return llm.Output{}, fmt.Errorf("llm unavailable")
+func (failingLLM) Generate(context.Context, orchestrator.Input) (orchestrator.Output, error) {
+	return orchestrator.Output{}, fmt.Errorf("llm unavailable")
 }
 
 func newFailingApp(client *fakeWhatsAppClient) *App {
-	stores := memory.NewInMemoryStores()
 	return New(
-		orchestrator.NewService(failingLLM{}, stores, stores, tools.NewRegistry(tools.EchoTool{})),
+		orchestrator.NewServiceWithGenerator(failingLLM{}),
 		nil,
 		client,
 		"test-secret",
 		"test-verify-token",
 		nil,
-		false,
 	)
-}
-
-// TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled proves that,
-// once the app is wired with a natural-language-capable agent (nlFinance =
-// true), free text that isn't a slash command is routed to the financial
-// handler (and thus the agent) instead of going straight to the orchestrator.
-func TestHandleRoutesFreeTextToFinancialHandlerWhenNLFinanceEnabled(t *testing.T) {
-	t.Parallel()
-
-	store := pkgfinance.NewInMemoryStore()
-	agent := &fakeAgent{reply: "💸 Despesa registrada: R$50,00 (aluguel)"}
-	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
-
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", nil, true)
-
-	resp, status, err := app.Handle(context.Background(), Request{
-		UserID:    "u1",
-		MessageID: "m1",
-		Text:      "paguei 50 de aluguel",
-	})
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	if resp.Message != agent.reply {
-		t.Fatalf("expected agent reply, got %q", resp.Message)
-	}
-	if agent.gotText != "paguei 50 de aluguel" {
-		t.Fatalf("expected free text to reach the agent, got %q", agent.gotText)
-	}
-}
-
-// TestHandleDedupsRetriedMessageID proves a WhatsApp retry (same message ID)
-// is ignored, so the financial handler — and any store write — runs only once.
-func TestHandleDedupsRetriedMessageID(t *testing.T) {
-	t.Parallel()
-
-	store := pkgfinance.NewInMemoryStore()
-	agent := &fakeAgent{reply: "💸 Despesa registrada"}
-	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
-	sessions := wasession.NewInMemoryStore()
-
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", sessions, true)
-
-	req := Request{UserID: "u1", MessageID: "wamid.DUP", Text: "paguei 50 de aluguel"}
-
-	// First delivery: processed, reply returned.
-	resp, status, err := app.Handle(context.Background(), req)
-	if err != nil || status != http.StatusOK {
-		t.Fatalf("first delivery: status=%d err=%v", status, err)
-	}
-	if resp.Message != agent.reply {
-		t.Fatalf("expected agent reply on first delivery, got %q", resp.Message)
-	}
-
-	// Retry of the same message ID: short-circuited, agent not called again.
-	agent.gotText = ""
-	resp, status, err = app.Handle(context.Background(), req)
-	if err != nil || status != http.StatusOK {
-		t.Fatalf("retry: status=%d err=%v", status, err)
-	}
-	if agent.gotText != "" {
-		t.Fatalf("expected retry to be ignored, but agent got %q", agent.gotText)
-	}
-	if resp.Message != "" {
-		t.Fatalf("expected empty reply on ignored retry, got %q", resp.Message)
-	}
 }
 
 // TestHandleReprocessesAfterFailedTurn proves the dedup marker is compensated:
@@ -460,69 +374,17 @@ func TestHandleDedupsRetriedMessageID(t *testing.T) {
 func TestHandleReprocessesAfterFailedTurn(t *testing.T) {
 	t.Parallel()
 
-	stores := memory.NewInMemoryStores()
-	svc := orchestrator.NewService(failingLLM{}, stores, stores, tools.NewRegistry(tools.EchoTool{}))
 	sessions := wasession.NewInMemoryStore()
-	app := New(svc, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions, false)
+	app := New(orchestrator.NewServiceWithGenerator(failingLLM{}), nil, &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
 	req := Request{UserID: "u1", MessageID: "wamid.FAIL", Text: "olá"}
 
-	// First delivery fails at the orchestrator → 500 (a retryable transient).
 	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
 		t.Fatalf("first delivery: expected 500, got %d", status)
 	}
-	// The retry must be reprocessed (500 again), NOT short-circuited to 200.
 	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
 		t.Fatalf("retry after a failed turn must reprocess (500), got %d", status)
 	}
-}
-
-// TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled proves the current
-// behavior is preserved when the app has no natural-language-capable agent
-// wired (nlFinance = false, the default/regex-only setup): free text still
-// goes to the orchestrator, never to the financial handler.
-func TestHandleKeepsOrchestratorRoutingWhenNLFinanceDisabled(t *testing.T) {
-	t.Parallel()
-
-	store := pkgfinance.NewInMemoryStore()
-	agent := &fakeAgent{err: fmt.Errorf("should not be called")}
-	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), agent, store)
-
-	stores := memory.NewInMemoryStores()
-	svc := orchestrator.NewService(llm.StaticClient{}, stores, stores, tools.NewRegistry(tools.EchoTool{}))
-
-	app := New(svc, finHandler, &fakeWhatsAppClient{}, "secret", "verify", nil, false)
-
-	_, status, err := app.Handle(context.Background(), Request{
-		UserID:    "u1",
-		MessageID: "m1",
-		Text:      "paguei 50 de aluguel",
-	})
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-	if agent.gotText != "" {
-		t.Fatalf("expected free text NOT to reach the agent, but it got %q", agent.gotText)
-	}
-}
-
-// fakeAgent is a financial.Agent test double for exercising app-level routing
-// without depending on the real GeminiAgent.
-type fakeAgent struct {
-	reply   string
-	err     error
-	gotText string
-}
-
-func (f *fakeAgent) Process(_ context.Context, _, text string, _ time.Time) (string, error) {
-	f.gotText = text
-	if f.err != nil {
-		return "", f.err
-	}
-	return f.reply, nil
 }
 
 type fakeWhatsAppClient struct {
@@ -550,8 +412,6 @@ func (f *fakeWhatsAppClient) SendText(_ context.Context, _, _, messageBody strin
 	return nil
 }
 
-// testWebhookWithTexts builds a Meta envelope carrying one text message per
-// argument (all in a single entry/change) — used for batching and /help tests.
 func testWebhookWithTexts(texts ...string) string {
 	msgs := make([]string, len(texts))
 	for i, txt := range texts {

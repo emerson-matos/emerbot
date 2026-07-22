@@ -1,4 +1,4 @@
-package memory
+package orchestrator
 
 import (
 	"context"
@@ -7,6 +7,16 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 )
+
+type ShortTermStore interface {
+	Append(ctx context.Context, userID string, message domain.ConversationMessage) error
+	LoadRecent(ctx context.Context, userID string, limit int) ([]domain.ConversationMessage, error)
+}
+
+type LongTermStore interface {
+	Save(ctx context.Context, memory domain.Memory) error
+	LoadByUser(ctx context.Context, userID string) ([]domain.Memory, error)
+}
 
 type InMemoryStores struct {
 	mu        sync.RWMutex

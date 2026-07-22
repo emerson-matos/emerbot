@@ -1,4 +1,4 @@
-package llm
+package orchestrator
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-// StaticClient is a deterministic adapter for local development.
 type StaticClient struct{}
 
 func (c StaticClient) Generate(_ context.Context, input Input) (Output, error) {

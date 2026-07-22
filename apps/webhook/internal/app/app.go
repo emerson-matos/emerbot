@@ -18,11 +18,8 @@ import (
 	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
-	"github.com/emerson/emerbot/packages/llm"
-	"github.com/emerson/emerbot/packages/memory"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
-	"github.com/emerson/emerbot/packages/tools"
 	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
@@ -151,13 +148,9 @@ type App struct {
 	sessions         SessionStore
 	secret           string
 	verifyToken      string
-	// nlFinance is true when financialHandler was wired with a natural-language
-	// capable agent (GeminiAgent), so free text (not just slash commands) can
-	// be routed to it.
-	nlFinance bool
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore, nlFinance bool) *App {
+func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
 	if verifyToken == "" {
 		verifyToken = secret
 	}
@@ -168,36 +161,26 @@ func New(service *orchestrator.Service, finHandler *financial.Handler, waClient 
 		sessions:         sessions,
 		secret:           secret,
 		verifyToken:      verifyToken,
-		nlFinance:        nlFinance,
 	}
 }
 
 func NewFromEnv(secret, graphAPIToken string) *App {
 	var finHandler *financial.Handler
 	var sessions SessionStore
-	nlFinance := false
-	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
+
+	cfg := orchestrator.Config{}
+	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
 	if finTable != "" {
 		ctx := context.Background()
 		store, err := pkgfinance.NewDynamoDBStore(ctx, finTable, endpoint)
 		if err != nil {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
-
 		regex := whatsapp.NewRegexParser()
-		if apiKey := shared.Getenv("GEMINI_API_KEY", ""); apiKey != "" {
-			agent, err := whatsapp.NewGeminiAgent(ctx, apiKey, store)
-			if err != nil {
-				log.Printf("NewFromEnv: gemini agent: %v, falling back to regex-only", err)
-				finHandler = financial.NewHandler(regex, nil, store)
-			} else {
-				finHandler = financial.NewHandler(regex, agent, store)
-				nlFinance = true
-			}
-		} else {
-			finHandler = financial.NewHandler(regex, nil, store)
-		}
+		finHandler = financial.NewHandler(regex, store)
+		cfg.FinanceStore = store
+		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
 	}
 
 	// The 24h-window session store lives in its own table (TTL-managed), so it
@@ -211,26 +194,11 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		sessions = sessStore
 	}
 
-	stores := memory.NewInMemoryStores()
-	if err := stores.Save(context.Background(), domain.Memory{
-		UserID: "demo-user",
-		Type:   "Preference",
-		ID:     "Language",
-		Value:  "pt-BR",
-	}); err != nil {
-		log.Printf("NewFromEnv: seed memory: %v", err)
-	}
-
-	svc := orchestrator.NewService(
-		llm.StaticClient{},
-		stores, stores,
-		tools.NewRegistry(tools.EchoTool{}),
-	)
-
+	svc := orchestrator.NewService(cfg)
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
 	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, finHandler, waClient, secret, verifyToken, sessions, nlFinance)
+	return New(svc, finHandler, waClient, secret, verifyToken, sessions)
 }
 
 func (a *App) Handle(ctx context.Context, req Request) (resp Response, status int, err error) {
@@ -309,24 +277,6 @@ func (a *App) Handle(ctx context.Context, req Request) (resp Response, status in
 		} else {
 			reply, err = a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
 		}
-		if err != nil {
-			log.Printf("financial handler error: %v", err)
-		}
-		if reply != "" {
-			a.sendReply(ctx, req, reply)
-		}
-		return Response{Message: reply}, http.StatusOK, nil
-	}
-
-	// With a natural-language-capable agent wired (GeminiAgent), free text
-	// that isn't a slash command may still describe a financial entry or a
-	// query (e.g. "paguei 500 de aluguel ontem", "como estamos este mês?") —
-	// route it to the financial handler before falling back to the
-	// orchestrator. Unknown slash commands (/foo) are never sent to Gemini;
-	// they fall through to the orchestrator as before.
-	if a.financialHandler != nil && a.nlFinance && text != "" && !strings.HasPrefix(text, "/") {
-		ledgerID := shared.FinanceLedgerID
-		reply, err := a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
 		if err != nil {
 			log.Printf("financial handler error: %v", err)
 		}
