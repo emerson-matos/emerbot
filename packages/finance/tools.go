@@ -13,13 +13,17 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
+// ToolFunc executes a single Gemini function call against the store. args is
+// the raw JSON object the model produced for the call's parameters.
+type ToolFunc func(ctx context.Context, userID string, args json.RawMessage) (any, error)
+
 // Tool bundles a Gemini function-call declaration with the handler that
 // executes it against a Store.
 type Tool struct {
 	Name        string
 	Description string
 	Parameters  *genai.Schema
-	Handler     func(ctx context.Context, userID string, args json.RawMessage) (any, error)
+	Handler     ToolFunc
 }
 
 // FinanceTools builds the set of financial tools exposed to the Gemini agent.

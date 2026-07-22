@@ -188,8 +188,9 @@ path para slash commands. As tools vivem em `packages/finance/tools.go`.
 Diferenças em relação ao rascunho abaixo (o código é a fonte da verdade):
 
 - O modelo é `geminiModel` (`gemini-3.1-flash-lite`), não `gemini-2.5-flash-lite`.
-- As tools ficam no pacote `finance` (sem prefixo `pkgfinance`); os handlers têm
-  o tipo `finance.ToolHandler`.
+- As tools ficam no pacote `finance` (sem prefixo `pkgfinance`); `FinanceTools`
+  retorna `[]finance.Tool` (nome, descrição, schema e handler agrupados), com
+  o handler tipado como `finance.ToolFunc`.
 - `create_financial_entry` mantém o enum fechado de categorias e arredonda
   reais→centavos (19.99 → 1999).
 - O `search_entries` usa o novo campo `EntryFilter.Description` (filtro no store),

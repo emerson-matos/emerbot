@@ -2,7 +2,6 @@ package gemini
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -59,7 +58,7 @@ func functionCallResponse(name string, args map[string]any) *genai.GenerateConte
 func newTestAgent(gen contentGenerator, store finance.Store) *Agent {
 	financeTools := finance.FinanceTools(store)
 	genaiTools := make([]*genai.Tool, len(financeTools))
-	handlers := make(map[string]func(context.Context, string, json.RawMessage) (any, error), len(financeTools))
+	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {
 		genaiTools[i] = &genai.Tool{
 			FunctionDeclarations: []*genai.FunctionDeclaration{{

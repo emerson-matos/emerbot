@@ -9,7 +9,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-func handlerFor(t *testing.T, store Store, name string) func(ctx context.Context, userID string, args json.RawMessage) (any, error) {
+func handlerFor(t *testing.T, store Store, name string) ToolFunc {
 	t.Helper()
 	for _, tool := range FinanceTools(store) {
 		if tool.Name == name {
@@ -20,7 +20,7 @@ func handlerFor(t *testing.T, store Store, name string) func(ctx context.Context
 	return nil
 }
 
-func callTool(t *testing.T, h func(ctx context.Context, userID string, args json.RawMessage) (any, error), userID string, args map[string]any) any {
+func callTool(t *testing.T, h ToolFunc, userID string, args map[string]any) any {
 	t.Helper()
 	raw, err := json.Marshal(args)
 	if err != nil {

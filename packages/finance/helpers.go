@@ -17,6 +17,9 @@ func categorySlugs() []string {
 	return slugs
 }
 
+// knownCategory reports whether c is one of categorySlugs. Tool args come
+// from LLM output, so a hallucinated category is coerced to a default rather
+// than persisted verbatim.
 func knownCategory(c string) bool {
 	for _, known := range categorySlugs() {
 		if c == known {
@@ -26,8 +29,12 @@ func knownCategory(c string) bool {
 	return false
 }
 
+// maxEntryAmountReais bounds a single entry's value. Tool args are LLM-generated
+// from user text; a hallucinated absurd amount is rejected rather than saved.
 const maxEntryAmountReais = 10_000_000
 
+// parseDate parses a "YYYY-MM-DD" string; ok is false for empty or malformed
+// input so callers fall back to their default.
 func parseDate(s string) (time.Time, bool) {
 	if s == "" {
 		return time.Time{}, false
@@ -49,6 +56,8 @@ func clampLimit(n int) int {
 	return n
 }
 
+// reaisToCentavos converts a reais amount to integer centavos, rounding to the
+// nearest centavo to avoid float truncation (e.g. 19.99 → 1999, not 1998).
 func reaisToCentavos(reais float64) int64 {
 	if reais < 0 {
 		return -int64(-reais*100 + 0.5)
