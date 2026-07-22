@@ -44,7 +44,13 @@ module "assistant" {
   gemini_api_key_value       = var.gemini_api_key_value
   meta_graph_api_token_value = var.meta_graph_api_token_value
   whatsapp_phone_number_id   = var.whatsapp_phone_number_id
-  dashboard_origin           = local.pages_enabled ? "https://${var.dashboard_record_name}.${local.zone_name}" : ""
+  # Gated on cloudflare_enabled (zone configured), not pages_enabled (Pages
+  # project + account id configured): the dashboard's DNS record only needs
+  # the zone to exist, same as api_domain above — requiring pages_enabled
+  # too made this silently evaluate to "", disabling cors_configuration
+  # below entirely and turning every OPTIONS preflight into an unhandled
+  # 405 with no CORS headers at all (worse than the bug this was fixing).
+  dashboard_origin = local.cloudflare_enabled ? "https://${var.dashboard_record_name}.${local.zone_name}" : ""
 }
 
 module "cognito_dashboard" {
