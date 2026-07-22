@@ -12,13 +12,18 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// NewLocalCognitoMiddleware verifies Cognito-issued access tokens directly
+// NewLocalCognitoMiddleware verifies Cognito-issued ID tokens directly
 // against a JWKS endpoint. It exists because cmd/local has no API Gateway JWT
 // authorizer in front of it — unlike the deployed Lambda (see bridge.go's
 // gatewayClaims, used via GatewayMiddleware), which trusts claims API Gateway
 // already validated. This middleware does that same validation itself, then
 // delegates to GatewayMiddleware for the identity check and the
 // shared.FinanceLedgerID override, so that logic lives in exactly one place.
+//
+// ID tokens, not access tokens: this app has no OAuth scope/resource-server
+// model, it only needs to know who the user is — email/phone_number/name are
+// standard claims on an ID token but are never present on a Cognito access
+// token, which this app used to (incorrectly) require.
 func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID string) (func(http.Handler) http.Handler, error) {
 	// keyfunc.NewDefaultCtx swallows a failing first fetch (jwkset's
 	// NoErrorReturnFirstHTTPReq default), which would defeat failing fast here
@@ -62,25 +67,28 @@ func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID st
 				return
 			}
 
-			// Cognito access tokens carry client_id + token_use ("access"), not a
-			// standard `aud` claim — only id tokens carry `aud`. This mirrors what
-			// API Gateway's JWT authorizer validates its `audience` config against
-			// in the deployed path (see infra/modules/api_gateway_lambda/main.tf).
-			if tokenUse, _ := claims["token_use"].(string); tokenUse != "access" {
-				jsonError(w, "not an access token", http.StatusUnauthorized)
+			// ID tokens carry a standard `aud` claim (unlike access tokens, which
+			// only have client_id) — this mirrors what API Gateway's JWT authorizer
+			// validates its `audience` config against in the deployed path (see
+			// infra/modules/api_gateway_lambda/main.tf).
+			if tokenUse, _ := claims["token_use"].(string); tokenUse != "id" {
+				jsonError(w, "not an id token", http.StatusUnauthorized)
 				return
 			}
-			if cid, _ := claims["client_id"].(string); cid != clientID {
-				jsonError(w, "unrecognized client_id", http.StatusUnauthorized)
+			if aud, _ := claims["aud"].(string); aud != clientID {
+				jsonError(w, "unrecognized audience", http.StatusUnauthorized)
 				return
 			}
 
 			sub, _ := claims["sub"].(string)
-			username, _ := claims["username"].(string)
-			email, _ := claims["email"].(string)        // access tokens don't carry email; best-effort, matches gatewayClaims
-			phone, _ := claims["phone_number"].(string) // same best-effort caveat as email
+			// ID tokens carry the real `name` attribute (when set), not
+			// `username` — Cognito puts the login name under `cognito:username`
+			// instead, which isn't what Claims.Name is meant to represent.
+			name, _ := claims["name"].(string)
+			email, _ := claims["email"].(string)
+			phone, _ := claims["phone_number"].(string)
 
-			reqCtx := WithClaims(r.Context(), Claims{UserID: sub, Email: email, Name: username, Phone: phone, Subject: sub})
+			reqCtx := WithClaims(r.Context(), Claims{UserID: sub, Email: email, Name: name, Phone: phone, Subject: sub})
 			gw.ServeHTTP(w, r.WithContext(reqCtx))
 		})
 	}, nil

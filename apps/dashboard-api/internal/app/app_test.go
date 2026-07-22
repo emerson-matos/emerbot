@@ -50,24 +50,24 @@ func newTestJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 	return srv
 }
 
-// mintToken signs a Cognito-shaped access token. kid lets tests build tokens
+// mintToken signs a Cognito-shaped ID token. kid lets tests build tokens
 // that reference a key the JWKS server doesn't actually hold (signed with an
 // unrelated private key), to prove signature verification — not just kid
 // presence — is what rejects foreign tokens.
-func mintToken(t *testing.T, key *rsa.PrivateKey, kid, sub, email, username string) string {
+func mintToken(t *testing.T, key *rsa.PrivateKey, kid, sub, email, name string) string {
 	t.Helper()
-	return mintTokenWithOverrides(t, key, kid, sub, email, username, nil)
+	return mintTokenWithOverrides(t, key, kid, sub, email, name, nil)
 }
 
-// mintTokenWithOverrides lets tests replace specific claims (e.g. client_id,
+// mintTokenWithOverrides lets tests replace specific claims (e.g. aud,
 // token_use) to exercise NewLocalCognitoMiddleware's checks beyond signature
 // verification.
-func mintTokenWithOverrides(t *testing.T, key *rsa.PrivateKey, kid, sub, email, username string, overrides jwt.MapClaims) string {
+func mintTokenWithOverrides(t *testing.T, key *rsa.PrivateKey, kid, sub, email, name string, overrides jwt.MapClaims) string {
 	t.Helper()
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"sub": sub, "email": email, "username": username,
-		"client_id": testClientID, "token_use": "access",
+		"sub": sub, "email": email, "name": name,
+		"aud": testClientID, "token_use": "id",
 		"iss": testIssuer,
 		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 	}
@@ -141,18 +141,19 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 		t.Fatalf("expected 401 with a foreign-key-signed token, got %d", rec.Code)
 	}
 
-	// An id token (token_use "id") must be rejected — only access tokens carry
-	// client_id, which is the equivalent of the `aud` check API Gateway's real
-	// JWT authorizer performs in the deployed path.
-	idToken := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"token_use": "id"})
-	if rec := do(t, app, http.MethodGet, "/entries", idToken, nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 with an id token (token_use != access), got %d", rec.Code)
+	// An access token (token_use "access") must be rejected — only ID tokens
+	// carry the profile claims (email/phone_number/name) this app needs, and
+	// only ID tokens carry a standard `aud` claim, which is the check API
+	// Gateway's real JWT authorizer performs in the deployed path.
+	accessToken := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"token_use": "access"})
+	if rec := do(t, app, http.MethodGet, "/entries", accessToken, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with an access token (token_use != id), got %d", rec.Code)
 	}
 
 	// A token for a different Cognito app client must be rejected.
-	wrongClient := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"client_id": "some-other-client-id"})
+	wrongClient := mintTokenWithOverrides(t, key, testKID, "u1", "demo@user.com", "Demo", jwt.MapClaims{"aud": "some-other-client-id"})
 	if rec := do(t, app, http.MethodGet, "/entries", wrongClient, nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 with a foreign client_id, got %d", rec.Code)
+		t.Fatalf("expected 401 with a foreign aud, got %d", rec.Code)
 	}
 
 	valid := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
@@ -347,7 +348,7 @@ func TestGatewayClaimsBridgeProtectsFinanceRoutes(t *testing.T) {
 
 	event.RequestContext.Authorizer = &events.APIGatewayV2HTTPRequestContextAuthorizerDescription{
 		JWT: &events.APIGatewayV2HTTPRequestContextAuthorizerJWTDescription{Claims: map[string]string{
-			"sub": "cognito-user-id", "email": "demo@user.com", "username": "Demo",
+			"sub": "cognito-user-id", "email": "demo@user.com", "name": "Demo",
 		}},
 	}
 	withClaims, err := app.HandleLambda(context.Background(), event)
