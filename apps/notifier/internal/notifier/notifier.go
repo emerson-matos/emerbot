@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/notifications"
+	"github.com/emerson/emerbot/packages/shared"
 	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
@@ -95,10 +97,42 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		errs = append(errs, err)
 	}
 
+	// Every prefs row names a real Cognito user (who to notify, and on which
+	// phone), but they all read the same shared financial ledger — filter down
+	// to opted-in recipients first so a fresh install with nobody enabled
+	// skips the ledger reads below entirely.
+	var candidates []domain.NotificationPrefs
 	for _, prefs := range prefsList {
-		if !prefs.WAEnabled || prefs.Phone == "" {
-			continue
+		if prefs.WAEnabled && prefs.Phone != "" {
+			candidates = append(candidates, prefs)
 		}
+	}
+	if len(candidates) == 0 {
+		log.Printf("notifier: level=info msg=run_finished date=%s evaluated=0 sent=0 skipped=0 outside_window=0 errors=0", dedupeKey)
+		return res, nil
+	}
+
+	// One ledger, read once — reused for every recipient below instead of
+	// once per recipient.
+	entries, err := n.store.ListEntries(ctx, shared.FinanceLedgerID, pkgfinance.EntryFilter{
+		From: &windowStart,
+		To:   &today,
+	})
+	if err != nil {
+		err = fmt.Errorf("list entries: %w", err)
+		log.Printf("notifier: level=error msg=%q", err)
+		return res, err
+	}
+	summary, err := n.store.MonthlySummary(ctx, shared.FinanceLedgerID, month)
+	if err != nil {
+		err = fmt.Errorf("monthly summary: %w", err)
+		log.Printf("notifier: level=error msg=%q", err)
+		return res, err
+	}
+	// A missing goal is fine — Evaluate treats a zero target as "no goal".
+	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
+
+	for _, prefs := range candidates {
 		res.Evaluated++
 
 		// WhatsApp only lets us send free-form messages within its
@@ -114,24 +148,6 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			res.OutsideWindow++
 			continue
 		}
-
-		entries, err := n.store.ListEntries(ctx, prefs.UserID, pkgfinance.EntryFilter{
-			From: &windowStart,
-			To:   &today,
-		})
-		if err != nil {
-			fail(fmt.Errorf("user %s: list entries: %w", prefs.UserID, err))
-			continue
-		}
-
-		summary, err := n.store.MonthlySummary(ctx, prefs.UserID, month)
-		if err != nil {
-			fail(fmt.Errorf("user %s: monthly summary: %w", prefs.UserID, err))
-			continue
-		}
-
-		// A missing goal is fine — Evaluate treats a zero target as "no goal".
-		goal, _ := n.store.GetGoal(ctx, prefs.UserID, month)
 
 		alerts := notifications.Evaluate(prefs, entries, summary.TotalIncome, goal, today)
 		if len(alerts) == 0 {

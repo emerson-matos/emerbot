@@ -47,11 +47,11 @@ func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.UserID)
+	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
 	if err != nil {
 		// No saved prefs yet — hand back the defaults rather than an error so
 		// the form has something to render.
-		prefs = domain.DefaultNotificationPrefs(claims.UserID)
+		prefs = domain.DefaultNotificationPrefs(claims.Subject)
 	}
 	prefs.Phone = normalizePhone(claims.Phone)
 	jsonOK(w, map[string]any{"preferences": toResponse(prefs)})
@@ -78,9 +78,9 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	// Start from what's stored (or defaults) so a partial PUT only changes the
 	// fields it sends.
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.UserID)
+	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
 	if err != nil {
-		prefs = domain.DefaultNotificationPrefs(claims.UserID)
+		prefs = domain.DefaultNotificationPrefs(claims.Subject)
 	}
 
 	if body.WAEnabled != nil {

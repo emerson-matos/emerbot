@@ -88,6 +88,44 @@ func TestNotificationPrefsEnableRequiresPhone(t *testing.T) {
 	}
 }
 
+// TestNotificationPrefsAreIsolatedPerCognitoUser is the regression test for
+// the identity-collapsing bug: two different Cognito users (distinct subs)
+// must each get their own preferences — one saving must not clobber or leak
+// into the other's.
+func TestNotificationPrefsAreIsolatedPerCognitoUser(t *testing.T) {
+	t.Parallel()
+	app, key := newTestApp(t)
+	tokenA := mintTokenWithOverrides(t, key, testKID, "u1", "a@user.com", "A",
+		jwt.MapClaims{"phone_number": "+5511900000001"})
+	tokenB := mintTokenWithOverrides(t, key, testKID, "u2", "b@user.com", "B",
+		jwt.MapClaims{"phone_number": "+5511900000002"})
+
+	rec := do(t, app, http.MethodPut, "/notifications/preferences", tokenA, map[string]any{
+		"waEnabled": true, "notifyGoal": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save A: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, app, http.MethodGet, "/notifications/preferences", tokenB, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get B: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	b := decodePrefs(t, rec.Body.Bytes())
+	if b.Preferences.WAEnabled || b.Preferences.NotifyGoal {
+		t.Fatalf("user B must not see user A's saved prefs, got %+v", b.Preferences)
+	}
+	if b.Preferences.Phone != "5511900000002" {
+		t.Fatalf("user B's phone must be their own Cognito number, got %q", b.Preferences.Phone)
+	}
+
+	rec = do(t, app, http.MethodGet, "/notifications/preferences", tokenA, nil)
+	a := decodePrefs(t, rec.Body.Bytes())
+	if !a.Preferences.WAEnabled || !a.Preferences.NotifyGoal || a.Preferences.Phone != "5511900000001" {
+		t.Fatalf("user A's own prefs should be unaffected, got %+v", a.Preferences)
+	}
+}
+
 func TestNotificationPrefsRequireAuth(t *testing.T) {
 	t.Parallel()
 	app, _ := newTestApp(t)

@@ -8,7 +8,7 @@ follow-up opcional (expor o log de entrega como histórico real na UI).
 
 | Camada | Onde |
 |--------|------|
-| Preferências (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`). |
+| Preferências (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`), chaveado pelo `sub` real do Cognito (`claims.Subject`, nunca sobrescrito pelo mock do ledger compartilhado — ver `GatewayMiddleware`). Cada usuário Cognito tem suas próprias preferências, todas lendo o mesmo ledger financeiro compartilhado. |
 | Telefone | Vem do atributo `phone_number` do usuário no Cognito (claim do JWT), nunca digitado no formulário — `apps/dashboard-api/internal/finance/notifications.go` normaliza para dígitos E.164 ao salvar/ler. |
 | API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go`. |
 | Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
