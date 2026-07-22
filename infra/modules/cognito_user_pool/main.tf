@@ -34,6 +34,13 @@ resource "aws_cognito_user_pool" "dashboard" {
     name                = "email"
     required            = true
   }
+
+  schema {
+    attribute_data_type = "String"
+    mutable             = true
+    name                = "phone_number"
+    required            = true
+  }
 }
 
 resource "aws_cognito_user_pool_client" "dashboard" {

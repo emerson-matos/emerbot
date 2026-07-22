@@ -18,6 +18,7 @@ POOL_NAME="emerbot-local"
 CLIENT_NAME="emerbot-local-client"
 DEMO_EMAIL="demo@user.com"
 DEMO_PASSWORD="${USER_DEMO_PASSWORD:-fake123}"
+DEMO_PHONE="${USER_DEMO_PHONE:-+5511999999999}"
 SHARED_FILE="/shared/cognito.env"
 
 AWS="aws --endpoint-url $ENDPOINT --region $REGION --no-cli-pager cognito-idp"
@@ -49,9 +50,10 @@ echo "User pool client ID: $CLIENT_ID"
 
 # demo user — password policy is not enforced by cognito-local, so the local
 # default ("fake123") is fine even though it wouldn't pass the real pool's
-# policy (infra/modules/cognito_user_pool).
+# policy (infra/modules/cognito_user_pool). phone_number matches the real
+# pool's required attribute, so the WhatsApp alert flow works locally too.
 $AWS admin-create-user --user-pool-id "$POOL_ID" --username "$DEMO_EMAIL" \
-  --user-attributes Name=email,Value="$DEMO_EMAIL" Name=name,Value=Demo Name=email_verified,Value=true \
+  --user-attributes Name=email,Value="$DEMO_EMAIL" Name=name,Value=Demo Name=email_verified,Value=true Name=phone_number,Value="$DEMO_PHONE" \
   --message-action SUPPRESS >/dev/null 2>&1 || true
 $AWS admin-set-user-password --user-pool-id "$POOL_ID" --username "$DEMO_EMAIL" \
   --password "$DEMO_PASSWORD" --permanent
