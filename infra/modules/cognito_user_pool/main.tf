@@ -35,6 +35,12 @@ resource "aws_cognito_user_pool" "dashboard" {
     required            = true
   }
 
+  # TODO: DO NOT `tofu apply` this schema block against an already-provisioned
+  # pool yet. The AWS provider marks `schema` as ForceNew — Cognito user pool
+  # schema is immutable after creation, so this change makes the next apply
+  # destroy and recreate the whole pool (every existing user deleted, pool
+  # ID/issuer rotated). Apply deliberately, once you're ready to recreate the
+  # pool and re-provision users afterward via `make create-user`.
   schema {
     attribute_data_type = "String"
     mutable             = true
