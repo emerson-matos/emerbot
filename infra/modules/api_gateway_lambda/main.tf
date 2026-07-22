@@ -128,6 +128,23 @@ resource "aws_lambda_function" "webhook" {
 resource "aws_apigatewayv2_api" "http" {
   name          = "${local.prefix}-http"
   protocol_type = "HTTP"
+
+  # Managed here, not by the dashboard-api Lambda, because the JWT authorizer
+  # (see aws_apigatewayv2_authorizer.dashboard_jwt below) rejects unauthorized
+  # requests directly at the gateway — a missing/expired/invalid token never
+  # reaches the Lambda, so only API Gateway itself can attach CORS headers to
+  # that 401/403. Letting the Lambda also set CORS headers on top of this
+  # would duplicate them on every response that *does* reach it.
+  dynamic "cors_configuration" {
+    for_each = var.dashboard_origin != "" ? [var.dashboard_origin] : []
+    content {
+      allow_origins     = [cors_configuration.value]
+      allow_methods     = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allow_headers     = ["Content-Type", "Authorization"]
+      allow_credentials = true
+      max_age           = 300
+    }
+  }
 }
 
 resource "aws_apigatewayv2_integration" "webhook" {
@@ -324,8 +341,13 @@ locals {
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     "GET /notifications/preferences", "PUT /notifications/preferences",
   ])
+  # No explicit OPTIONS route: an explicit route would shadow API Gateway's
+  # automatic CORS preflight handling (aws_apigatewayv2_api.http's
+  # cors_configuration above) and instead forward OPTIONS to the Lambda,
+  # which has no handler for it since NewGateway no longer answers preflight
+  # itself.
   dashboard_public_routes = toset([
-    "GET /health", "OPTIONS /{proxy+}",
+    "GET /health",
   ])
 }
 
