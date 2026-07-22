@@ -27,7 +27,7 @@ type Agent struct {
 	gen          contentGenerator
 	model        string
 	tools        []*genai.Tool
-	toolHandlers map[string]func(context.Context, string, json.RawMessage) (any, error)
+	toolHandlers map[string]finance.ToolFunc
 }
 
 func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, error) {
@@ -41,7 +41,7 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, 
 
 	financeTools := finance.FinanceTools(store)
 	genaiTools := make([]*genai.Tool, len(financeTools))
-	handlers := make(map[string]func(context.Context, string, json.RawMessage) (any, error), len(financeTools))
+	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {
 		genaiTools[i] = &genai.Tool{
 			FunctionDeclarations: []*genai.FunctionDeclaration{{
