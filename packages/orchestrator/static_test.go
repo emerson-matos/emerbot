@@ -7,43 +7,40 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-func TestStaticClientToolPrefixRequiresPrefixAndPreservesName(t *testing.T) {
+func TestStaticClientReturnsLocalPrefix(t *testing.T) {
 	t.Parallel()
 
 	client := StaticClient{}
 	output, err := client.Generate(context.Background(), Input{
 		UserMessage: domain.Message{
 			UserID:    "u1",
-			Text:      "Tool: echo",
+			Text:      "hello",
 			MessageID: "m1",
 		},
 	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	if output.ToolCall == nil {
-		t.Fatal("expected tool call")
-	}
-	if output.ToolCall.Name != "echo" {
-		t.Fatalf("expected tool name echo, got %q", output.ToolCall.Name)
+	if output.Text != "Resposta local do orchestrator: hello" {
+		t.Fatalf("unexpected text: %q", output.Text)
 	}
 }
 
-func TestStaticClientIgnoresEmbeddedToolMarker(t *testing.T) {
+func TestStaticClientReturnsEmptyTextWarning(t *testing.T) {
 	t.Parallel()
 
 	client := StaticClient{}
 	output, err := client.Generate(context.Background(), Input{
 		UserMessage: domain.Message{
 			UserID:    "u1",
-			Text:      "quero usar tool: echo",
+			Text:      "   ",
 			MessageID: "m1",
 		},
 	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	if output.ToolCall != nil {
-		t.Fatal("expected no tool call for embedded tool marker")
+	if output.Text != "Não recebi nenhuma mensagem." {
+		t.Fatalf("unexpected text: %q", output.Text)
 	}
 }

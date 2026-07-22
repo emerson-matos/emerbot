@@ -14,8 +14,7 @@ type Input struct {
 }
 
 type Output struct {
-	Text     string
-	ToolCall *domain.ToolCall
+	Text string
 }
 
 type TextGenerator interface {

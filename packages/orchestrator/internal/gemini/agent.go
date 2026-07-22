@@ -27,7 +27,7 @@ type Agent struct {
 	gen          contentGenerator
 	model        string
 	tools        []*genai.Tool
-	toolHandlers map[string]finance.ToolHandler
+	toolHandlers map[string]func(context.Context, string, json.RawMessage) (any, error)
 }
 
 func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, error) {
@@ -39,11 +39,21 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, 
 		return nil, fmt.Errorf("create gemini client: %w", err)
 	}
 
-	tools, handlers := finance.FinanceTools(store)
+	financeTools := finance.FinanceTools(store)
+	genaiTools := make([]*genai.Tool, len(financeTools))
+	handlers := make(map[string]func(context.Context, string, json.RawMessage) (any, error), len(financeTools))
+	for i, t := range financeTools {
+		genaiTools[i] = &genai.Tool{
+			FunctionDeclarations: []*genai.FunctionDeclaration{{
+				Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+			}},
+		}
+		handlers[t.Name] = t.Handler
+	}
 	return &Agent{
 		gen:          client.Models,
 		model:        model,
-		tools:        tools,
+		tools:        genaiTools,
 		toolHandlers: handlers,
 	}, nil
 }
