@@ -89,7 +89,7 @@ func (a *Agent) Process(ctx context.Context, userID, text string, msgTime time.T
 		{Role: "user", Parts: []*genai.Part{{Text: text}}},
 	}
 
-	for round := 0; round < maxToolRounds; round++ {
+	for round := range maxToolRounds {
 		resp, err := a.gen.GenerateContent(ctx, a.model, contents, config)
 		if err != nil {
 			return "", fmt.Errorf("gemini generate (round %d): %w", round, err)
