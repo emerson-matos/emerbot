@@ -5,7 +5,7 @@ import type { Entry } from '../api/types'
 // Tables are about *due* transactions: pending entries show when they're
 // due, and already-settled ones (no DueDate) fall back to when they happened.
 export function effectiveDate(e: Entry): string | null {
-  return e.DueDate || e.Date
+  return e.DueDate || e.TransactionDate || null
 }
 
 export function formatEffectiveDate(e: Entry): string {

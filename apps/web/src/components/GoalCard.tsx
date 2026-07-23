@@ -2,6 +2,7 @@ import { format } from 'date-fns'
 import { Target } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { formatBRL } from '@/lib/format'
 import { useGoal, useMonthlySummary } from '../api/queries'
 
@@ -20,9 +21,13 @@ export default function GoalCard() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
   const summaryQuery = useMonthlySummary(currentMonth)
+  const goalQuery = useGoal(currentMonth)
   const summary = summaryQuery.data ?? null
+  const goal = goalQuery.data?.goal ?? null
 
-  const goal = useGoal(currentMonth).data?.goal ?? null
+  if (summaryQuery.isLoading || goalQuery.isLoading) {
+    return <Skeleton className="h-26 rounded-xl" />
+  }
 
   const actualIncome = summary?.TotalIncome ?? 0
   const actualExpense = summary?.TotalExpense ?? 0

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useMonthlyTrend } from '../api/queries'
 
 export default function WorstMonth() {
@@ -14,6 +15,10 @@ export default function WorstMonth() {
   )
 
   const trendQueries = useMonthlyTrend(months3)
+
+  if (trendQueries.some(q => q.isLoading)) {
+    return <Skeleton className="h-26 rounded-xl" />
+  }
 
   const monthlyData = trendQueries.every(q => q.isSuccess)
     ? trendQueries.map((q, i) => ({

@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { categoricalPalette } from '@/lib/chart'
 import { categoryLabels } from '@/lib/categories'
 import {
@@ -19,6 +20,9 @@ export default function MonthlyExpent() {
   const categoriesQuery = useCategorySummary(firstDay, lastDay)
   const entriesQuery = useEntries(firstDay, lastDay)
 
+  if (categoriesQuery.isLoading || entriesQuery.isLoading) {
+    return <Skeleton className="h-52 rounded-xl" />
+  }
 
   const categories = categoriesQuery.data?.categories ?? []
   const entries = entriesQuery.data?.entries ?? []
@@ -26,7 +30,7 @@ export default function MonthlyExpent() {
   const expenseByDay: Record<string, number> = {}
   for (const e of entries) {
     if (e.Type === 'expense') {
-      const day = e.Date.slice(0, 10)
+      const day = (e.TransactionDate ?? '').slice(0, 10)
       expenseByDay[day] = (expenseByDay[day] ?? 0) + e.Amount
     }
   }

@@ -2,6 +2,7 @@ import { format } from 'date-fns'
 import { CalendarClock, Check } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { useEntries, useMarkPaidMutation } from '../api/queries'
 
@@ -12,6 +13,10 @@ export default function ToPayToday() {
   // one day instead of pulling the whole month and filtering client-side.
   const entriesQuery = useEntries(today, today)
   const markPaid = useMarkPaidMutation()
+
+  if (entriesQuery.isLoading) {
+    return <Skeleton className="h-26 rounded-xl" />
+  }
 
   const entries = entriesQuery.data?.entries ?? []
 
