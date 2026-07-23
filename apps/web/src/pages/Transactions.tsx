@@ -108,7 +108,7 @@ export default function Transactions() {
     const currentPage = pages.find(p => p.month === currentMonthKey)
     if (currentPage) {
       const filtered = currentPage.entries.filter(matchesFilters)
-      const { overdue, dueToday, upcoming } = bucketByUrgency(filtered, todayISO)
+      const { overdue, dueToday, upcoming, history } = bucketByUrgency(filtered, todayISO)
       if (upcoming.length) {
         result.push({ key: 'upcoming', label: 'Próximos vencimentos', kind: 'status', tone: 'info', items: upcoming })
       }
@@ -123,6 +123,9 @@ export default function Transactions() {
       }
       if (overdue.length) {
         result.push({ key: 'overdue', label: 'Em atraso', kind: 'status', tone: 'negative', items: overdue })
+      }
+      if (history.length) {
+        result.push({ key: 'history', label: 'Histórico do mês', kind: 'status', tone: 'neutral', items: history })
       }
     }
 
@@ -158,7 +161,7 @@ export default function Transactions() {
 
       <Card>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="relative flex-1 sm:min-w-[220px]">
+          <div className="relative flex-1 sm:min-w-55">
             <Search
               className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden
@@ -255,7 +258,7 @@ export default function Transactions() {
                 <div className="flex justify-center pb-1">
                   <Button variant="ghost" size="sm" disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
                     <ChevronUp className="size-3.5" />
-                    {isFetchingNextPage ? 'Carregando...' : 'Carregar meses futuros'}
+                    {isFetchingNextPage ? 'Carregando...' : 'Carregar registros futuros'}
                   </Button>
                 </div>
               )}
@@ -273,7 +276,7 @@ export default function Transactions() {
                     onClick={() => fetchPreviousPage()}
                   >
                     <ChevronDown className="size-3.5" />
-                    {isFetchingPreviousPage ? 'Carregando...' : 'Carregar meses anteriores'}
+                    {isFetchingPreviousPage ? 'Carregando...' : 'Carregar registros anteriores'}
                   </Button>
                 </div>
               )}

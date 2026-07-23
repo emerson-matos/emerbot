@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3, CheckCircle2, Target, TrendingDown, TrendingUp,
 } from 'lucide-react'
@@ -12,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
+import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation } from '../api/queries'
 
 // CSS `capitalize` (text-transform) uppercases every word, which is wrong
@@ -32,43 +32,6 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   )
 }
 
-type MetaTone = 'positive' | 'negative' | 'info' | 'neutral'
-
-const metaToneVar: Record<MetaTone, string> = {
-  positive: 'var(--success)',
-  negative: 'var(--destructive)',
-  info: 'var(--info)',
-  neutral: 'var(--primary)',
-}
-
-function MetaTile({ title, value, subtitle, icon: Icon, tone }: {
-  title: string
-  value: string
-  subtitle: string
-  icon: LucideIcon
-  tone: MetaTone
-}) {
-  const c = metaToneVar[tone]
-  return (
-    <Card className="relative overflow-hidden">
-      <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: c }} />
-      <CardContent className="flex items-start justify-between gap-3 pl-5">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: c }}>{value}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
-        </div>
-        <span
-          className="grid size-9 shrink-0 place-items-center rounded-lg"
-          style={{ background: `color-mix(in oklch, ${c} 14%, transparent)`, color: c }}
-        >
-          <Icon className="size-[18px]" />
-        </span>
-      </CardContent>
-    </Card>
-  )
-}
-
 export default function Goals() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
@@ -76,16 +39,22 @@ export default function Goals() {
     format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
   )
 
-  const { data } = useGoal(currentMonth)
-  const goal = data?.goal ?? null
+  const goalQuery = useGoal(currentMonth)
+  const goal = goalQuery.data?.goal ?? null
   const summaryQuery = useMonthlySummary(currentMonth)
   const saveGoal = useSaveGoalMutation(currentMonth)
 
   const trendQueries = useMonthlyTrend(months3)
-  const goal0 = useGoal(months3[0]).data?.goal ?? null
-  const goal1 = useGoal(months3[1]).data?.goal ?? null
-  const goal2 = useGoal(months3[2]).data?.goal ?? null
-  const goalsByMonth = [goal0, goal1, goal2]
+  const goalQuery0 = useGoal(months3[0])
+  const goalQuery1 = useGoal(months3[1])
+  const goalQuery2 = useGoal(months3[2])
+  const goalQueries = [goalQuery0, goalQuery1, goalQuery2]
+  const goalsByMonth = goalQueries.map(q => q.data?.goal ?? null)
+
+  const progressLoading = summaryQuery.isLoading || goalQuery.isLoading
+  const progressError = summaryQuery.isError || goalQuery.isError
+  const trendLoading = trendQueries.some(q => q.isLoading) || goalQueries.some(q => q.isLoading)
+  const trendError = trendQueries.some(q => q.isError) || goalQueries.some(q => q.isError)
 
   const [revenueInput, setRevenueInput] = useState('')
   const [expenseInput, setExpenseInput] = useState('')
@@ -128,34 +97,69 @@ export default function Goals() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetaTile
-          title="Progresso Faturamento"
-          value={`${revPct.toFixed(0)}%`}
-          subtitle="da meta deste mês"
-          icon={TrendingUp}
+        <KpiCard
           tone="positive"
-        />
-        <MetaTile
-          title="Progresso Despesas"
-          value={`${expPct.toFixed(0)}%`}
-          subtitle="do limite deste mês"
-          icon={TrendingDown}
+          isLoading={progressLoading}
+          isError={progressError}
+          errorMessage="Erro ao carregar progresso"
+          className="min-h-26"
+        >
+          <KpiCardContent icon={TrendingUp} tone="positive">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Progresso Faturamento</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
+              {revPct.toFixed(0)}%
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">da meta deste mês</p>
+          </KpiCardContent>
+        </KpiCard>
+
+        <KpiCard
           tone="negative"
-        />
-        <MetaTile
-          title="Meses na Meta"
-          value={`${monthsHit}/${months3.length}`}
-          subtitle="faturamento atingido"
-          icon={Target}
+          isLoading={progressLoading}
+          isError={progressError}
+          errorMessage="Erro ao carregar progresso"
+          className="min-h-26"
+        >
+          <KpiCardContent icon={TrendingDown} tone="negative">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Progresso Despesas</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.negative }}>
+              {expPct.toFixed(0)}%
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">do limite deste mês</p>
+          </KpiCardContent>
+        </KpiCard>
+
+        <KpiCard
           tone="info"
-        />
-        <MetaTile
-          title="Faturamento Médio"
-          value={formatBRL(avgRevenue)}
-          subtitle="últimos meses"
-          icon={BarChart3}
-          tone="neutral"
-        />
+          isLoading={trendLoading}
+          isError={trendError}
+          errorMessage="Erro ao carregar histórico"
+          className="min-h-26"
+        >
+          <KpiCardContent icon={Target} tone="info">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Meses na Meta</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
+              {monthsHit}/{months3.length}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">faturamento atingido</p>
+          </KpiCardContent>
+        </KpiCard>
+
+        <KpiCard
+          tone="primary"
+          isLoading={trendLoading}
+          isError={trendError}
+          errorMessage="Erro ao carregar histórico"
+          className="min-h-26"
+        >
+          <KpiCardContent icon={BarChart3} tone="primary">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Faturamento Médio</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.primary }}>
+              {formatBRL(avgRevenue)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">últimos meses</p>
+          </KpiCardContent>
+        </KpiCard>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

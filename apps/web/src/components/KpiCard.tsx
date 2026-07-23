@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
-export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral'
+export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral' | 'primary'
 
 export const toneVar: Record<KpiTone, string> = {
   positive: 'var(--success)',
@@ -12,6 +12,7 @@ export const toneVar: Record<KpiTone, string> = {
   info: 'var(--info)',
   warning: 'var(--warning)',
   neutral: 'var(--muted-foreground)',
+  primary: 'var(--primary)',
 }
 
 interface KpiCardProps {
@@ -108,7 +109,7 @@ export function KpiCardContent({
           color: c,
         }}
       >
-        <Icon className="size-[18px]" />
+        <Icon className="size-4.5" />
       </span>
     </CardContent>
   )

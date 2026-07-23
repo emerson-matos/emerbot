@@ -33,7 +33,7 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
   const categoryLabels = categoryLabelMap(categoriesQuery.data ?? [])
 
   return (
-    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 py-3.5 sm:grid-cols-[1fr_96px_120px] sm:gap-4">
+    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 py-3.5 sm:grid-cols-[1fr_116px_120px] sm:gap-4">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{entry.Description || '—'}</p>
         <p className={cn('mt-0.5 truncate text-xs', isOverdue ? 'text-destructive' : 'text-muted-foreground')}>
@@ -44,21 +44,23 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
 
       <div className="flex justify-start">
         {entry.PaymentStatus === 'paid' ? (
-          <span className="text-xs text-muted-foreground">pago {formatPaidAt(entry)}</span>
+          <span className="text-xs text-muted-foreground">
+            {isIncome ? 'recebido' : 'pago'} {formatPaidAt(entry)}
+          </span>
         ) : onMarkPaid ? (
           <AlertDialog>
             <AlertDialogTrigger
               render={
-                <Button variant="outline" size="sm" className="h-8 w-[88px] text-xs">
-                  <Check className="size-3.5" /> Pagar
+                <Button variant="outline" size="sm" className="h-8 w-22 text-xs">
+                  <Check className="size-3.5" /> {isIncome ? 'Receber' : 'Pagar'}
                 </Button>
               }
             />
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Marcar como paga?</AlertDialogTitle>
+                <AlertDialogTitle>{isIncome ? 'Marcar como recebida?' : 'Marcar como paga?'}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  "{entry.Description || 'Esta transação'}" será marcada como paga.
+                  "{entry.Description || 'Esta transação'}" será marcada como {isIncome ? 'recebida' : 'paga'}.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
