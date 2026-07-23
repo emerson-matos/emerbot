@@ -219,6 +219,32 @@ financeiro:
   e `StaticClient` como fallback quando `GEMINI_API_KEY`/`FinanceStore` não
   estão configurados).
 
+### Memória de curto prazo (histórico da conversa)
+
+O `Agent.Process` recebe o **histórico recente** (`[]domain.ConversationMessage`,
+mais antigo primeiro, terminando no turno atual) e o converte em `contents` do
+Gemini (`RoleUser`→`"user"`, `RoleAssistant`→`"model"`), em vez de mandar só o
+texto do turno atual — é isso que faz o bot manter contexto entre mensagens.
+
+O histórico é persistido por `packages/conversation` (`ShortTermStore` sobre a
+tabela DynamoDB `${prefix}-conversations`, TTL em `ExpiresAt`), configurada via
+`CONVERSATIONS_TABLE`. Sem essa env, o `orchestrator` cai no store in-memory
+(ok localmente, perdido a cada cold start da Lambda). O `orchestrator.Service`
+grava o turno do usuário antes de carregar `LoadRecent(shortTermLimit)`, então a
+janela enviada ao modelo já inclui a mensagem atual. Ver ADR-005.
+
+Longo prazo (fatos/preferências) segue não implementado — Fase 2.
+
+### Provider local para dev (Ollama)
+
+Para rodar o chat localmente com um modelo open source em vez do `StaticClient`,
+existe um segundo agente em `packages/orchestrator/internal/ollama` que fala com o
+Ollama (`/api/chat`), mantendo os mesmos tools financeiros (converte o
+`*genai.Schema` para JSON Schema). A seleção é por env (`LLM_PROVIDER=ollama`,
+`OLLAMA_HOST`, `OLLAMA_MODEL`) em `orchestrator.NewTextGenerator`; o system prompt
+é compartilhado via `internal/agentprompt`. Subir com `make demo-ollama`. A Gemini
+continua o provider de produção. Ver ADR-012.
+
 **Objetivo**: substituir `GeminiParser` por um agente que usa tools para tudo.
 
 ### Visão geral dos arquivos

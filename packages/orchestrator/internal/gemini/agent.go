@@ -10,7 +10,9 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/agentprompt"
 )
 
 const model = "gemini-3.1-flash-lite"
@@ -58,45 +60,23 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, 
 	}, nil
 }
 
-func systemPrompt(now time.Time) string {
-	return fmt.Sprintf(
-		`Você é um assistente financeiro de uma farmácia.
-Sua função é ajudar o usuário a gerenciar o fluxo de caixa.
-
-Contexto atual:
-- Hoje é %s
-- Fuso horário: America/Sao_Paulo
-
-Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem")
-usando a data acima como referência. Nunca invente datas.
-
-Você tem acesso a ferramentas para criar lançamentos, editar lançamentos
-existentes, consultar o resumo do mês, listar contas a pagar/receber e
-buscar lançamentos.
-
-Regras:
-- Sempre use as ferramentas quando precisar de dados. Nunca invente valores.
-- Responda em português, de forma clara e direta.
-- Valores em reais (R$).
-- Se a mensagem não for financeira, responda educadamente que você é um
-  assistente financeiro e pode ajudar com o fluxo de caixa.`,
-		now.Format("02/01/2006"),
-	)
-}
-
-func (a *Agent) Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error) {
+// Process runs the tool-calling loop over the recent conversation `history`
+// (oldest-first, ending with the current user turn) so the model keeps context
+// across messages. msgTime dates the system prompt; userID routes tool calls.
+func (a *Agent) Process(ctx context.Context, userID string, history []domain.ConversationMessage, msgTime time.Time) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	config := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt(msgTime)}}},
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: agentprompt.Finance(msgTime)}}},
 		Tools:             a.tools,
 		Temperature:       genai.Ptr[float32](0),
 		MaxOutputTokens:   1024,
 	}
 
-	contents := []*genai.Content{
-		{Role: "user", Parts: []*genai.Part{{Text: text}}},
+	contents := historyToContents(history)
+	if len(contents) == 0 {
+		return "", fmt.Errorf("gemini agent: empty conversation history")
 	}
 
 	for round := range maxToolRounds {
@@ -158,6 +138,35 @@ func (a *Agent) runTool(ctx context.Context, userID string, fc *genai.FunctionCa
 		return nil, fmt.Errorf("tool %s: %w", fc.Name, err)
 	}
 	return result, nil
+}
+
+// historyToContents maps stored conversation turns onto Gemini contents,
+// translating roles (Gemini expects "model", not "assistant") and dropping
+// turns it can't represent (empty text or non-conversational roles).
+func historyToContents(history []domain.ConversationMessage) []*genai.Content {
+	contents := make([]*genai.Content, 0, len(history))
+	for _, m := range history {
+		role := genaiRole(m.Role)
+		if role == "" || strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		contents = append(contents, &genai.Content{
+			Role:  role,
+			Parts: []*genai.Part{{Text: m.Text}},
+		})
+	}
+	return contents
+}
+
+func genaiRole(role domain.Role) string {
+	switch role {
+	case domain.RoleUser:
+		return "user"
+	case domain.RoleAssistant:
+		return "model"
+	default:
+		return ""
+	}
 }
 
 func functionCalls(c *genai.Content) []*genai.FunctionCall {

@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+	shared.InitSlog()
 	secret := shared.Getenv("WEBHOOK_SECRET", "")
 	if secret == "" {
 		log.Fatal("WEBHOOK_SECRET is required")

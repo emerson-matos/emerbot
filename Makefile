@@ -30,7 +30,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         run-webhook run-api run-cli run-lambda \
         up down up-infra \
         logs-webhook logs-api \
-        seed demo \
+        seed demo demo-ollama \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas clean-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
@@ -111,11 +111,15 @@ run-lambda:
 # ---------------------------------------------------------------------------
 # Docker Compose — local stack
 # ---------------------------------------------------------------------------
+# COMPOSE_EXTRA lets demo-ollama layer the optional Ollama stack (ADR-012) on top
+# of the base compose files without duplicating recipes.
+COMPOSE_EXTRA ?=
+
 up:
-	$(COMPOSE) up --build
+	$(COMPOSE) $(COMPOSE_EXTRA) up --build
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE) $(COMPOSE_EXTRA) down
 
 up-infra:
 	$(COMPOSE) up --build dynamodb-local dynamodb-admin dynamodb-init
@@ -146,6 +150,13 @@ demo: up
 	@echo "   WhatsApp sim:    http://localhost:9000"
 	@echo "   DynamoDB admin:  http://localhost:8001"
 	@echo "   Login:           demo@user.com / fake123"
+
+# Same as `demo`, but layers the local Ollama LLM (ADR-012) so natural-language
+# chat hits a real open-source model instead of the StaticClient. First run pulls
+# ~5GB and CPU inference is slow. Override the model with OLLAMA_MODEL=qwen2.5:7b.
+# Tear down with: make down COMPOSE_EXTRA="-f docker-compose.yml -f docker-compose.ollama.yml"
+demo-ollama:
+	$(MAKE) demo COMPOSE_EXTRA="-f docker-compose.yml -f docker-compose.ollama.yml"
 
 # ---------------------------------------------------------------------------
 # Users (dashboard auth)

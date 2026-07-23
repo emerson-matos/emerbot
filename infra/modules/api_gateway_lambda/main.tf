@@ -97,6 +97,31 @@ resource "aws_dynamodb_table" "whatsapp_sessions" {
   }
 }
 
+# Short-term chat history: one item per turn (PK = phone, SK = chronological),
+# so the webhook can load the recent conversation and thread it into the LLM
+# prompt. TTL-managed, in its own table (ADR-005), independent of the finance data.
+resource "aws_dynamodb_table" "conversations" {
+  name         = "${local.prefix}-conversations"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "PK"
+  range_key    = "SK"
+
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ExpiresAt"
+    enabled        = true
+  }
+}
+
 resource "aws_cloudwatch_log_group" "webhook" {
   name              = "/aws/lambda/${local.prefix}-webhook"
   retention_in_days = 14
@@ -119,6 +144,7 @@ resource "aws_lambda_function" "webhook" {
       WEBHOOK_VERIFY_TOKEN    = var.webhook_secret_value
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
       WHATSAPP_SESSIONS_TABLE = aws_dynamodb_table.whatsapp_sessions.name
+      CONVERSATIONS_TABLE     = aws_dynamodb_table.conversations.name
       META_GRAPH_API_TOKEN    = var.meta_graph_api_token_value
       GEMINI_API_KEY          = var.gemini_api_key_value
     }
@@ -240,6 +266,25 @@ resource "aws_iam_role_policy" "webhook_sessions" {
       Effect   = "Allow"
       Action   = ["dynamodb:PutItem"]
       Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
+    }]
+  })
+}
+
+# The webhook appends each turn (PutItem) and loads the recent history (Query)
+# for the chat-memory feature.
+resource "aws_iam_role_policy" "webhook_conversations" {
+  name = "${local.prefix}-webhook-conversations"
+  role = aws_iam_role.lambda_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+      ]
+      Resource = [aws_dynamodb_table.conversations.arn]
     }]
   })
 }

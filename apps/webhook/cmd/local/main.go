@@ -10,6 +10,7 @@ import (
 )
 
 func main() {
+	shared.InitSlog()
 	addr := shared.Getenv("WEBHOOK_ADDR", ":8080")
 	secret := shared.Getenv("WEBHOOK_SECRET", "local-secret")
 

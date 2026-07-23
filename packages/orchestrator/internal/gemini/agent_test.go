@@ -14,13 +14,17 @@ import (
 )
 
 type scriptedGenerator struct {
-	responses []*genai.GenerateContentResponse
-	err       error
-	calls     int
-	lastTools []*genai.Tool
+	responses     []*genai.GenerateContentResponse
+	err           error
+	calls         int
+	lastTools     []*genai.Tool
+	firstContents []*genai.Content
 }
 
-func (g *scriptedGenerator) GenerateContent(_ context.Context, _ string, _ []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+func (g *scriptedGenerator) GenerateContent(_ context.Context, _ string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+	if g.calls == 0 {
+		g.firstContents = contents
+	}
 	if config != nil {
 		g.lastTools = config.Tools
 	}
@@ -55,6 +59,12 @@ func functionCallResponse(name string, args map[string]any) *genai.GenerateConte
 	}
 }
 
+// userTurn builds a single-message history whose only turn is the current user
+// message — the common case for tests that don't exercise prior context.
+func userTurn(text string) []domain.ConversationMessage {
+	return []domain.ConversationMessage{{Role: domain.RoleUser, Text: text, Timestamp: time.Now()}}
+}
+
 func newTestAgent(gen contentGenerator, store finance.Store) *Agent {
 	financeTools := finance.FinanceTools(store)
 	genaiTools := make([]*genai.Tool, len(financeTools))
@@ -78,7 +88,7 @@ func TestAgentReturnsTextForChitChat(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 
-	reply, err := agent.Process(context.Background(), "u1", "oi, tudo bem?", time.Now())
+	reply, err := agent.Process(context.Background(), "u1", userTurn("oi, tudo bem?"), time.Now())
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}
@@ -87,6 +97,37 @@ func TestAgentReturnsTextForChitChat(t *testing.T) {
 	}
 	if gen.calls != 1 {
 		t.Fatalf("expected a single Gemini call for chit-chat, got %d", gen.calls)
+	}
+}
+
+func TestAgentThreadsPriorTurnsIntoContents(t *testing.T) {
+	t.Parallel()
+
+	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
+		textResponse("Seu nome é Emerson."),
+	}}
+	agent := newTestAgent(gen, finance.NewInMemoryStore())
+
+	history := []domain.ConversationMessage{
+		{Role: domain.RoleUser, Text: "meu nome é Emerson", Timestamp: time.Now()},
+		{Role: domain.RoleAssistant, Text: "Prazer, Emerson!", Timestamp: time.Now()},
+		{Role: domain.RoleUser, Text: "qual é o meu nome?", Timestamp: time.Now()},
+	}
+	if _, err := agent.Process(context.Background(), "u1", history, time.Now()); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(gen.firstContents) != 3 {
+		t.Fatalf("expected 3 turns sent to Gemini, got %d", len(gen.firstContents))
+	}
+	// Gemini expects "model" for the assistant role, and the prior user turn must
+	// be present so the model can answer from context.
+	if gen.firstContents[0].Role != "user" || gen.firstContents[1].Role != "model" || gen.firstContents[2].Role != "user" {
+		t.Fatalf("unexpected roles: %q, %q, %q",
+			gen.firstContents[0].Role, gen.firstContents[1].Role, gen.firstContents[2].Role)
+	}
+	if got := gen.firstContents[0].Parts[0].Text; got != "meu nome é Emerson" {
+		t.Fatalf("first turn text not threaded through: %q", got)
 	}
 }
 
@@ -105,7 +146,7 @@ func TestAgentCreatesEntryViaTool(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, store)
 
-	reply, err := agent.Process(context.Background(), "ledger", "paguei 500 de aluguel", time.Now())
+	reply, err := agent.Process(context.Background(), "ledger", userTurn("paguei 500 de aluguel"), time.Now())
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}
@@ -142,7 +183,7 @@ func TestAgentAnswersSummaryQuery(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, store)
 
-	reply, err := agent.Process(context.Background(), "u1", "como estamos este mês?", time.Now())
+	reply, err := agent.Process(context.Background(), "u1", userTurn("como estamos este mês?"), time.Now())
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}
@@ -168,7 +209,7 @@ func TestAgentChainsMultipleToolRounds(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, store)
 
-	reply, err := agent.Process(context.Background(), "ledger", "paguei 500 de aluguel, como ficou o mês?", time.Now())
+	reply, err := agent.Process(context.Background(), "ledger", userTurn("paguei 500 de aluguel, como ficou o mês?"), time.Now())
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}
@@ -196,7 +237,7 @@ func TestAgentRecoversFromToolError(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, store)
 
-	reply, err := agent.Process(context.Background(), "ledger", "gastei nada em aluguel", time.Now())
+	reply, err := agent.Process(context.Background(), "ledger", userTurn("gastei nada em aluguel"), time.Now())
 	if err != nil {
 		t.Fatalf("expected recovery, got error: %v", err)
 	}
@@ -218,7 +259,7 @@ func TestAgentExposesAllFinanceTools(t *testing.T) {
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{textResponse("ok")}}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 
-	if _, err := agent.Process(context.Background(), "u1", "oi", time.Now()); err != nil {
+	if _, err := agent.Process(context.Background(), "u1", userTurn("oi"), time.Now()); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
 
@@ -243,7 +284,7 @@ func TestAgentErrorsOnUnknownTool(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 
-	if _, err := agent.Process(context.Background(), "u1", "apague tudo", time.Now()); err == nil {
+	if _, err := agent.Process(context.Background(), "u1", userTurn("apague tudo"), time.Now()); err == nil {
 		t.Fatal("expected an error for an unknown tool")
 	}
 }
@@ -256,7 +297,7 @@ func TestAgentStopsAfterMaxToolRounds(t *testing.T) {
 	}}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 
-	_, err := agent.Process(context.Background(), "u1", "loop", time.Now())
+	_, err := agent.Process(context.Background(), "u1", userTurn("loop"), time.Now())
 	if err == nil {
 		t.Fatal("expected an error when the tool-calling loop never terminates")
 	}
@@ -271,7 +312,7 @@ func TestAgentPropagatesGeneratorError(t *testing.T) {
 	gen := &scriptedGenerator{err: errors.New("network down")}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 
-	if _, err := agent.Process(context.Background(), "u1", "gastei 50 no mercado", time.Now()); err == nil {
+	if _, err := agent.Process(context.Background(), "u1", userTurn("gastei 50 no mercado"), time.Now()); err == nil {
 		t.Fatal("expected the generator error to propagate")
 	}
 }

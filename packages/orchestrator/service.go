@@ -10,12 +10,21 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/gemini"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/ollama"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
 type Config struct {
 	GeminiAPIKey string
 	FinanceStore finance.Store
+	// ShortTerm persists conversation history. When nil, an in-memory store is
+	// used (fine for local/dev, but lost on every Lambda cold start).
+	ShortTerm ShortTermStore
+	// LLMProvider selects the text generator. "ollama" runs a local open-source
+	// model (dev-only, ADR-012); anything else keeps the Gemini/static path.
+	LLMProvider string
+	OllamaHost  string
+	OllamaModel string
 }
 
 type Service struct {
@@ -29,9 +38,13 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	gen := NewTextGenerator(cfg)
 	stores := NewInMemoryStores()
+	var shortTerm ShortTermStore = stores
+	if cfg.ShortTerm != nil {
+		shortTerm = cfg.ShortTerm
+	}
 	return &Service{
 		generator:        gen,
-		shortTerm:        stores,
+		shortTerm:        shortTerm,
 		longTerm:         stores,
 		shortTermLimit:   10,
 		defaultResponder: "Não consegui gerar uma resposta.",
@@ -39,30 +52,45 @@ func NewService(cfg Config) *Service {
 }
 
 func NewTextGenerator(cfg Config) TextGenerator {
-	if cfg.GeminiAPIKey != "" && cfg.FinanceStore != nil {
+	// Every real agent needs the finance store for its tools; without it there is
+	// nothing to generate against, so fall back to the static responder.
+	if cfg.FinanceStore == nil {
+		return StaticClient{}
+	}
+
+	if cfg.LLMProvider == "ollama" {
+		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore)
+		return &agentGenerator{agent: agent}
+	}
+
+	if cfg.GeminiAPIKey != "" {
 		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore)
 		if err != nil {
 			log.Printf("orchestrator: gemini agent: %v, using static fallback", err)
 		} else {
-			return &geminiGenerator{agent: agent}
+			return &agentGenerator{agent: agent}
 		}
 	}
 	return StaticClient{}
 }
 
-// financeAgent lets tests inject a fake without a real Gemini client.
+// financeAgent is the provider-agnostic agent contract (Gemini or Ollama); tests
+// inject a fake without a real client.
 type financeAgent interface {
-	Process(ctx context.Context, userID, text string, msgTime time.Time) (string, error)
+	Process(ctx context.Context, userID string, history []domain.ConversationMessage, msgTime time.Time) (string, error)
 }
 
-type geminiGenerator struct {
+// agentGenerator adapts any financeAgent to the TextGenerator interface.
+type agentGenerator struct {
 	agent financeAgent
 }
 
-func (g *geminiGenerator) Generate(ctx context.Context, input Input) (Output, error) {
-	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.UserMessage.Text, input.UserMessage.Timestamp)
+func (g *agentGenerator) Generate(ctx context.Context, input Input) (Output, error) {
+	// input.ShortTerm already ends with the current user turn (HandleMessage
+	// appends it before loading), so it is the full conversation to send.
+	reply, err := g.agent.Process(ctx, shared.FinanceLedgerID, input.ShortTerm, input.UserMessage.Timestamp)
 	if err != nil {
-		return Output{}, fmt.Errorf("gemini: %w", err)
+		return Output{}, fmt.Errorf("llm agent: %w", err)
 	}
 	return Output{Text: reply}, nil
 }
@@ -83,15 +111,7 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		return domain.Response{}, err
 	}
 
-	if err := s.shortTerm.Append(ctx, message.UserID, domain.ConversationMessage{
-		Role:      domain.RoleUser,
-		Text:      message.Text,
-		Timestamp: message.Timestamp,
-	}); err != nil {
-		return domain.Response{}, fmt.Errorf("append user message: %w", err)
-	}
-
-	shortTerm, err := s.shortTerm.LoadRecent(ctx, message.UserID, s.shortTermLimit)
+	prior, err := s.shortTerm.LoadRecent(ctx, message.UserID, s.shortTermLimit)
 	if err != nil {
 		return domain.Response{}, fmt.Errorf("load short term memory: %w", err)
 	}
@@ -101,9 +121,19 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		return domain.Response{}, fmt.Errorf("load long term memory: %w", err)
 	}
 
+	userTurn := domain.ConversationMessage{
+		Role:      domain.RoleUser,
+		Text:      message.Text,
+		Timestamp: message.Timestamp,
+	}
+
+	// History sent to the model is the prior turns plus the current message,
+	// assembled in memory. Nothing is persisted until the reply succeeds, so a
+	// failed turn — which the webhook lets WhatsApp re-deliver — can't leave a
+	// duplicate or orphaned user turn behind in the stored history.
 	output, err := s.generator.Generate(ctx, Input{
 		UserMessage:  message,
-		ShortTerm:    shortTerm,
+		ShortTerm:    append(prior, userTurn),
 		LongTerm:     longTerm,
 		SystemPrompt: systemPrompt(),
 	})
@@ -119,6 +149,10 @@ func (s *Service) HandleMessage(ctx context.Context, message domain.Message) (do
 		response.Text = s.defaultResponder
 	}
 
+	// Persist the exchange as a pair only now that generation succeeded.
+	if err := s.shortTerm.Append(ctx, message.UserID, userTurn); err != nil {
+		return domain.Response{}, fmt.Errorf("append user message: %w", err)
+	}
 	if err := s.shortTerm.Append(ctx, message.UserID, domain.ConversationMessage{
 		Role:      domain.RoleAssistant,
 		Text:      response.Text,

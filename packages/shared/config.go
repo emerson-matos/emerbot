@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"log/slog"
 	"os"
 	"strconv"
 )
@@ -16,6 +17,14 @@ func Getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func InitSlog() {
+	level := slog.LevelInfo
+	if Getenv("LOG_LEVEL", "") == "debug" {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 }
 
 func GetenvInt(key string, fallback int) int {
