@@ -85,7 +85,7 @@ clean-lambdas:
 # Test / fmt / lint
 # ---------------------------------------------------------------------------
 test:
-	$(GO) test ./...
+	$(GO) test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1 && rm -f coverage.out
 
 fmt:
 	gofumpt -w .
