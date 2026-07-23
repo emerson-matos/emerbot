@@ -13,13 +13,15 @@ services:
   # Serves the model. First `ollama pull` downloads ~5GB into the named volume;
   # CPU inference is slow (seconds per reply).
   ollama:
-    image: ollama/ollama:latest
+    image: docker.io/ollama/ollama:latest
     container_name: emerbot-ollama
     restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+    devices:
+      - nvidia.com/gpu=all
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -29,14 +31,14 @@ services:
   # One-shot: pulls the model on the ollama server, then exits. The webhook waits
   # for this to complete so the first message doesn't race the download.
   ollama-init:
-    image: ollama/ollama:latest
+    image: docker.io/ollama/ollama:latest
     container_name: emerbot-ollama-init
     depends_on:
       ollama:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
     entrypoint: ["/bin/sh", "-c", "ollama pull $${OLLAMA_MODEL}"]
     restart: "no"
 
@@ -48,7 +50,8 @@ services:
     environment:
       LLM_PROVIDER: ollama
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
+      LOG_LEVEL: debug
 
 volumes:
   ollama-models:

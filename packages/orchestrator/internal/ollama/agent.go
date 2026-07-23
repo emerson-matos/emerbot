@@ -10,7 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -91,29 +91,42 @@ func (a *Agent) Process(ctx context.Context, userID string, history []domain.Con
 	}
 
 	for round := range maxToolRounds {
+		slog.Debug("ollama: sending chat", "round", round+1, "max", maxToolRounds)
+
+		reqJSON, _ := json.Marshal(messages)
+		slog.Debug("ollama: request", "round", round+1, "messages", string(reqJSON))
+
 		resp, err := a.chat(ctx, messages)
 		if err != nil {
 			return "", fmt.Errorf("ollama chat (round %d): %w", round, err)
 		}
 
 		reply := resp.Message
+		replyJSON, _ := json.Marshal(reply)
+		slog.Debug("ollama: response", "round", round+1, "message", string(replyJSON))
 		if len(reply.ToolCalls) == 0 {
 			if text := strings.TrimSpace(reply.Content); text != "" {
+				slog.Debug("ollama: text reply", "round", round+1, "chars", len(text))
 				return text, nil
 			}
 			return "", fmt.Errorf("ollama returned neither text nor tool call (round %d)", round)
 		}
 
-		// Echo the assistant's tool-call turn, then answer each call.
+		slog.Debug("ollama: tool calls", "round", round+1, "count", len(reply.ToolCalls))
+
 		messages = append(messages, reply)
 		for _, tc := range reply.ToolCalls {
+			args, _ := json.Marshal(tc.Function.Arguments)
+			slog.Debug("ollama: exec tool", "round", round+1, "tool", tc.Function.Name, "args", string(args))
+
 			result, err := a.runTool(ctx, userID, tc)
 			payload := map[string]any{"output": result}
 			if err != nil {
-				log.Printf("ollama agent tool %s error: %v", tc.Function.Name, err)
+				slog.Error("ollama: tool error", "round", round+1, "tool", tc.Function.Name, "error", err)
 				payload = map[string]any{"error": err.Error()}
 			}
 			body, _ := json.Marshal(payload)
+			slog.Debug("ollama: tool result", "round", round+1, "tool", tc.Function.Name, "result", string(body))
 			messages = append(messages, message{
 				Role:     "tool",
 				Content:  string(body),
@@ -122,6 +135,7 @@ func (a *Agent) Process(ctx context.Context, userID string, history []domain.Con
 		}
 	}
 
+	slog.Error("ollama: exceeded max rounds", "max", maxToolRounds)
 	return "", fmt.Errorf("ollama agent: exceeded %d tool rounds", maxToolRounds)
 }
 

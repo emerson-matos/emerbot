@@ -243,79 +243,175 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>📱 WhatsApp Simulator — Farmácia</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Simulator — Farmácia Financeira</title>
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background: #f0f2f5; }
-    .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 16px; }
-    h2 { margin: 0 0 4px; color: #128c7e; }
-    .subtitle { color: #667781; font-size: 14px; margin-bottom: 20px; }
-    label { display: block; font-size: 13px; font-weight: 600; color: #3b4a54; margin-bottom: 4px; }
-    input, textarea { width: 100%; border: 1px solid #d1d7db; border-radius: 8px; padding: 10px 12px; font-size: 15px; margin-bottom: 12px; }
-    textarea { resize: vertical; }
-    button { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
-    button:hover { background: #1da851; }
-    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    .chip { padding: 6px 12px; background: #e9f5ee; color: #128c7e; border-radius: 16px; font-size: 13px; cursor: pointer; border: 1px solid #c3e6cb; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #f0f2f5; color: #111b21;
+      display: flex; justify-content: center; min-height: 100vh; padding: 24px;
+    }
+    .app {
+      max-width: 720px; width: 100%;
+      background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+      display: flex; flex-direction: column; height: calc(100vh - 48px); max-height: 800px;
+    }
+    .header { padding: 20px 24px 12px; border-bottom: 1px solid #e9edef; flex-shrink: 0; }
+    .header h1 { font-size: 20px; color: #128c7e; }
+    .header p { font-size: 13px; color: #667781; margin-top: 2px; }
+
+    .history {
+      flex: 1; overflow-y: auto; padding: 12px 24px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .history:empty::after {
+      content: 'Nenhuma mensagem ainda — envie algo acima.';
+      display: block; text-align: center; color: #8696a0; font-size: 14px;
+      margin: auto;
+    }
+    .entry { padding: 8px 12px; border-left: 3px solid #25d366; margin: 2px 0; }
+    .entry.bot { border-left-color: #128c7e; }
+    .entry .meta { font-size: 11px; color: #8696a0; margin-bottom: 2px; }
+    .entry .meta .role { font-weight: 600; }
+    .entry .meta .time { float: right; }
+    .entry .text {
+      font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    }
+    .entry .text.error { color: #dc3545; }
+    .entry .text.loading { color: #8696a0; font-style: italic; }
+
+    .input-area { padding: 12px 24px 20px; border-top: 1px solid #e9edef; flex-shrink: 0; }
+    .input-row { display: flex; gap: 8px; align-items: flex-start; }
+    .input-row input,
+    .input-row textarea {
+      flex: 1; border: 1px solid #d1d7db; border-radius: 8px; padding: 10px 12px;
+      font-size: 15px; font-family: inherit; resize: none;
+    }
+    .input-row textarea { min-height: 44px; max-height: 120px; }
+    .input-row button {
+      padding: 10px 20px; background: #25d366; color: white; border: none;
+      border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+      white-space: nowrap; margin-top: 0;
+    }
+    .input-row button:hover { background: #1da851; }
+    .input-row button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .user-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .user-row label { font-size: 13px; font-weight: 600; color: #3b4a54; }
+    .user-row input {
+      flex: 1; border: 1px solid #d1d7db; border-radius: 8px; padding: 6px 10px;
+      font-size: 14px; max-width: 120px;
+    }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .chip {
+      padding: 4px 10px; background: #e9f5ee; color: #128c7e;
+      border-radius: 12px; font-size: 12px; cursor: pointer; border: 1px solid #c3e6cb;
+      white-space: nowrap;
+    }
     .chip:hover { background: #c3e6cb; }
-    pre { background: #f0f2f5; border-radius: 8px; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 13px; min-height: 60px; }
-    .status { font-size: 12px; color: #667781; margin-top: 8px; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h2>📱 WhatsApp Simulator</h2>
-    <p class="subtitle">Simula mensagens do seu pai para o bot financeiro</p>
-
-    <label>Usuário</label>
-    <input id="userId" value="pai" />
-
-    <label>Exemplos rápidos</label>
-    <div class="examples">
-      <span class="chip" onclick="fill('/resumo')">/resumo</span>
-      <span class="chip" onclick="fill('/despesa 500 aluguel')">/despesa 500 aluguel</span>
-      <span class="chip" onclick="fill('/despesa 500 aluguel 10/07')">/despesa 500 aluguel 10/07</span>
-      <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
-      <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
-      <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>
-      <span class="chip" onclick="fill('/recorrente pagar 350 aluguel mensal 12')">/recorrente pagar 350 aluguel mensal 12</span>
-      <span class="chip" onclick="fill('/despesa 1500,50 fornecedor_medicamentos Distribuidora')">/despesa 1500,50 fornecedor</span>
-      <span class="chip" onclick="fill('/goal')">/goal</span>
-      <span class="chip" onclick="fill('/meta 80000 60000')">/meta 80000 60000</span>
+  <div class="app">
+    <div class="header">
+      <h1>📱 WhatsApp Simulator</h1>
+      <p>Simula o pai mandando mensagem pro bot financeiro</p>
     </div>
 
-    <label>Mensagem</label>
-    <textarea id="text" rows="3" placeholder="/despesa 500 aluguel"></textarea>
+    <div class="history" id="history"></div>
 
-    <button onclick="send()">📤 Enviar Mensagem</button>
-  </div>
+    <div class="input-area">
+      <div class="user-row">
+        <label for="userId">Usuário</label>
+        <input id="userId" value="pai" />
+      </div>
 
-  <div class="card">
-    <label>Resposta do Bot</label>
-    <pre id="out">—</pre>
-    <p class="status" id="status"></p>
+      <div class="chips">
+        <span class="chip" onclick="fill('/resumo')">/resumo</span>
+        <span class="chip" onclick="fill('/despesa 500 aluguel')">/despesa 500 aluguel</span>
+        <span class="chip" onclick="fill('/despesa 500 aluguel 10/07')">/despesa 500 aluguel 10/07</span>
+        <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
+        <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
+        <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>
+        <span class="chip" onclick="fill('/recorrente pagar 350 aluguel mensal 12')">/recorrente pagar 350 aluguel mensal 12</span>
+        <span class="chip" onclick="fill('/goal')">/goal</span>
+        <span class="chip" onclick="fill('/meta 80000 60000')">/meta 80000 60000</span>
+      </div>
+
+      <div class="input-row">
+        <textarea id="text" rows="1" placeholder="Digite sua mensagem..." oninput="autoHeight(this)"></textarea>
+        <button id="sendBtn" onclick="send()">📤 Enviar</button>
+      </div>
+    </div>
   </div>
 
   <script>
+    const STORAGE_KEY = 'wa-chat-history';
+    let messages = [];
+
+    function load() {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        if (raw) messages = JSON.parse(raw);
+      } catch {}
+    }
+
+    function save() {
+      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch {}
+    }
+
+    function render() {
+      const el = document.getElementById('history');
+      el.innerHTML = messages.map(m => {
+        const cls = m.role === 'bot' ? 'entry bot' : 'entry';
+        const textCls = m.error ? 'text error' : m.loading ? 'text loading' : 'text';
+        return '<div class="' + cls + '">' +
+          '<div class="meta"><span class="role">' + m.label + '</span><span class="time">' + m.time + '</span></div>' +
+          '<div class="' + textCls + '">' + esc(m.text) + '</div>' +
+          '</div>';
+      }).join('');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function now() { return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+
     function fill(text) {
       document.getElementById('text').value = text;
+      autoHeight(document.getElementById('text'));
       document.getElementById('text').focus();
     }
+
+    function autoHeight(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
     async function send() {
-      const text = document.getElementById('text').value.trim();
-      if (!text) return;
-      document.getElementById('out').textContent = '...';
-      document.getElementById('status').textContent = '';
+      const textEl = document.getElementById('text');
+      const btn = document.getElementById('sendBtn');
+      const text = textEl.value.trim();
+      if (!text || btn.disabled) return;
+
+      const userId = document.getElementById('userId').value.trim() || 'pai';
+
+      messages.push({ role: 'user', label: 'Você', text, time: now() });
+      const loadingIdx = messages.length;
+      messages.push({ role: 'bot', label: 'Bot', text: '...', time: now(), loading: true });
+      textEl.value = ''; autoHeight(textEl); btn.disabled = true;
+      render(); save();
+
       try {
         const res = await fetch('/send', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            user_id: document.getElementById('userId').value || 'pai',
-            text,
-          })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, text })
         });
         const data = await res.json();
+
         let reply = '—';
         try {
           const body = JSON.parse(data.body);
@@ -323,15 +419,21 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
         } catch {
           reply = data.body || data.error || JSON.stringify(data, null, 2);
         }
-        document.getElementById('out').textContent = reply;
-        document.getElementById('status').textContent = 'HTTP ' + data.status_code + ' · ' + new Date().toLocaleTimeString('pt-BR');
+
+        messages[loadingIdx] = { role: 'bot', label: 'Bot', text: reply, time: now() };
       } catch(e) {
-        document.getElementById('out').textContent = 'Erro: ' + e.message;
+        messages[loadingIdx] = { role: 'bot', label: 'Bot', text: 'Erro: ' + e.message, time: now(), error: true };
       }
+
+      btn.disabled = false; render(); save();
+      textEl.focus();
     }
+
     document.getElementById('text').addEventListener('keydown', e => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
+
+    load(); render();
   </script>
 </body>
 </html>`))
