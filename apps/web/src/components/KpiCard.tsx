@@ -1,18 +1,12 @@
+import { Children, isValidElement, type ReactNode, type ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
-import { formatBRL } from '@/lib/format'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral'
 
-interface KpiCardProps {
-  title: string
-  value: number
-  icon: LucideIcon
-  tone: KpiTone
-  subtitle?: string
-}
-
-const toneVar: Record<KpiTone, string> = {
+export const toneVar: Record<KpiTone, string> = {
   positive: 'var(--success)',
   negative: 'var(--destructive)',
   info: 'var(--info)',
@@ -20,33 +14,121 @@ const toneVar: Record<KpiTone, string> = {
   neutral: 'var(--muted-foreground)',
 }
 
-export default function KpiCard({ title, value, icon: Icon, tone, subtitle }: KpiCardProps) {
-  const c = toneVar[tone]
+interface KpiCardProps {
+  tone?: KpiTone
+  isLoading?: boolean
+  isError?: boolean
+  errorMessage?: string
+  className?: string
+  children?: ReactNode
+}
+
+export default function KpiCard({
+  tone = 'neutral',
+  isLoading,
+  isError,
+  errorMessage = 'Erro ao carregar',
+  className,
+  children,
+}: KpiCardProps) {
+  const hasActions = Children.toArray(children)
+    .filter(isValidElement)
+    .some(
+      (child) =>
+        (child.type as ComponentType)?.displayName === 'KpiCardActions',
+    )
+
+  if (isLoading) {
+    return (
+      <Card className={cn('relative overflow-hidden', className)}>
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-1"
+          style={{ background: toneVar.neutral }}
+        />
+        <CardContent className="flex grow items-center justify-center">
+          <Skeleton className="size-full rounded-xl" />
+        </CardContent>
+        {hasActions && <KpiCardActions />}
+      </Card>
+    )
+  }
+
+  if (isError) {
+    return (
+      <Card className={cn('relative overflow-hidden', className)}>
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-1"
+          style={{ background: toneVar.negative }}
+        />
+        <CardContent className="flex grow items-center justify-center">
+          <p className="text-xs text-destructive">{errorMessage}</p>
+        </CardContent>
+        {hasActions && <KpiCardActions />}
+      </Card>
+    )
+  }
+
   return (
-    <Card className="relative min-h-26 overflow-hidden">
-      {/* accent spine */}
+    <Card className={cn('relative overflow-hidden', className)}>
       <span
         aria-hidden
         className="absolute inset-y-0 left-0 w-1"
-        style={{ background: c }}
+        style={{ background: toneVar[tone] }}
       />
-      <CardContent className="flex items-start justify-between gap-3 pl-5">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {title}
-          </p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: c }}>
-            {formatBRL(value)}
-          </p>
-          {subtitle && <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>}
-        </div>
-        <span
-          className="grid size-9 shrink-0 place-items-center rounded-lg"
-          style={{ background: `color-mix(in oklch, ${c} 14%, transparent)`, color: c }}
-        >
-          <Icon className="size-[18px]" />
-        </span>
-      </CardContent>
+      {children}
     </Card>
   )
 }
+
+interface KpiCardContentProps {
+  icon: LucideIcon
+  tone: KpiTone
+  className?: string
+  children?: ReactNode
+}
+
+export function KpiCardContent({
+  icon: Icon,
+  tone,
+  className,
+  children,
+}: KpiCardContentProps) {
+  const c = toneVar[tone]
+  return (
+    <CardContent
+      className={cn('flex grow items-start justify-between gap-3 pl-5', className)}
+    >
+      <div className="min-w-0">{children}</div>
+      <span
+        className="grid size-9 shrink-0 place-items-center rounded-lg"
+        style={{
+          background: `color-mix(in oklch, ${c} 14%, transparent)`,
+          color: c,
+        }}
+      >
+        <Icon className="size-[18px]" />
+      </span>
+    </CardContent>
+  )
+}
+
+interface KpiCardActionsProps {
+  className?: string
+  children?: ReactNode
+}
+
+export function KpiCardActions({ className, children }: KpiCardActionsProps) {
+  return (
+    <div
+      className={cn(
+        'flex min-h-9 items-center px-(--card-spacing) pl-5',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+KpiCardActions.displayName = 'KpiCardActions'

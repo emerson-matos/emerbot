@@ -5,7 +5,6 @@ import {
 import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import ErrorState from '@/components/ErrorState'
 import { categoricalPalette } from '@/lib/chart'
 import { categoryLabels } from '@/lib/categories'
 import {
@@ -24,8 +23,9 @@ export default function MonthlyExpent() {
   if (categoriesQuery.isLoading || entriesQuery.isLoading) {
     return <Card className="min-h-52"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
+
   if (categoriesQuery.isError || entriesQuery.isError) {
-    return <Card className="min-h-52"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar gastos do mês" /></CardContent></Card>
+    return <Card className="min-h-52"><CardContent className="flex grow items-center justify-center"><p className="text-xs text-destructive">Erro ao carregar gastos do mês</p></CardContent></Card>
   }
 
   const categories = categoriesQuery.data?.categories ?? []

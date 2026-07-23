@@ -3,7 +3,6 @@ import { Target } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import ErrorState from '@/components/ErrorState'
 import { formatBRL } from '@/lib/format'
 import { useGoal, useMonthlySummary } from '../api/queries'
 
@@ -29,8 +28,9 @@ export default function GoalCard() {
   if (summaryQuery.isLoading || goalQuery.isLoading) {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
+
   if (summaryQuery.isError || goalQuery.isError) {
-    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar meta do mês" /></CardContent></Card>
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><p className="text-xs text-destructive">Erro ao carregar meta do mês</p></CardContent></Card>
   }
 
   const actualIncome = summary?.TotalIncome ?? 0
