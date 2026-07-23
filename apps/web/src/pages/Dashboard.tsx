@@ -4,7 +4,7 @@ import {
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  useMonthlySummary, useCashFlow, useEntries, useMarkPaidMutation,
+  useMonthlySummary, useCashFlow, useEntries, useMarkPaidMutation, useDeleteEntryMutation,
 } from '../api/queries'
 import KpiCard from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
@@ -88,6 +88,7 @@ export default function Dashboard() {
   const cashflowQuery = useCashFlow(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
   const markPaid = useMarkPaidMutation()
+  const deleteEntry = useDeleteEntryMutation()
 
   const cashflow = cashflowQuery.data?.points ?? []
   const entries = entriesQuery.data?.entries ?? []
@@ -127,6 +128,7 @@ export default function Dashboard() {
         entries={entries}
         isLoading={entriesQuery.isLoading}
         onMarkPaid={(id: string) => markPaid.mutate(id)}
+        onDelete={(id: string) => deleteEntry.mutate(id)}
       />
     </div>
   )

@@ -198,6 +198,24 @@ export function useCreateEntryMutation() {
   });
 }
 
+export function useDeleteEntryMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => api.entries.delete(id),
+    onSuccess: () => {
+      toast.success("Transação excluída.");
+    },
+    onError: () => {
+      toast.error("Não foi possível excluir a transação.");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+    },
+  });
+}
+
 export class InvalidCredentialsError extends Error {}
 type LoginRequest = {
   email: string;
