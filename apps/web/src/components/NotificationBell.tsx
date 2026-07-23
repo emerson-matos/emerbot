@@ -40,12 +40,12 @@ export default function NotificationBell() {
       >
         <Bell className="size-4" />
         {hasNotifications && (
-          <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-background" />
+          <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive ring-2 ring-background" />
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-30 w-80 overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10">
+        <div className="absolute top-11 right-0 z-30 w-80 overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10">
           <div className="border-b border-border px-4 py-3 text-sm font-semibold">
             Notificações
           </div>

@@ -38,13 +38,13 @@ export default function WorstMonth() {
       className="min-h-26"
     >
       <KpiCardContent icon={CalendarX} tone="negative">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pior Mês</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Pior Mês</p>
         {worstMonth ? (
           <>
-            <p className="mt-1 text-2xl font-semibold tabular-nums text-destructive">
+            <p className="mt-1 text-2xl font-semibold text-destructive tabular-nums">
               {formatBRL(worstMonth.income - worstMonth.expense)}
             </p>
-            <p className="mt-1 text-xs capitalize text-muted-foreground">{worstMonth.month}</p>
+            <p className="mt-1 text-xs text-muted-foreground capitalize">{worstMonth.month}</p>
           </>
         ) : (
           <p className="mt-1 text-xs text-muted-foreground">sem dados por enquanto</p>

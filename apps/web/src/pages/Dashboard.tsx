@@ -31,7 +31,7 @@ function ExpenseTotal() {
       className="min-h-26"
     >
       <KpiCardContent icon={TrendingDown} tone="negative">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Total Despesas</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Total Despesas</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.negative }}>
           {formatBRL(summary?.TotalExpense ?? 0)}
         </p>
@@ -58,7 +58,7 @@ function BalanceCard() {
       className="min-h-26"
     >
       <KpiCardContent icon={Wallet} tone={balanceTone}>
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Saldo do Mês</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Saldo do Mês</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar[balanceTone] }}>
           {formatBRL(balance)}
         </p>
@@ -83,7 +83,7 @@ function TotalReceivable() {
       className="min-h-26"
     >
       <KpiCardContent icon={TrendingUp} tone="positive">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Total Receitas</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Total Receitas</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
           {formatBRL(summary?.TotalIncome ?? 0)}
         </p>
@@ -116,7 +116,7 @@ function Receivables() {
       className="min-h-26"
     >
       <KpiCardContent icon={Clock} tone="info">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">A Receber</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">A Receber</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
           {formatBRL(totalReceivable)}
         </p>

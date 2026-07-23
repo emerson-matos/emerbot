@@ -44,7 +44,7 @@ function Toggle({
       <span
         className={cn(
           'absolute top-0.5 size-5 rounded-full bg-white transition-[left]',
-          checked ? 'left-[22px]' : 'left-0.5',
+          checked ? 'left-5.5' : 'left-0.5',
         )}
       />
     </button>
@@ -142,7 +142,7 @@ function WhatsAppPreferences() {
         </p>
 
         <div className="space-y-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
             Enviar alerta quando
           </p>
           {ALERT_CHECKS.map(({ key, label }) => (

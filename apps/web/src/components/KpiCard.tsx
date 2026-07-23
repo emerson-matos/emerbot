@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 export type KpiTone = 'positive' | 'negative' | 'info' | 'warning' | 'neutral' | 'primary'
 
+// oxlint-disable-next-line react/only-export-components
 export const toneVar: Record<KpiTone, string> = {
   positive: 'var(--success)',
   negative: 'var(--destructive)',

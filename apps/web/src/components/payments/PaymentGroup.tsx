@@ -29,13 +29,13 @@ export default function PaymentGroup({ group, onMarkPaid, onDelete }: Props) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-6">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
           {group.kind === 'status' && <StatusDot tone={group.tone} />}
           <span
             className={cn(
               'truncate',
               group.kind === 'status'
-                ? 'text-xs font-semibold uppercase tracking-wide'
+                ? 'text-xs font-semibold tracking-wide uppercase'
                 : 'text-sm font-medium capitalize',
             )}
           >

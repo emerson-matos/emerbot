@@ -29,7 +29,7 @@ export default function ToPayToday() {
       className="min-h-39"
     >
       <KpiCardContent icon={CalendarClock} tone="warning">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">A Pagar Hoje</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">A Pagar Hoje</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.warning }}>
           {formatBRL(payableToday)}
         </p>
@@ -40,7 +40,7 @@ export default function ToPayToday() {
           <Button
             variant="outline"
             size="sm"
-            className="w-full border-warning text-warning hover:bg-warning/10 hover:text-warning"
+            className="w-full border-warning text-warning hover:bg-warning/10"
             disabled={markPaid.isPending}
             onClick={payAllToday}
           >

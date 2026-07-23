@@ -23,7 +23,8 @@ export default function MobileSidebar({
         onClick={onClose}
       />
 
-      <aside className="absolute inset-y-0 left-0 flex w-64 flex-col gap-6 border-r border-sidebar-border bg-sidebar p-4 [animation:toast-in_.2s_ease-out]">
+      {/* oxlint-disable-next-line tailwindcss/enforce-sort-order -- custom animation token has no known sort position */}
+      <aside className="absolute inset-y-0 left-0 flex w-64 flex-col gap-6 border-r border-sidebar-border bg-sidebar p-4 animate-toast-in">
         <div className="flex items-center justify-between pt-2">
           <Brand />
 

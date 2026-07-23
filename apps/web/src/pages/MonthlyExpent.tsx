@@ -75,10 +75,10 @@ export default function MonthlyExpent() {
         )}
         {worstDay && (
           <div className="flex items-center justify-between border-t border-border pt-3">
-            <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               <Info className="size-3.5" /> Pior dia — {worstDay.date}
             </span>
-            <span className="text-sm font-semibold tabular-nums text-destructive">{formatBRL(worstDay.total)}</span>
+            <span className="text-sm font-semibold text-destructive tabular-nums">{formatBRL(worstDay.total)}</span>
           </div>
         )}
       </CardContent>

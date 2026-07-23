@@ -105,7 +105,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={TrendingUp} tone="positive">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Progresso Faturamento</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Progresso Faturamento</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
               {revPct.toFixed(0)}%
             </p>
@@ -121,7 +121,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={TrendingDown} tone="negative">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Progresso Despesas</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Progresso Despesas</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.negative }}>
               {expPct.toFixed(0)}%
             </p>
@@ -137,7 +137,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={Target} tone="info">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Meses na Meta</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Meses na Meta</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
               {monthsHit}/{months3.length}
             </p>
@@ -153,7 +153,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={BarChart3} tone="primary">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Faturamento Médio</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Faturamento Médio</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.primary }}>
               {formatBRL(avgRevenue)}
             </p>

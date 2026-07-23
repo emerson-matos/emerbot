@@ -43,7 +43,7 @@ export function LoginForm() {
     <div className="rounded-2xl border bg-card/80 p-8 shadow-xl backdrop-blur-md">
       <div className="p-2">
         <div className="m-4 text-center">
-          <span className="mx-auto m-2 grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+          <span className="m-2 mx-auto grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
             <Pill className="size-7" />
           </span>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">Drogaria Nova Farma</h1>
