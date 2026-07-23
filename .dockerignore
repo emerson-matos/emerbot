@@ -1,0 +1,8 @@
+.git/
+infra/opentofu/
+node_modules/
+dist/
+.vscode/
+.direnv/
+*.out
+coverage.out
