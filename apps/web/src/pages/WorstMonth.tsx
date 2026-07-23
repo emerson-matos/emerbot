@@ -17,7 +17,7 @@ export default function WorstMonth() {
 
   const monthlyData = trendQueries.every(q => q.isSuccess)
     ? trendQueries.map((q, i) => ({
-      month: format(new Date(months3[i] + '-01'), 'MMM', { locale: ptBR }),
+      month: format(new Date(months3[i] + '-01'), 'MMMM', { locale: ptBR }),
       income: q.data!.TotalIncome,
       expense: q.data!.TotalExpense,
     }))
