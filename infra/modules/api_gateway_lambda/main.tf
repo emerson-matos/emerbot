@@ -147,6 +147,7 @@ resource "aws_lambda_function" "webhook" {
       CONVERSATIONS_TABLE     = aws_dynamodb_table.conversations.name
       META_GRAPH_API_TOKEN    = var.meta_graph_api_token_value
       GEMINI_API_KEY          = var.gemini_api_key_value
+      DASHBOARD_URL           = var.dashboard_origin
     }
   }
 }

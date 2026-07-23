@@ -45,7 +45,7 @@ type Agent struct {
 // NewAgent builds an Ollama-backed finance agent. Empty host/model fall back to
 // the local defaults. It never dials Ollama here — the connection is lazy, made
 // on the first Process call.
-func NewAgent(host, model string, store finance.Store) *Agent {
+func NewAgent(host, model string, store finance.Store, dashboardURL string) *Agent {
 	if host == "" {
 		host = DefaultHost
 	}
@@ -53,7 +53,7 @@ func NewAgent(host, model string, store finance.Store) *Agent {
 		model = DefaultModel
 	}
 
-	financeTools := finance.FinanceTools(store)
+	financeTools := finance.FinanceTools(store, dashboardURL)
 	tools := make([]tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {

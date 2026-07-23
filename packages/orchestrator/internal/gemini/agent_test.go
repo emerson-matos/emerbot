@@ -66,7 +66,7 @@ func userTurn(text string) []domain.ConversationMessage {
 }
 
 func newTestAgent(gen contentGenerator, store finance.Store) *Agent {
-	financeTools := finance.FinanceTools(store)
+	financeTools := finance.FinanceTools(store, "")
 	genaiTools := make([]*genai.Tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {

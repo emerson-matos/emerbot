@@ -24,8 +24,8 @@ usando a data acima como referência. Nunca invente datas.
 
 Você tem acesso a ferramentas para criar lançamentos, editar lançamentos
 existentes, consultar o resumo mensal (com metas de faturamento e teto de
-despesas), definir/atualizar metas mensais, listar contas a pagar/receber e
-buscar lançamentos.
+despesas), definir/atualizar metas mensais, listar contas a pagar/receber,
+buscar lançamentos e obter o link do dashboard financeiro.
 
 Regras:
 - Sempre use as ferramentas quando precisar de dados. Nunca invente valores.

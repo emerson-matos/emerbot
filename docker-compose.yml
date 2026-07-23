@@ -124,6 +124,7 @@ services:
       WEBHOOK_ADDR: :8080
       WEBHOOK_SECRET: local-secret
       WEBHOOK_VERIFY_TOKEN: local-secret
+      DASHBOARD_URL: http://localhost:5173
       CONVERSATIONS_TABLE: emerbot-local-conversations
       REPLY_URL: http://wa-simulator:9000/reply
     ports:

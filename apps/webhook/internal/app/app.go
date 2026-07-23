@@ -187,6 +187,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		cfg.LLMProvider = shared.Getenv("LLM_PROVIDER", "")
 		cfg.OllamaHost = shared.Getenv("OLLAMA_HOST", "")
 		cfg.OllamaModel = shared.Getenv("OLLAMA_MODEL", "")
+		cfg.DashboardURL = shared.Getenv("DASHBOARD_URL", "")
 	}
 
 	// Short-term chat history lives in its own TTL-managed table so the bot keeps

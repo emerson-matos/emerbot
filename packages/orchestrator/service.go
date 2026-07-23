@@ -17,9 +17,8 @@ import (
 type Config struct {
 	GeminiAPIKey string
 	FinanceStore finance.Store
-	// ShortTerm persists conversation history. When nil, an in-memory store is
-	// used (fine for local/dev, but lost on every Lambda cold start).
-	ShortTerm ShortTermStore
+	DashboardURL string
+	ShortTerm    ShortTermStore
 	// LLMProvider selects the text generator. "ollama" runs a local open-source
 	// model (dev-only, ADR-012); anything else keeps the Gemini/static path.
 	LLMProvider string
@@ -59,12 +58,12 @@ func NewTextGenerator(cfg Config) TextGenerator {
 	}
 
 	if cfg.LLMProvider == "ollama" {
-		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore)
+		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore, cfg.DashboardURL)
 		return &agentGenerator{agent: agent}
 	}
 
 	if cfg.GeminiAPIKey != "" {
-		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore)
+		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore, cfg.DashboardURL)
 		if err != nil {
 			log.Printf("orchestrator: gemini agent: %v, using static fallback", err)
 		} else {

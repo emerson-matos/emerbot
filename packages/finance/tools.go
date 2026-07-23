@@ -26,14 +26,41 @@ type Tool struct {
 }
 
 // FinanceTools builds the set of financial tools exposed to the Gemini agent.
-func FinanceTools(store Store) []Tool {
-	return []Tool{
+// dashboardURL, when non-empty, includes a get_dashboard_link tool so the model
+// can respond to "qual o link do dashboard?" with the real dashboard URL.
+func FinanceTools(store Store, dashboardURL string) []Tool {
+	tools := []Tool{
 		createEntryTool(store),
 		editEntryTool(store),
 		resumoMensalTool(store),
 		definirMetaTool(store),
 		listDueEntriesTool(store),
 		searchEntriesTool(store),
+	}
+	if dashboardURL != "" {
+		tools = append(tools, dashboardLinkTool(dashboardURL))
+	}
+	return tools
+}
+
+// --- get_dashboard_link ---
+
+func dashboardLinkTool(url string) Tool {
+	const name = "get_dashboard_link"
+
+	return Tool{
+		Name:        name,
+		Description: "Retorna o link e a descrição do dashboard financeiro, onde o usuário pode ver gráficos, fluxo de caixa e gerenciar lançamentos.",
+		Parameters: &genai.Schema{
+			Type:       genai.TypeObject,
+			Properties: map[string]*genai.Schema{},
+		},
+		Handler: func(_ context.Context, _ string, _ json.RawMessage) (any, error) {
+			return map[string]any{
+				"url":         url,
+				"description": "Dashboard financeiro da Farmácia — gráficos de receitas e despesas, fluxo de caixa diário, metas e gerenciamento de lançamentos.",
+			}, nil
+		},
 	}
 }
 

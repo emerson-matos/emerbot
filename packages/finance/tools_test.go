@@ -11,7 +11,7 @@ import (
 
 func handlerFor(t *testing.T, store Store, name string) ToolFunc {
 	t.Helper()
-	for _, tool := range FinanceTools(store) {
+	for _, tool := range FinanceTools(store, "") {
 		if tool.Name == name {
 			return tool.Handler
 		}

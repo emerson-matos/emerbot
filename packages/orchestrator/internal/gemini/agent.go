@@ -32,7 +32,7 @@ type Agent struct {
 	toolHandlers map[string]finance.ToolFunc
 }
 
-func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, error) {
+func NewAgent(ctx context.Context, apiKey string, store finance.Store, dashboardURL string) (*Agent, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
@@ -41,7 +41,7 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store) (*Agent, 
 		return nil, fmt.Errorf("create gemini client: %w", err)
 	}
 
-	financeTools := finance.FinanceTools(store)
+	financeTools := finance.FinanceTools(store, dashboardURL)
 	genaiTools := make([]*genai.Tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {
