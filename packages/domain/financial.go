@@ -1,13 +1,17 @@
 package domain
 
 import (
-	"encoding/json"
+	"errors"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 )
 
 type (
+	EntryID       string
 	EntryType     string
 	PaymentStatus string
+	EntrySource   string
 )
 
 const (
@@ -16,25 +20,38 @@ const (
 
 	PaymentStatusPending PaymentStatus = "pending"
 	PaymentStatusPaid    PaymentStatus = "paid"
+
+	SourceWhatsApp EntrySource = "whatsapp"
+	SourceManual   EntrySource = "manual"
+	SourceUnknown  EntrySource = "unknown"
 )
+
+func NormalizeSource(s string) EntrySource {
+	switch EntrySource(s) {
+	case SourceWhatsApp, SourceManual, SourceUnknown:
+		return EntrySource(s)
+	default:
+		return SourceUnknown
+	}
+}
 
 // FinancialEntry represents a single financial transaction for the pharmacy.
 // Amount is stored in centavos (R$1,00 = 100) to avoid floating-point issues.
 type FinancialEntry struct {
-	UserID        string
-	EntryID       string
-	Date          time.Time
-	Amount        int64 // centavos: R$500,00 = 50000
-	Category      string
-	Type          EntryType
-	Description   string
-	DueDate       *time.Time
-	PaymentStatus PaymentStatus
-	PaymentDate   *time.Time
-	Supplier      string
-	Source        string // "whatsapp" | "manual"
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	UserID          string
+	EntryID         EntryID
+	TransactionDate CalendarDate
+	DueDate         *CalendarDate
+	PaymentDate     *CalendarDate
+	Amount          int64
+	Category        string
+	Description     string
+	Supplier        string
+	Type            EntryType
+	PaymentStatus   PaymentStatus
+	Source          EntrySource
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 
 	// RecurrenceID groups occurrences generated together by /recorrente.
 	// Empty for one-off entries.
@@ -43,85 +60,96 @@ type FinancialEntry struct {
 	RecurrenceTotal int // total occurrences in the series
 }
 
-// SK returns the DynamoDB sort key: ENTRY#<date>#<entryID>
-func (e FinancialEntry) SK() string {
-	return "ENTRY#" + e.Date.Format("2006-01-02") + "#" + e.EntryID
+// NewFinancialEntryInput contains the caller-provided values for a new entry.
+type NewFinancialEntryInput struct {
+	UserID          string
+	TransactionDate CalendarDate
+	DueDate         *CalendarDate
+	PaymentDate     *CalendarDate
+	Amount          int64
+	Category        string
+	Description     string
+	Supplier        string
+	Type            EntryType
+	PaymentStatus   PaymentStatus
+	Source          EntrySource
+	RecurrenceID    string
+	RecurrenceIndex int
+	RecurrenceTotal int
 }
 
-// MarshalJSON serializes Date, DueDate, and PaymentDate as plain
-// "YYYY-MM-DD" calendar dates instead of full RFC3339 timestamps. These
-// fields represent the day a transaction happened or is due, not a specific
-// instant — emitting a time-of-day and "Z"/offset invites API consumers to
-// round-trip them through a timezone-aware Date object, which silently
-// shifts the displayed day for any viewer behind UTC. CreatedAt/UpdatedAt
-// are genuine instants and keep their normal RFC3339 encoding.
-func (e FinancialEntry) MarshalJSON() ([]byte, error) {
-	type alias FinancialEntry
-	return json.Marshal(struct {
-		alias
-		Date        string  `json:"Date"`
-		DueDate     *string `json:"DueDate,omitempty"`
-		PaymentDate *string `json:"PaymentDate,omitempty"`
-	}{
-		alias:       alias(e),
-		Date:        e.Date.Format("2006-01-02"),
-		DueDate:     formatCalendarDate(e.DueDate),
-		PaymentDate: formatCalendarDate(e.PaymentDate),
-	})
-}
-
-func formatCalendarDate(t *time.Time) *string {
-	if t == nil {
-		return nil
+// NewFinancialEntry creates a valid entry with a ULID and UTC audit times.
+func NewFinancialEntry(input NewFinancialEntryInput) (FinancialEntry, error) {
+	now := time.Now().UTC()
+	e := FinancialEntry{
+		UserID: input.UserID, EntryID: EntryID(ulid.Make().String()),
+		TransactionDate: input.TransactionDate, DueDate: input.DueDate, PaymentDate: input.PaymentDate,
+		Amount: input.Amount, Category: input.Category, Description: input.Description, Supplier: input.Supplier,
+		Type: input.Type, PaymentStatus: input.PaymentStatus, Source: input.Source,
+		CreatedAt: now, UpdatedAt: now,
+		RecurrenceID: input.RecurrenceID, RecurrenceIndex: input.RecurrenceIndex, RecurrenceTotal: input.RecurrenceTotal,
 	}
-	s := t.Format("2006-01-02")
-	return &s
+	e.Normalize()
+	return e, nil
 }
 
-// UnmarshalJSON is the inverse of MarshalJSON: it reads Date, DueDate, and
-// PaymentDate as plain "YYYY-MM-DD" calendar dates.
-func (e *FinancialEntry) UnmarshalJSON(data []byte) error {
-	type alias FinancialEntry
-	aux := struct {
-		*alias
-		Date        string  `json:"Date"`
-		DueDate     *string `json:"DueDate,omitempty"`
-		PaymentDate *string `json:"PaymentDate,omitempty"`
-	}{alias: (*alias)(e)}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
+// Normalize fixes common data inconsistencies (self-heal for data read from
+// external storage that may predate the normalization in NewFinancialEntry).
+func (e *FinancialEntry) Normalize() {
+	if e.PaymentStatus == PaymentStatusPaid && e.PaymentDate == nil {
+		date := e.TransactionDate
+		e.PaymentDate = &date
 	}
+	if e.PaymentStatus == PaymentStatusPending {
+		e.PaymentDate = nil
+	}
+}
 
-	if aux.Date != "" {
-		t, err := time.Parse("2006-01-02", aux.Date)
-		if err != nil {
-			return err
+// Validate checks financial invariants before an entry is persisted.
+func (e FinancialEntry) Validate() error {
+	if e.UserID == "" {
+		return errors.New("user id is required")
+	}
+	if e.EntryID == "" {
+		return errors.New("entry id is required")
+	}
+	if e.Amount <= 0 {
+		return errors.New("amount must be positive")
+	}
+	if !e.TransactionDate.Valid() {
+		return errors.New("transaction date is required")
+	}
+	switch e.Type {
+	case EntryTypeExpense, EntryTypeIncome:
+	default:
+		return errors.New("invalid entry type")
+	}
+	switch e.Source {
+	case SourceWhatsApp, SourceManual, SourceUnknown:
+	default:
+		return errors.New("invalid entry source")
+	}
+	switch e.PaymentStatus {
+	case PaymentStatusPending:
+		if e.PaymentDate != nil {
+			return errors.New("pending entry cannot have payment date")
 		}
-		e.Date = t
+	case PaymentStatusPaid:
+		if e.PaymentDate == nil {
+			return errors.New("paid entry requires payment date")
+		}
+	default:
+		return errors.New("invalid payment status")
 	}
-	e.DueDate = parseCalendarDate(aux.DueDate)
-	e.PaymentDate = parseCalendarDate(aux.PaymentDate)
 	return nil
-}
-
-func parseCalendarDate(s *string) *time.Time {
-	if s == nil || *s == "" {
-		return nil
-	}
-	t, err := time.Parse("2006-01-02", *s)
-	if err != nil {
-		return nil
-	}
-	return &t
 }
 
 // Goal represents a monthly financial target (faturamento/teto de despesa).
 type Goal struct {
-	UserID        string // "pai"
-	Month         string // "2026-07"
-	RevenueTarget int64  // centavos — meta de faturamento
-	ExpenseTarget int64  // centavos — teto de despesa
+	UserID        string
+	Month         string
+	RevenueTarget int64
+	ExpenseTarget int64
 }
 
 // AmountReais returns the amount formatted as a Brazilian real string.

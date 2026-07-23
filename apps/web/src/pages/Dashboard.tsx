@@ -3,9 +3,11 @@ import {
   Wallet, TrendingUp, TrendingDown, Clock,
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   useMonthlySummary, useCashFlow, useEntries, useMarkPaidMutation, useDeleteEntryMutation,
 } from '../api/queries'
+import ErrorState from '../components/ErrorState'
 import KpiCard from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
@@ -25,7 +27,10 @@ function ExpenseTotal() {
   const summary = summaryQuery.data ?? null
 
   if (summaryQuery.isLoading) {
-    return <Skeleton className="h-26 rounded-xl" />
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
+  }
+  if (summaryQuery.isError) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar despesas" /></CardContent></Card>
   }
   return <KpiCard title="Total Despesas" value={summary?.TotalExpense ?? 0} icon={TrendingDown} tone="negative" subtitle="Este mês" />
 }
@@ -38,7 +43,10 @@ function BalanceCard() {
   const summary = summaryQuery.data ?? null
   const balance = summary?.Balance ?? 0
   if (summaryQuery.isLoading) {
-    return <Skeleton className="h-26 rounded-xl" />
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
+  }
+  if (summaryQuery.isError) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar saldo" /></CardContent></Card>
   }
   return <KpiCard title="Saldo do Mês" value={balance} icon={Wallet} tone={balance >= 0 ? 'positive' : 'negative'} subtitle="Receitas − Despesas" />
 }
@@ -52,9 +60,11 @@ function TotalReceivable() {
   const summary = summaryQuery.data ?? null
 
   if (summaryQuery.isLoading) {
-    return <Skeleton className="h-26 rounded-xl" />
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
-
+  if (summaryQuery.isError) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar receitas" /></CardContent></Card>
+  }
   return <KpiCard title="Total Receitas" value={summary?.TotalIncome ?? 0} icon={TrendingUp} tone="positive" subtitle="Este mês" />
 }
 
@@ -73,10 +83,12 @@ function Receivables() {
     .reduce((sum, e) => sum + e.Amount, 0)
 
 
-  if (summaryQuery.isLoading) {
-    return <Skeleton className="h-26 rounded-xl" />
+  if (summaryQuery.isLoading || entriesQuery.isLoading) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
-
+  if (summaryQuery.isError || entriesQuery.isError) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar recebíveis" /></CardContent></Card>
+  }
   return <KpiCard title="A Receber" value={totalReceivable} icon={Clock} tone="info" subtitle="Pendente" />
 }
 

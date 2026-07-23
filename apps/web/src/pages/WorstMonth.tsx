@@ -6,6 +6,7 @@ import {
 import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import ErrorState from '@/components/ErrorState'
 import { useMonthlyTrend } from '../api/queries'
 
 export default function WorstMonth() {
@@ -17,7 +18,10 @@ export default function WorstMonth() {
   const trendQueries = useMonthlyTrend(months3)
 
   if (trendQueries.some(q => q.isLoading)) {
-    return <Skeleton className="h-26 rounded-xl" />
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
+  }
+  if (trendQueries.some(q => q.isError)) {
+    return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><ErrorState message="Erro ao carregar meses anteriores" /></CardContent></Card>
   }
 
   const monthlyData = trendQueries.every(q => q.isSuccess)
@@ -35,7 +39,7 @@ export default function WorstMonth() {
     : null
 
   return (
-    <Card className="relative overflow-hidden">
+    <Card className="relative min-h-26 overflow-hidden">
       <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-destructive" />
       <CardContent className="flex items-start justify-between gap-3 pl-5">
         <div className="min-w-0">

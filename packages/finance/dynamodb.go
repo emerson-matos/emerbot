@@ -33,6 +33,10 @@ const (
 	gsi2IndexName = "GSI2-Status"
 )
 
+func entrySK(date domain.CalendarDate, id domain.EntryID) string {
+	return entryPrefix + date.String() + "#" + string(id)
+}
+
 // DynamoDBStore implements Store using AWS DynamoDB.
 // All financial data lives in a single table (single-table design).
 type DynamoDBStore struct {
@@ -106,18 +110,18 @@ type categoryItem struct {
 func entryToItem(e domain.FinancialEntry) entryItem {
 	dueDate := ""
 	if e.DueDate != nil {
-		dueDate = e.DueDate.UTC().Format(time.RFC3339)
+		dueDate = e.DueDate.String()
 	}
 	payDate := ""
 	if e.PaymentDate != nil {
-		payDate = e.PaymentDate.UTC().Format(time.RFC3339)
+		payDate = e.PaymentDate.String()
 	}
-	dateStr := e.Date.Format("2006-01-02")
+	dateStr := e.TransactionDate.String()
 	status := string(e.PaymentStatus)
 
 	return entryItem{
 		PK:     pkPrefix + e.UserID,
-		SK:     entryPrefix + dateStr + "#" + e.EntryID,
+		SK:     entrySK(e.TransactionDate, e.EntryID),
 		GSI1PK: pkPrefix + e.UserID,
 		GSI1SK: e.Category + "#" + dateStr,
 		GSI2PK: pkPrefix + e.UserID,
@@ -125,10 +129,10 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		// Date) — see effectiveDate's doc comment in store.go for why this,
 		// not registration Date, is the field callers actually want to
 		// query and bucket by.
-		GSI2SK:           effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID,
-		EntryID:          e.EntryID,
+		GSI2SK:           effectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID),
+		EntryID:          string(e.EntryID),
 		UserID:           e.UserID,
-		Date:             e.Date.UTC().Format(time.RFC3339),
+		Date:             dateStr,
 		Amount:           e.Amount,
 		Category:         e.Category,
 		Type:             string(e.Type),
@@ -138,7 +142,7 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		PaymentStatus:    status,
 		PaymentDate:      payDate,
 		Supplier:         e.Supplier,
-		Source:           e.Source,
+		Source:           string(e.Source),
 		CreatedAt:        e.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        e.UpdatedAt.UTC().Format(time.RFC3339),
 		RecurrenceID:     e.RecurrenceID,
@@ -147,33 +151,45 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 	}
 }
 
+func parseStoredCalendarDate(s string) (domain.CalendarDate, error) {
+	if d, err := domain.ParseCalendarDate(s); err == nil {
+		return d, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return domain.CalendarDate{}, err
+	}
+	return domain.NewCalendarDate(t), nil
+}
+
 func itemToEntry(item entryItem) (domain.FinancialEntry, error) {
-	date, err := time.Parse(time.RFC3339, item.Date)
+	date, err := parseStoredCalendarDate(item.Date)
 	if err != nil {
 		return domain.FinancialEntry{}, fmt.Errorf("parse Date: %w", err)
 	}
 	createdAt, _ := time.Parse(time.RFC3339, item.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339, item.UpdatedAt)
 
-	var dueDate *time.Time
+	var dueDate *domain.CalendarDate
 	if item.DueDate != "" {
-		t, err := time.Parse(time.RFC3339, item.DueDate)
+		t, err := parseStoredCalendarDate(item.DueDate)
 		if err == nil {
 			dueDate = &t
 		}
 	}
-	var payDate *time.Time
+	var payDate *domain.CalendarDate
 	if item.PaymentDate != "" {
-		t, err := time.Parse(time.RFC3339, item.PaymentDate)
+		t, err := parseStoredCalendarDate(item.PaymentDate)
 		if err == nil {
 			payDate = &t
 		}
 	}
 
-	return domain.FinancialEntry{
+	source := domain.NormalizeSource(item.Source)
+	e := domain.FinancialEntry{
 		UserID:          item.UserID,
-		EntryID:         item.EntryID,
-		Date:            date,
+		EntryID:         domain.EntryID(item.EntryID),
+		TransactionDate: date,
 		Amount:          item.Amount,
 		Category:        item.Category,
 		Type:            domain.EntryType(item.Type),
@@ -182,18 +198,26 @@ func itemToEntry(item entryItem) (domain.FinancialEntry, error) {
 		PaymentStatus:   domain.PaymentStatus(item.PaymentStatus),
 		PaymentDate:     payDate,
 		Supplier:        item.Supplier,
-		Source:          item.Source,
+		Source:          source,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 		RecurrenceID:    item.RecurrenceID,
 		RecurrenceIndex: item.RecurrenceIndex,
 		RecurrenceTotal: item.RecurrenceTotal,
-	}, nil
+	}
+	e.Normalize() // self-heal: corrige inconsistências de dados legados
+	if err := e.Validate(); err != nil {
+		return domain.FinancialEntry{}, fmt.Errorf("invalid entry %q: %w", item.EntryID, err)
+	}
+	return e, nil
 }
 
 // --- Entries ---
 
 func (s *DynamoDBStore) SaveEntry(ctx context.Context, entry domain.FinancialEntry) error {
+	if err := entry.Validate(); err != nil {
+		return err
+	}
 	item := entryToItem(entry)
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
@@ -251,7 +275,7 @@ func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (d
 		return domain.FinancialEntry{}, err
 	}
 	for _, e := range entries {
-		if e.EntryID == entryID {
+		if string(e.EntryID) == entryID {
 			return e, nil
 		}
 	}
@@ -352,11 +376,11 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 		for _, raw := range page.Items {
 			var item entryItem
 			if err := attributevalue.UnmarshalMap(raw, &item); err != nil {
-				continue
+				return nil, fmt.Errorf("unmarshal entry: %w", err)
 			}
 			e, err := itemToEntry(item)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			entries = append(entries, e)
 		}
@@ -375,7 +399,30 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 }
 
 func (s *DynamoDBStore) UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error {
-	return s.SaveEntry(ctx, entry) // PutItem is idempotent on the same PK+SK
+	if err := entry.Validate(); err != nil {
+		return err
+	}
+	old, err := s.GetEntry(ctx, entry.UserID, string(entry.EntryID))
+	if err != nil {
+		return err
+	}
+	oldSK := entrySK(old.TransactionDate, old.EntryID)
+	newSK := entrySK(entry.TransactionDate, entry.EntryID)
+	if oldSK == newSK {
+		return s.SaveEntry(ctx, entry)
+	}
+	item, err := attributevalue.MarshalMap(entryToItem(entry))
+	if err != nil {
+		return fmt.Errorf("marshal entry: %w", err)
+	}
+	_, err = s.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
+		{Delete: &types.Delete{TableName: aws.String(s.tableName), Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pkPrefix + entry.UserID},
+			"SK": &types.AttributeValueMemberS{Value: oldSK},
+		}}},
+		{Put: &types.Put{TableName: aws.String(s.tableName), Item: item}},
+	}})
+	return err
 }
 
 func (s *DynamoDBStore) DeleteEntry(ctx context.Context, userID, entryID string) error {
@@ -383,12 +430,11 @@ func (s *DynamoDBStore) DeleteEntry(ctx context.Context, userID, entryID string)
 	if err != nil {
 		return err
 	}
-	dateStr := entry.Date.Format("2006-01-02")
 	_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
 			"PK": &types.AttributeValueMemberS{Value: pkPrefix + userID},
-			"SK": &types.AttributeValueMemberS{Value: entryPrefix + dateStr + "#" + entryID},
+			"SK": &types.AttributeValueMemberS{Value: entrySK(entry.TransactionDate, entry.EntryID)},
 		},
 	})
 	return err

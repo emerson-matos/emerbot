@@ -23,7 +23,7 @@ const toneVar: Record<KpiTone, string> = {
 export default function KpiCard({ title, value, icon: Icon, tone, subtitle }: KpiCardProps) {
   const c = toneVar[tone]
   return (
-    <Card className="relative overflow-hidden">
+    <Card className="relative min-h-26 overflow-hidden">
       {/* accent spine */}
       <span
         aria-hidden
