@@ -715,3 +715,200 @@ func TestDefinirMetaRejeitaValorZerado(t *testing.T) {
 		t.Fatal("expected error when both targets are zero")
 	}
 }
+
+func TestSearchEntriesByDescription(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cd := domain.NewCalendarDate(now)
+
+	entries := []domain.FinancialEntry{
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e1"),
+			TransactionDate: cd, Amount: 350000,
+			Category: "aluguel", Type: domain.EntryTypeExpense,
+			Description:   "Aluguel da Loja - Matriz",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cd, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e2"),
+			TransactionDate: cd, Amount: 1200000,
+			Category: "folha_pagamento", Type: domain.EntryTypeExpense,
+			Description:   "Folha de Pagamento",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cd, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	for _, e := range entries {
+		if err := store.SaveEntry(ctx, e); err != nil {
+			t.Fatalf("save entry: %v", err)
+		}
+	}
+
+	h := handlerFor(t, store, "search_entries")
+	out := callTool(t, h, "ledger", map[string]any{"query": "aluguel"})
+
+	results, ok := out.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", out)
+	}
+	if len(results) == 0 {
+		t.Fatal("search_entries returned 0 results for query 'aluguel'")
+	}
+	if results[0]["description"] != "Aluguel da Loja - Matriz" {
+		t.Fatalf("expected 'Aluguel da Loja - Matriz', got %v", results[0]["description"])
+	}
+	if results[0]["amount"] != 3500.00 {
+		t.Fatalf("expected amount 3500.00, got %v", results[0]["amount"])
+	}
+
+	// Without query returns all entries.
+	outAll := callTool(t, h, "ledger", map[string]any{})
+	all, ok := outAll.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", outAll)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 entries with no query filter, got %d", len(all))
+	}
+}
+
+func TestSearchEntriesByDescriptionCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cd := domain.NewCalendarDate(now)
+
+	if err := store.SaveEntry(ctx, domain.FinancialEntry{
+		UserID: "ledger", EntryID: domain.EntryID("e1"),
+		TransactionDate: cd, Amount: 350000,
+		Category: "aluguel", Type: domain.EntryTypeExpense,
+		Description:   "Aluguel da Loja - Matriz",
+		PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate:   &cd, Source: domain.SourceManual,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("save entry: %v", err)
+	}
+
+	h := handlerFor(t, store, "search_entries")
+	out := callTool(t, h, "ledger", map[string]any{"query": "ALUGUEL"})
+
+	results, ok := out.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", out)
+	}
+	if len(results) == 0 {
+		t.Fatal("search_entries returned 0 results for query 'ALUGUEL' (upper)")
+	}
+}
+
+func TestSearchEntriesByCategory(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cd := domain.NewCalendarDate(now)
+
+	entries := []domain.FinancialEntry{
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e1"),
+			TransactionDate: cd, Amount: 350000,
+			Category: "aluguel", Type: domain.EntryTypeExpense,
+			Description:   "Aluguel",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cd, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e2"),
+			TransactionDate: cd, Amount: 50000,
+			Category: "energia_agua", Type: domain.EntryTypeExpense,
+			Description:   "Conta de Luz",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cd, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	for _, e := range entries {
+		if err := store.SaveEntry(ctx, e); err != nil {
+			t.Fatalf("save entry: %v", err)
+		}
+	}
+
+	h := handlerFor(t, store, "search_entries")
+	out := callTool(t, h, "ledger", map[string]any{"category": "aluguel"})
+
+	results, ok := out.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for category 'aluguel', got %d", len(results))
+	}
+}
+
+func TestSearchEntriesByPeriod(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	lastMonth := now.AddDate(0, -1, 0)
+	cdNow := domain.NewCalendarDate(now)
+	cdLast := domain.NewCalendarDate(lastMonth)
+
+	entries := []domain.FinancialEntry{
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e1"),
+			TransactionDate: cdNow, Amount: 350000,
+			Category: "aluguel", Type: domain.EntryTypeExpense,
+			Description:   "Aluguel deste mês",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cdNow, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			UserID: "ledger", EntryID: domain.EntryID("e2"),
+			TransactionDate: cdLast, Amount: 350000,
+			Category: "aluguel", Type: domain.EntryTypeExpense,
+			Description:   "Aluguel mês passado",
+			PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate:   &cdLast, Source: domain.SourceManual,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	for _, e := range entries {
+		if err := store.SaveEntry(ctx, e); err != nil {
+			t.Fatalf("save entry: %v", err)
+		}
+	}
+
+	h := handlerFor(t, store, "search_entries")
+
+	from := time.Date(lastMonth.Year(), lastMonth.Month(), 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(lastMonth.Year(), lastMonth.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	out := callTool(t, h, "ledger", map[string]any{
+		"from": from.Format("2006-01-02"),
+		"to":   to.Format("2006-01-02"),
+	})
+
+	results, ok := out.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any, got %T", out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for last month, got %d", len(results))
+	}
+	if results[0]["description"] != "Aluguel mês passado" {
+		t.Fatalf("expected 'Aluguel mês passado', got %v", results[0]["description"])
+	}
+}
