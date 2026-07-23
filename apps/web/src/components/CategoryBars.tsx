@@ -3,8 +3,8 @@ import { PieChart } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '@/lib/format'
 import { categoricalPalette } from '@/lib/chart'
-import { categoryLabels } from '@/lib/categories'
-import { useCategorySummary } from '../api/queries'
+import { categoryLabelMap } from '@/lib/categories'
+import { useCategories, useCategorySummary } from '../api/queries'
 import EmptyState from './EmptyState'
 
 export default function CategoryBars() {
@@ -13,6 +13,8 @@ export default function CategoryBars() {
   const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
 
   const categoriesQuery = useCategorySummary(firstDay, lastDay)
+  const categoryDefsQuery = useCategories()
+  const labels = categoryLabelMap(categoryDefsQuery.data ?? [])
 
   const expenses = (categoriesQuery.data?.categories ?? [])
     .filter(c => c.Type === 'expense')
@@ -37,7 +39,7 @@ export default function CategoryBars() {
             {expenses.map((cat, i) => (
               <div key={cat.Category}>
                 <div className="mb-1 flex justify-between text-xs">
-                  <span className="capitalize">{categoryLabels[cat.Category] ?? cat.Category.replace(/_/g, ' ')}</span>
+                  <span className="capitalize">{labels[cat.Category] ?? cat.Category.replace(/_/g, ' ')}</span>
                   <span className="font-medium tabular-nums">{formatBRL(cat.Total)}</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">

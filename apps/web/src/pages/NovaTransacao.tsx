@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { CheckCircle2, TrendingDown, TrendingUp } from 'lucide-react'
@@ -8,37 +8,43 @@ import { Button } from '@/components/ui/button'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, categoryLabels } from '@/lib/categories'
-import { useCreateEntryMutation } from '../api/queries'
+import { categoriesByType } from '@/lib/categories'
+import { useCategories, useCreateEntryMutation } from '../api/queries'
 
 type EntryType = 'income' | 'expense'
 type Status = 'pending' | 'paid'
 
 const statusLabels: Record<Status, string> = { pending: 'Pendente', paid: 'Pago' }
 
-function categoriesFor(type: EntryType): string[] {
-  return type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
-}
-
 export default function NovaTransacao() {
   const navigate = useNavigate()
   const createEntry = useCreateEntryMutation()
+  const categoriesQuery = useCategories()
+  const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
 
   const [type, setType] = useState<EntryType>('income')
   const [desc, setDesc] = useState('')
-  const [category, setCategory] = useState(INCOME_CATEGORIES[0])
+  const [category, setCategory] = useState('')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [status, setStatus] = useState<Status>('pending')
   const [created, setCreated] = useState(false)
 
+  const categoriesForType = useMemo(() => categoriesByType(categories, type), [categories, type])
+
+  // Seed the category once the list loads (it's empty on first render).
+  useEffect(() => {
+    if (!category && categoriesForType.length) setCategory(categoriesForType[0].Slug)
+  }, [category, categoriesForType])
+
   function selectType(next: EntryType) {
     setType(next)
-    setCategory(categoriesFor(next)[0])
+    const first = categoriesByType(categories, next)[0]
+    setCategory(first ? first.Slug : '')
     setCreated(false)
   }
 
-  const invalid = !desc.trim() || !date || !(Number(amount) > 0)
+  const invalid = !desc.trim() || !date || !category || !(Number(amount) > 0)
 
   function submit() {
     if (invalid) return
@@ -61,9 +67,7 @@ export default function NovaTransacao() {
     })
   }
 
-  const categoryItems = Object.fromEntries(
-    categoriesFor(type).map(c => [c, categoryLabels[c] ?? c]),
-  )
+  const categoryItems = Object.fromEntries(categoriesForType.map(c => [c.Slug, c.Label]))
 
   return (
     <div className="space-y-6">
@@ -120,9 +124,9 @@ export default function NovaTransacao() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {categoriesFor(type).map(c => (
-                    <SelectItem key={c} value={c}>
-                      {categoryLabels[c] ?? c}
+                  {categoriesForType.map(c => (
+                    <SelectItem key={c.Slug} value={c.Slug}>
+                      {c.Label}
                     </SelectItem>
                   ))}
                 </SelectContent>

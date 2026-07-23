@@ -22,7 +22,16 @@ export const queryKeys = {
   entriesByMonth: () => ["entries", "byMonth"] as const,
   goal: (month: string) => ["goal", month] as const,
   notificationPrefs: () => ["notifications", "preferences"] as const,
+  categories: () => ["categories"] as const,
 };
+
+export function useCategories() {
+  return useQuery({
+    queryKey: queryKeys.categories(),
+    queryFn: () => api.categories.list(),
+    select: (data) => data.categories,
+  });
+}
 
 export function useMonthlySummary(month: string) {
   return useQuery({

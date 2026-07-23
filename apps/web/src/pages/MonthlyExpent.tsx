@@ -6,9 +6,9 @@ import { formatBRL } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { categoricalPalette } from '@/lib/chart'
-import { categoryLabels } from '@/lib/categories'
+import { categoryLabelMap } from '@/lib/categories'
 import {
-  useCategorySummary, useEntries,
+  useCategories, useCategorySummary, useEntries,
 } from '../api/queries'
 import EmptyState from '../components/EmptyState'
 
@@ -19,6 +19,7 @@ export default function MonthlyExpent() {
 
   const categoriesQuery = useCategorySummary(firstDay, lastDay)
   const entriesQuery = useEntries(firstDay, lastDay)
+  const categoryDefsQuery = useCategories()
 
   if (categoriesQuery.isLoading || entriesQuery.isLoading) {
     return <Card className="min-h-52"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
@@ -30,6 +31,7 @@ export default function MonthlyExpent() {
 
   const categories = categoriesQuery.data?.categories ?? []
   const entries = entriesQuery.data?.entries ?? []
+  const labels = categoryLabelMap(categoryDefsQuery.data ?? [])
 
   const expenseByDay: Record<string, number> = {}
   for (const e of entries) {
@@ -63,7 +65,7 @@ export default function MonthlyExpent() {
               <div key={cat.Category} className="flex items-center gap-3">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: categoricalPalette[i % categoricalPalette.length] }} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium capitalize">{categoryLabels[cat.Category] ?? cat.Category.replace(/_/g, ' ')}</p>
+                  <p className="truncate text-sm font-medium capitalize">{labels[cat.Category] ?? cat.Category.replace(/_/g, ' ')}</p>
                   <p className="text-xs text-muted-foreground">{cat.Count} registro(s)</p>
                 </div>
                 <span className="text-sm font-semibold tabular-nums">{formatBRL(cat.Total)}</span>

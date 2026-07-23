@@ -10,13 +10,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { useEntriesByMonth, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
+import { useCategories, useEntriesByMonth, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
 import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
 import type { PaymentGroupData } from '../components/payments/PaymentGroup'
 import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
 import { formatSignedBRL } from '@/lib/format'
-import { categoryLabels } from '@/lib/categories'
+import { categoriesByType } from '@/lib/categories'
 import type { Entry } from '../api/types'
 
 type TypeFilter = 'all' | 'income' | 'expense'
@@ -45,6 +45,8 @@ export default function Transactions() {
     fetchNextPage, hasNextPage, isFetchingNextPage,
     fetchPreviousPage, hasPreviousPage, isFetchingPreviousPage,
   } = useEntriesByMonth()
+  const categoriesQuery = useCategories()
+  const allCategories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
   const markPaid = useMarkPaidMutation()
   const deleteEntry = useDeleteEntryMutation()
 
@@ -72,13 +74,9 @@ export default function Transactions() {
   }, [type, status, category, month, search, todayISO])
 
   const categoryOptions = useMemo(() => {
-    const set = new Map<string, string>()
-    allEntries.forEach(e => {
-      if (type !== 'all' && e.Type !== type) return
-      set.set(e.Category, categoryLabels[e.Category] ?? e.Category)
-    })
-    return [...set.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [allEntries, type])
+    const list = type === 'all' ? allCategories : categoriesByType(allCategories, type)
+    return list.map(c => [c.Slug, c.Label] as const).sort((a, b) => a[1].localeCompare(b[1]))
+  }, [allCategories, type])
 
   const monthOptions = useMemo(() => {
     const set = new Set<string>()
