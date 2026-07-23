@@ -12,11 +12,12 @@ interface Props {
   entries: Entry[];
   isLoading?: boolean;
   onMarkPaid?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
 const PAGE_SIZE = 20;
 
-export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Props) {
+export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDelete }: Props) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const sorted = [...entries].sort((a, b) => {
@@ -48,7 +49,7 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid }: Pr
           />
         ) : (
           <>
-            <EntriesTable entries={visible} onMarkPaid={onMarkPaid} />
+            <EntriesTable entries={visible} onMarkPaid={onMarkPaid} onDelete={onDelete} />
             {visibleCount < sorted.length && (
               <div className="flex justify-center pt-3">
                 <Button

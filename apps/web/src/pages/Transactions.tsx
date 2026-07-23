@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { useEntriesInfinite, useMarkPaidMutation } from '../api/queries'
+import { useEntriesInfinite, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
 import EmptyState from '../components/EmptyState'
 import EntriesTable from '../components/EntriesTable'
 
@@ -32,6 +32,7 @@ export default function Transactions() {
     data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
   } = useEntriesInfinite()
   const markPaid = useMarkPaidMutation()
+  const deleteEntry = useDeleteEntryMutation()
   const entries = data?.pages.flatMap(p => p.entries) ?? []
 
   const [search, setSearch] = useState('')
@@ -121,7 +122,7 @@ export default function Transactions() {
             />
           ) : (
             <>
-              <EntriesTable entries={filtered} onMarkPaid={id => markPaid.mutate(id)} />
+              <EntriesTable entries={filtered} onMarkPaid={id => markPaid.mutate(id)} onDelete={id => deleteEntry.mutate(id)} />
               {hasNextPage && (
                 <div className="flex justify-center pt-3">
                   <Button
