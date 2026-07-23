@@ -20,3 +20,32 @@ export function formatPaidAt(e: Entry): string {
   const parsed = parseISO(e.PaymentDate)
   return isValid(parsed) ? `em ${format(parsed, 'dd/MM', { locale: ptBR })}` : ''
 }
+
+export function netAmount(entries: Entry[]): number {
+  return entries.reduce((sum, e) => sum + (e.Type === 'income' ? e.Amount : -e.Amount), 0)
+}
+
+export interface UrgencyBuckets {
+  overdue: Entry[]
+  dueToday: Entry[]
+  upcoming: Entry[]
+  history: Entry[]
+}
+
+// Splits entries relative to today: overdue (pending, past due), due today
+// (any status), upcoming (any status, future-dated), and history (already
+// paid, past-dated — kept separate so callers can hide it by default).
+export function bucketByUrgency(entries: Entry[], todayISO: string): UrgencyBuckets {
+  const overdue: Entry[] = []
+  const dueToday: Entry[] = []
+  const upcoming: Entry[] = []
+  const history: Entry[] = []
+  for (const e of entries) {
+    const date = effectiveDate(e) ?? ''
+    if (date === todayISO) dueToday.push(e)
+    else if (date > todayISO) upcoming.push(e)
+    else if (e.PaymentStatus === 'pending') overdue.push(e)
+    else history.push(e)
+  }
+  return { overdue, dueToday, upcoming, history }
+}

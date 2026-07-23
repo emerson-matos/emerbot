@@ -127,13 +127,15 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 	if base.Year() == now.Year() && base.Month() == now.Month() {
 		nextDue := time.Date(year, month+1, 3, 0, 0, 0, 0, time.UTC)
 		pending := expense(userID, now, randBetween(rng, 1500000, 2000000), "fornecedor_medicamentos", "Compra Distribuidora (a pagar)", "Distribuidora", domain.PaymentStatusPending)
-		pending.DueDate = &nextDue
+		dueDate := domain.NewCalendarDate(nextDue)
+		pending.DueDate = &dueDate
 		save(pending)
 
 		nextConvenio := time.Date(year, month, lastDay, 0, 0, 0, 0, time.UTC)
 		rec := income(userID, now, randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio (a receber)")
 		rec.PaymentStatus = domain.PaymentStatusPending
-		rec.DueDate = &nextConvenio
+		convenioDate := domain.NewCalendarDate(nextConvenio)
+		rec.DueDate = &convenioDate
 		save(rec)
 
 		// A pagar hoje
@@ -148,7 +150,8 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 		))
 		recHoje := income(userID, now, 312000, "convenio", "Convênio Unimed (a receber hoje)")
 		recHoje.PaymentStatus = domain.PaymentStatusPending
-		recHoje.DueDate = &today
+		todayDate := domain.NewCalendarDate(today)
+		recHoje.DueDate = &todayDate
 		save(recHoje)
 	}
 
@@ -174,47 +177,50 @@ func seedMonthGoal(ctx context.Context, store pkgfinance.Store, userID string, b
 
 func pendingDue(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
 	e.PaymentStatus = domain.PaymentStatusPending
-	e.DueDate = &due
+	d := domain.NewCalendarDate(due)
+	e.DueDate = &d
 	return e
 }
 
 func expense(userID string, d time.Time, amount int64, cat, desc, supplier string, status domain.PaymentStatus) domain.FinancialEntry {
 	now := time.Now().UTC()
+	date := domain.NewCalendarDate(d)
 	e := domain.FinancialEntry{
-		UserID:        userID,
-		EntryID:       uuid.New().String(),
-		Date:          d,
-		Amount:        amount,
-		Category:      cat,
-		Type:          domain.EntryTypeExpense,
-		Description:   desc,
-		Supplier:      supplier,
-		PaymentStatus: status,
-		Source:        "seed",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		UserID:          userID,
+		EntryID:         domain.EntryID(uuid.New().String()),
+		TransactionDate: date,
+		Amount:          amount,
+		Category:        cat,
+		Type:            domain.EntryTypeExpense,
+		Description:     desc,
+		Supplier:        supplier,
+		PaymentStatus:   status,
+		Source:          domain.SourceManual,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if status == domain.PaymentStatusPaid {
-		e.PaymentDate = &d
+		e.PaymentDate = &date
 	}
 	return e
 }
 
 func income(userID string, d time.Time, amount int64, cat, desc string) domain.FinancialEntry {
 	now := time.Now().UTC()
+	date := domain.NewCalendarDate(d)
 	return domain.FinancialEntry{
-		UserID:        userID,
-		EntryID:       uuid.New().String(),
-		Date:          d,
-		Amount:        amount,
-		Category:      cat,
-		Type:          domain.EntryTypeIncome,
-		Description:   desc,
-		PaymentStatus: domain.PaymentStatusPaid,
-		PaymentDate:   &d,
-		Source:        "seed",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		UserID:          userID,
+		EntryID:         domain.EntryID(uuid.New().String()),
+		TransactionDate: date,
+		Amount:          amount,
+		Category:        cat,
+		Type:            domain.EntryTypeIncome,
+		Description:     desc,
+		PaymentStatus:   domain.PaymentStatusPaid,
+		PaymentDate:     &date,
+		Source:          domain.SourceManual,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 }
 

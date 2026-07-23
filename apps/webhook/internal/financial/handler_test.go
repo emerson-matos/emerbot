@@ -126,9 +126,9 @@ func TestHandleUsesParsedDateForAlreadyOccurredEntry(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 saved entry, got %d", len(entries))
 	}
-	want := dateThisYear(time.July, 10)
-	if got := entries[0].Date; !got.Equal(want) {
-		t.Fatalf("expected entry.Date to use parsed date %v, got %v", want, got)
+	want := domain.NewCalendarDate(dateThisYear(time.July, 10))
+	if !entries[0].TransactionDate.Equal(want) {
+		t.Fatalf("expected entry.TransactionDate to use parsed date %v, got %v", want, entries[0].TransactionDate)
 	}
 	if entries[0].DueDate != nil {
 		t.Fatalf("expected no due date for non-pending entry, got %+v", entries[0].DueDate)
@@ -157,8 +157,8 @@ func TestHandleSetsPaymentDateOnDespesa(t *testing.T) {
 	if entry.PaymentDate == nil {
 		t.Fatal("expected PaymentDate to be set for paid despesa entry")
 	}
-	if !(*entry.PaymentDate).Equal(entry.Date) {
-		t.Fatalf("expected PaymentDate %v to equal Date %v", *entry.PaymentDate, entry.Date)
+	if !entry.PaymentDate.Equal(entry.TransactionDate) {
+		t.Fatalf("expected PaymentDate %v to equal TransactionDate %v", *entry.PaymentDate, entry.TransactionDate)
 	}
 }
 
@@ -206,9 +206,13 @@ func TestHandleDefaultsToNowWhenNoDateParsed(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 saved entry, got %d", len(entries))
 	}
-	got := entries[0].Date
-	if got.Before(before) || got.After(after) {
-		t.Fatalf("expected entry.Date to default to now (between %v and %v), got %v", before, after, got)
+	got := entries[0].TransactionDate
+	todayMidnight := func(t time.Time) time.Time {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	gotTime := got.Time()
+	if gotTime.Before(todayMidnight(before)) || gotTime.After(todayMidnight(after)) {
+		t.Fatalf("expected entry.TransactionDate to default to today (between %v and %v), got %v", todayMidnight(before), todayMidnight(after), got)
 	}
 }
 
@@ -359,12 +363,13 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now().UTC()
-	tomorrow := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	tomorrow := domain.NewCalendarDate(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1))
 
 	income := testFinancialEntry("u1", "income", now, 90000, "venda_balcao", domain.EntryTypeIncome)
 	expense := testFinancialEntry("u1", "expense", now, 25000, "aluguel", domain.EntryTypeExpense)
 	pending := testFinancialEntry("u1", "pending", now, 7000, "energia_agua", domain.EntryTypeExpense)
 	pending.PaymentStatus = domain.PaymentStatusPending
+	pending.PaymentDate = nil
 	pending.DueDate = &tomorrow
 
 	for _, entry := range []domain.FinancialEntry{income, expense, pending} {
@@ -386,17 +391,20 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 }
 
 func testFinancialEntry(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
+	cd := domain.NewCalendarDate(date)
 	return domain.FinancialEntry{
-		UserID:        userID,
-		EntryID:       entryID,
-		Date:          date,
-		Amount:        amount,
-		Category:      category,
-		Type:          entryType,
-		Description:   category,
-		PaymentStatus: domain.PaymentStatusPaid,
-		CreatedAt:     date,
-		UpdatedAt:     date,
+		UserID:          userID,
+		EntryID:         domain.EntryID(entryID),
+		TransactionDate: cd,
+		Amount:          amount,
+		Category:        category,
+		Type:            entryType,
+		Description:     category,
+		PaymentStatus:   domain.PaymentStatusPaid,
+		PaymentDate:     &cd,
+		Source:          domain.SourceManual,
+		CreatedAt:       date,
+		UpdatedAt:       date,
 	}
 }
 

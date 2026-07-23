@@ -35,9 +35,9 @@ type Alert struct {
 // falling back to the registration Date once settled.
 func effectiveDate(e domain.FinancialEntry) time.Time {
 	if e.DueDate != nil {
-		return *e.DueDate
+		return e.DueDate.Time()
 	}
-	return e.Date
+	return e.TransactionDate.Time()
 }
 
 // sameDay reports whether two times fall on the same calendar day (comparing

@@ -189,13 +189,13 @@ func TestEntriesCRUD(t *testing.T) {
 	}
 
 	// Update.
-	rec = do(t, app, http.MethodPut, "/entries/"+created.EntryID, token, map[string]any{"amount": 75000})
+	rec = do(t, app, http.MethodPut, "/entries/"+string(created.EntryID), token, map[string]any{"amount": 75000})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
 	// Delete -> 204, then list is empty.
-	if rec := do(t, app, http.MethodDelete, "/entries/"+created.EntryID, token, nil); rec.Code != http.StatusNoContent {
+	if rec := do(t, app, http.MethodDelete, "/entries/"+string(created.EntryID), token, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", rec.Code)
 	}
 	if got := listCount(t, app, token); got != 0 {
@@ -233,8 +233,8 @@ func TestEntriesListLimit(t *testing.T) {
 	if resp.Count != 2 {
 		t.Fatalf("expected limit=2 to cap the response at 2 entries, got %d", resp.Count)
 	}
-	if resp.Entries[0].Date.Format("2006-01-02") != "2026-07-03" {
-		t.Fatalf("expected the most recent entry first, got %s", resp.Entries[0].Date.Format("2006-01-02"))
+	if resp.Entries[0].TransactionDate.Format("2006-01-02") != "2026-07-03" {
+		t.Fatalf("expected the most recent entry first, got %s", resp.Entries[0].TransactionDate.Format("2006-01-02"))
 	}
 
 	// No limit param -> the server-side default still applies (well above 3,

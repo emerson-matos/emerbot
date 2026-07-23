@@ -15,16 +15,16 @@ func day(s string) time.Time {
 	return t
 }
 
-func ptr(t time.Time) *time.Time { return &t }
+func ptrCD(t time.Time) *domain.CalendarDate { cd := domain.NewCalendarDate(t); return &cd }
 
 func expense(desc string, amount int64, due string, status domain.PaymentStatus) domain.FinancialEntry {
 	return domain.FinancialEntry{
-		EntryID:       desc,
+		EntryID:       domain.EntryID(desc),
 		Description:   desc,
 		Amount:        amount,
 		Type:          domain.EntryTypeExpense,
 		PaymentStatus: status,
-		DueDate:       ptr(day(due)),
+		DueDate:       ptrCD(day(due)),
 	}
 }
 

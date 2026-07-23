@@ -90,26 +90,28 @@ func (h *Handler) saveAndConfirm(ctx context.Context, userID string, parsed what
 	}
 
 	now := time.Now().UTC()
-	date := now
+	date := domain.NewCalendarDate(now)
 	if parsed.Date != nil {
-		date = *parsed.Date
+		date = domain.NewCalendarDate(*parsed.Date)
 	}
-	entry := domain.FinancialEntry{
-		UserID:        userID,
-		EntryID:       uuid.New().String(),
-		Date:          date,
-		Amount:        parsed.Amount,
-		Category:      parsed.Category,
-		Type:          parsed.Type,
-		Description:   parsed.Description,
-		DueDate:       parsed.DueDate,
-		PaymentStatus: status,
-		Source:        "whatsapp",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+	var dueDate *domain.CalendarDate
+	if parsed.DueDate != nil {
+		d := domain.NewCalendarDate(*parsed.DueDate)
+		dueDate = &d
 	}
-	if status == domain.PaymentStatusPaid {
-		entry.PaymentDate = &date
+	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
+		UserID:          userID,
+		TransactionDate: date,
+		Amount:          parsed.Amount,
+		Category:        parsed.Category,
+		Type:            parsed.Type,
+		Description:     parsed.Description,
+		DueDate:         dueDate,
+		PaymentStatus:   status,
+		Source:          domain.SourceWhatsApp,
+	})
+	if err != nil {
+		return "❌ Não consegui salvar. Tente novamente.", err
 	}
 
 	if err := h.store.SaveEntry(ctx, entry); err != nil {
@@ -133,24 +135,25 @@ func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, 
 	recurrenceID := uuid.New().String()
 	entries := make([]domain.FinancialEntry, req.Occurrences)
 	for i := range entries {
-		due := addPeriod(req.StartDate, req.Period, i)
-		entries[i] = domain.FinancialEntry{
+		due := domain.NewCalendarDate(addPeriod(req.StartDate, req.Period, i))
+		entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 			UserID:          userID,
-			EntryID:         uuid.New().String(),
-			Date:            now,
+			TransactionDate: domain.NewCalendarDate(now),
 			Amount:          req.Amount,
 			Category:        req.Category,
 			Type:            req.Type,
 			Description:     req.Description,
 			DueDate:         &due,
 			PaymentStatus:   domain.PaymentStatusPending,
-			Source:          "whatsapp",
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			Source:          domain.SourceWhatsApp,
 			RecurrenceID:    recurrenceID,
 			RecurrenceIndex: i + 1,
 			RecurrenceTotal: req.Occurrences,
+		})
+		if err != nil {
+			return "❌ Não consegui salvar a recorrência. Tente novamente.", err
 		}
+		entries[i] = entry
 	}
 
 	if err := h.store.SaveEntries(ctx, entries); err != nil {
@@ -318,7 +321,7 @@ func formatConfirmation(e domain.FinancialEntry) string {
 	if e.Description != "" {
 		msg += fmt.Sprintf("📝 %s\n", e.Description)
 	}
-	msg += fmt.Sprintf("📅 %s\n", e.Date.Format("02/01/2006"))
+	msg += fmt.Sprintf("📅 %s\n", e.TransactionDate.Format("02/01/2006"))
 	msg += fmt.Sprintf("Status: %s", statusLabel)
 
 	if e.DueDate != nil {

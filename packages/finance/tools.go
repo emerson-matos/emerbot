@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"google.golang.org/genai"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -31,7 +30,8 @@ func FinanceTools(store Store) []Tool {
 	return []Tool{
 		createEntryTool(store),
 		editEntryTool(store),
-		monthSummaryTool(store),
+		resumoMensalTool(store),
+		definirMetaTool(store),
 		listDueEntriesTool(store),
 		searchEntriesTool(store),
 	}
@@ -79,16 +79,16 @@ func createEntryTool(store Store) Tool {
 			}
 
 			now := time.Now().UTC()
-			entry := domain.FinancialEntry{
-				UserID:      userID,
-				EntryID:     uuid.New().String(),
-				Date:        now,
-				Amount:      reaisToCentavos(args.Amount),
-				Category:    args.Category,
-				Description: args.Description,
-				Source:      "whatsapp",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+			entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
+				UserID:          userID,
+				TransactionDate: domain.NewCalendarDate(now),
+				Amount:          reaisToCentavos(args.Amount),
+				Category:        args.Category,
+				Description:     args.Description,
+				Source:          domain.SourceWhatsApp,
+			})
+			if err != nil {
+				return nil, err
 			}
 
 			entry.Type = domain.EntryTypeExpense
@@ -104,17 +104,19 @@ func createEntryTool(store Store) Tool {
 			}
 
 			if d, ok := parseDate(args.Date); ok {
-				entry.Date = d
+				entry.TransactionDate = domain.NewCalendarDate(d)
 			}
 
 			entry.PaymentStatus = domain.PaymentStatusPaid
 			if args.IsPending {
 				entry.PaymentStatus = domain.PaymentStatusPending
 				if d, ok := parseDate(args.DueDate); ok {
-					entry.DueDate = &d
+					date := domain.NewCalendarDate(d)
+					entry.DueDate = &date
 				}
 			} else {
-				entry.PaymentDate = &entry.Date
+				date := entry.TransactionDate
+				entry.PaymentDate = &date
 			}
 
 			if err := store.SaveEntry(ctx, entry); err != nil {
@@ -188,10 +190,11 @@ func editEntryTool(store Store) Tool {
 				entry.Description = args.Description
 			}
 			if d, ok := parseDate(args.Date); ok {
-				entry.Date = d
+				entry.TransactionDate = domain.NewCalendarDate(d)
 			}
 			if d, ok := parseDate(args.DueDate); ok {
-				entry.DueDate = &d
+				date := domain.NewCalendarDate(d)
+				entry.DueDate = &date
 			}
 			if args.IsPending != nil {
 				if *args.IsPending {
@@ -200,8 +203,8 @@ func editEntryTool(store Store) Tool {
 				} else {
 					entry.PaymentStatus = domain.PaymentStatusPaid
 					if entry.PaymentDate == nil {
-						now := time.Now().UTC()
-						entry.PaymentDate = &now
+						date := domain.NewCalendarDate(time.Now().UTC())
+						entry.PaymentDate = &date
 					}
 				}
 			}
@@ -222,14 +225,14 @@ func editEntryTool(store Store) Tool {
 	}
 }
 
-// --- get_month_summary ---
+// --- get_resumo_mensal ---
 
-func monthSummaryTool(store Store) Tool {
-	const name = "get_month_summary"
+func resumoMensalTool(store Store) Tool {
+	const name = "get_resumo_mensal"
 
 	return Tool{
 		Name:        name,
-		Description: "Retorna o resumo financeiro de um mês: receitas, despesas e saldo.",
+		Description: "Retorna o resumo financeiro de um mês: receitas, despesas, saldo e progresso das metas (faturamento e teto de despesas).",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -252,11 +255,113 @@ func monthSummaryTool(store Store) Tool {
 				return nil, fmt.Errorf("monthly summary: %w", err)
 			}
 
-			return map[string]any{
+			result := map[string]any{
 				"month":   summary.Month,
 				"income":  centavosToReais(summary.TotalIncome),
 				"expense": centavosToReais(summary.TotalExpense),
 				"balance": centavosToReais(summary.Balance),
+				"goal":    nil,
+			}
+
+			goal, err := store.GetGoal(ctx, userID, args.Month)
+			if err == nil && (goal.RevenueTarget > 0 || goal.ExpenseTarget > 0) {
+				income := summary.TotalIncome
+				goalMap := map[string]any{
+					"revenue_target": centavosToReais(goal.RevenueTarget),
+					"expense_target": centavosToReais(goal.ExpenseTarget),
+				}
+				if goal.RevenueTarget > 0 {
+					if income <= goal.RevenueTarget {
+						goalMap["revenue_progress_pct"] = float64(income*100) / float64(goal.RevenueTarget)
+					} else {
+						goalMap["revenue_progress_pct"] = 100.0
+					}
+				}
+				expense := summary.TotalExpense
+				if goal.ExpenseTarget > 0 {
+					if expense <= goal.ExpenseTarget {
+						goalMap["expense_progress_pct"] = float64(expense*100) / float64(goal.ExpenseTarget)
+					} else {
+						goalMap["expense_progress_pct"] = 100.0
+					}
+				}
+				result["goal"] = goalMap
+			}
+
+			return result, nil
+		},
+	}
+}
+
+// --- definir_meta ---
+
+func definirMetaTool(store Store) Tool {
+	const name = "definir_meta"
+
+	return Tool{
+		Name:        name,
+		Description: "Define ou atualiza a meta mensal de faturamento e/ou teto de despesas. Pelo menos um dos valores deve ser informado.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"month":            {Type: genai.TypeString, Description: "Mês no formato YYYY-MM (padrão: mês atual)"},
+				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais (ex: 80000.00)"},
+				"teto_despesas":    {Type: genai.TypeNumber, Description: "Teto de despesas em reais (ex: 60000.00)"},
+			},
+		},
+		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
+			var args struct {
+				Month         string  `json:"month"`
+				RevenueTarget float64 `json:"meta_faturamento"`
+				ExpenseTarget float64 `json:"teto_despesas"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("parse args: %w", err)
+			}
+
+			month := args.Month
+			if month == "" {
+				month = time.Now().UTC().Format("2006-01")
+			}
+
+			if args.RevenueTarget <= 0 && args.ExpenseTarget <= 0 {
+				return nil, fmt.Errorf("informe pelo menos meta_faturamento ou teto_despesas")
+			}
+
+			goal := domain.Goal{
+				UserID: userID,
+				Month:  month,
+			}
+
+			if args.RevenueTarget > 0 {
+				goal.RevenueTarget = reaisToCentavos(args.RevenueTarget)
+			}
+			if args.ExpenseTarget > 0 {
+				goal.ExpenseTarget = reaisToCentavos(args.ExpenseTarget)
+			}
+
+			// Merge with existing goal if only one field was provided
+			if args.RevenueTarget <= 0 || args.ExpenseTarget <= 0 {
+				existing, err := store.GetGoal(ctx, userID, month)
+				if err == nil {
+					if args.RevenueTarget <= 0 {
+						goal.RevenueTarget = existing.RevenueTarget
+					}
+					if args.ExpenseTarget <= 0 {
+						goal.ExpenseTarget = existing.ExpenseTarget
+					}
+				}
+			}
+
+			if err := store.SaveGoal(ctx, goal); err != nil {
+				return nil, fmt.Errorf("save goal: %w", err)
+			}
+
+			return map[string]any{
+				"month":            month,
+				"meta_faturamento": centavosToReais(goal.RevenueTarget),
+				"teto_despesas":    centavosToReais(goal.ExpenseTarget),
+				"status":           "saved",
 			}, nil
 		},
 	}

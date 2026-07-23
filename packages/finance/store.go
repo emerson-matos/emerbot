@@ -43,9 +43,9 @@ type EntryFilter struct {
 // have no DueDate.
 func effectiveDate(e domain.FinancialEntry) time.Time {
 	if e.DueDate != nil {
-		return *e.DueDate
+		return e.DueDate.Time()
 	}
-	return e.Date
+	return e.TransactionDate.Time()
 }
 
 // MonthlySummary aggregates income and expense totals for a calendar month.

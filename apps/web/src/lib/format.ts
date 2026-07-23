@@ -4,3 +4,8 @@ export function formatBRL(centavos: number): string {
     currency: "BRL",
   });
 }
+
+export function formatSignedBRL(centavos: number): string {
+  const sign = centavos >= 0 ? "+ " : "− ";
+  return sign + formatBRL(Math.abs(centavos));
+}

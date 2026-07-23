@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Receipt, Plus } from 'lucide-react'
+import { format } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
+import { ChevronDown, ChevronUp, Plus, Receipt, Search, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -8,12 +10,17 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { useEntriesInfinite, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
+import { useEntriesByMonth, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
 import EmptyState from '../components/EmptyState'
-import EntriesTable from '../components/EntriesTable'
+import PaymentList from '../components/payments/PaymentList'
+import type { PaymentGroupData } from '../components/payments/PaymentGroup'
+import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
+import { formatSignedBRL } from '@/lib/format'
+import { categoryLabels } from '@/lib/categories'
+import type { Entry } from '../api/types'
 
 type TypeFilter = 'all' | 'income' | 'expense'
-type StatusFilter = 'all' | 'paid' | 'pending'
+type StatusFilter = 'all' | 'paid' | 'pending' | 'overdue'
 
 const typeLabels: Record<TypeFilter, string> = {
   all: 'Todos os tipos',
@@ -25,26 +32,119 @@ const statusLabels: Record<StatusFilter, string> = {
   all: 'Todos os status',
   paid: 'Pago',
   pending: 'Pendente',
+  overdue: 'Vencido',
+}
+
+function monthLabel(monthKey: string): string {
+  return format(new Date(`${monthKey}-01T00:00:00`), 'MMMM yyyy', { locale: ptBR })
 }
 
 export default function Transactions() {
   const {
-    data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
-  } = useEntriesInfinite()
+    data, isLoading,
+    fetchNextPage, hasNextPage, isFetchingNextPage,
+    fetchPreviousPage, hasPreviousPage, isFetchingPreviousPage,
+  } = useEntriesByMonth()
   const markPaid = useMarkPaidMutation()
   const deleteEntry = useDeleteEntryMutation()
-  const entries = data?.pages.flatMap(p => p.entries) ?? []
 
   const [search, setSearch] = useState('')
   const [type, setType] = useState<TypeFilter>('all')
   const [status, setStatus] = useState<StatusFilter>('all')
+  const [category, setCategory] = useState('all')
+  const [month, setMonth] = useState('all')
 
-  const filtered = entries.filter(e => {
+  const pages = useMemo(() => data?.pages ?? [], [data])
+  const currentMonthKey = format(new Date(), 'yyyy-MM')
+  const todayISO = format(new Date(), 'yyyy-MM-dd')
+  const allEntries = useMemo(() => pages.flatMap(p => p.entries), [pages])
+
+  const matchesFilters = useCallback((e: Entry) => {
     if (type !== 'all' && e.Type !== type) return false
-    if (status !== 'all' && e.PaymentStatus !== status) return false
+    if (status === 'overdue') {
+      const overdue = e.PaymentStatus === 'pending' && (effectiveDate(e) ?? '') < todayISO
+      if (!overdue) return false
+    } else if (status !== 'all' && e.PaymentStatus !== status) return false
+    if (category !== 'all' && e.Category !== category) return false
+    if (month !== 'all' && (effectiveDate(e) ?? '').slice(0, 7) !== month) return false
     if (search !== '' && !e.Description.toLowerCase().includes(search.toLowerCase())) return false
     return true
-  })
+  }, [type, status, category, month, search, todayISO])
+
+  const categoryOptions = useMemo(() => {
+    const set = new Map<string, string>()
+    allEntries.forEach(e => {
+      if (type !== 'all' && e.Type !== type) return
+      set.set(e.Category, categoryLabels[e.Category] ?? e.Category)
+    })
+    return [...set.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [allEntries, type])
+
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>()
+    allEntries.forEach(e => set.add((effectiveDate(e) ?? '').slice(0, 7)))
+    return [...set].filter(Boolean).sort().reverse()
+  }, [allEntries])
+
+  const hasActiveFilters = search !== '' || type !== 'all' || status !== 'all' || category !== 'all' || month !== 'all'
+
+  function clearFilters() {
+    setSearch('')
+    setType('all')
+    setStatus('all')
+    setCategory('all')
+    setMonth('all')
+  }
+
+  const groups: PaymentGroupData[] = useMemo(() => {
+    const result: PaymentGroupData[] = []
+
+    const futurePages = pages.filter(p => p.month > currentMonthKey).sort((a, b) => a.month.localeCompare(b.month))
+    for (const p of futurePages) {
+      const items = p.entries.filter(matchesFilters)
+      if (items.length) {
+        result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'info', items })
+      }
+    }
+
+    const currentPage = pages.find(p => p.month === currentMonthKey)
+    if (currentPage) {
+      const filtered = currentPage.entries.filter(matchesFilters)
+      const { overdue, dueToday, upcoming } = bucketByUrgency(filtered, todayISO)
+      if (upcoming.length) {
+        result.push({ key: 'upcoming', label: 'Próximos vencimentos', kind: 'status', tone: 'info', items: upcoming })
+      }
+      if (dueToday.length) {
+        result.push({
+          key: 'today',
+          label: `Hoje · ${format(new Date(), 'dd/MM')}`,
+          kind: 'status',
+          tone: 'warning',
+          items: dueToday,
+        })
+      }
+      if (overdue.length) {
+        result.push({ key: 'overdue', label: 'Em atraso', kind: 'status', tone: 'negative', items: overdue })
+      }
+    }
+
+    const pastPages = pages.filter(p => p.month < currentMonthKey).sort((a, b) => b.month.localeCompare(a.month))
+    for (const p of pastPages) {
+      const items = p.entries.filter(matchesFilters)
+      if (items.length) {
+        result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'neutral', items })
+      }
+    }
+
+    return result
+  }, [pages, currentMonthKey, todayISO, matchesFilters])
+
+  const filteredEntries = useMemo(
+    () => allEntries.filter(matchesFilters),
+    [allEntries, matchesFilters],
+  )
+  const summaryCount = filteredEntries.length
+  const summaryNet = netAmount(filteredEntries)
 
   return (
     <div className="space-y-6">
@@ -59,8 +159,8 @@ export default function Transactions() {
       </div>
 
       <Card>
-        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative flex-1 sm:min-w-[220px]">
             <Search
               className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden
@@ -68,44 +168,78 @@ export default function Transactions() {
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar descrição..."
+              placeholder="Buscar descrição ou categoria..."
               className="pl-9"
             />
           </div>
-          <Select
-            items={typeLabels}
-            value={type}
-            onValueChange={value => setType(value as TypeFilter)}
-          >
-            <SelectTrigger className="w-full sm:w-44">
+          <Select items={typeLabels} value={type} onValueChange={value => setType(value as TypeFilter)}>
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {(Object.keys(typeLabels) as TypeFilter[]).map(key => (
-                <SelectItem key={key} value={key}>
-                  {typeLabels[key]}
-                </SelectItem>
+                <SelectItem key={key} value={key}>{typeLabels[key]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select items={statusLabels} value={status} onValueChange={value => setStatus(value as StatusFilter)}>
+            <SelectTrigger className="w-full sm:w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
+                <SelectItem key={key} value={key}>{statusLabels[key]}</SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Select
-            items={statusLabels}
-            value={status}
-            onValueChange={value => setStatus(value as StatusFilter)}
+            items={{ all: 'Todas as categorias', ...Object.fromEntries(categoryOptions) }}
+            value={category}
+            onValueChange={value => setCategory(value ?? 'all')}
           >
             <SelectTrigger className="w-full sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
-                <SelectItem key={key} value={key}>
-                  {statusLabels[key]}
-                </SelectItem>
+              <SelectItem value="all">Todas as categorias</SelectItem>
+              {categoryOptions.map(([value, label]) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            items={{ all: 'Todos os períodos', ...Object.fromEntries(monthOptions.map(k => [k, monthLabel(k)])) }}
+            value={month}
+            onValueChange={value => setMonth(value ?? 'all')}
+          >
+            <SelectTrigger className="w-full sm:w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os períodos</SelectItem>
+              {monthOptions.map(key => (
+                <SelectItem key={key} value={key} className="capitalize">{monthLabel(key)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </CardContent>
       </Card>
+
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-muted-foreground">
+          {summaryCount} {summaryCount === 1 ? 'lançamento' : 'lançamentos'}
+        </span>
+        {summaryCount > 0 && (
+          <span className={`font-semibold tabular-nums ${summaryNet >= 0 ? 'text-success' : 'text-destructive'}`}>
+            Saldo do período: {formatSignedBRL(summaryNet)}
+          </span>
+        )}
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            <X className="size-3.5" /> Limpar filtros
+          </Button>
+        )}
+      </div>
 
       <Card>
         <CardContent className="px-0">
@@ -115,23 +249,33 @@ export default function Transactions() {
                 <Skeleton key={i} className="h-9 rounded-md" />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={Receipt}
-              message="Nenhuma transação encontrada."
-            />
+          ) : groups.length === 0 ? (
+            <EmptyState icon={Receipt} message="Nenhuma transação encontrada." />
           ) : (
             <>
-              <EntriesTable entries={filtered} onMarkPaid={id => markPaid.mutate(id)} onDelete={id => deleteEntry.mutate(id)} />
               {hasNextPage && (
-                <div className="flex justify-center pt-3">
+                <div className="flex justify-center pb-1">
+                  <Button variant="ghost" size="sm" disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
+                    <ChevronUp className="size-3.5" />
+                    {isFetchingNextPage ? 'Carregando...' : 'Carregar meses futuros'}
+                  </Button>
+                </div>
+              )}
+              <PaymentList
+                groups={groups}
+                onMarkPaid={id => markPaid.mutate(id)}
+                onDelete={id => deleteEntry.mutate(id)}
+              />
+              {hasPreviousPage && (
+                <div className="flex justify-center pt-1">
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={isFetchingNextPage}
-                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingPreviousPage}
+                    onClick={() => fetchPreviousPage()}
                   >
-                    {isFetchingNextPage ? 'Carregando...' : 'Carregar mais'}
+                    <ChevronDown className="size-3.5" />
+                    {isFetchingPreviousPage ? 'Carregando...' : 'Carregar meses anteriores'}
                   </Button>
                 </div>
               )}

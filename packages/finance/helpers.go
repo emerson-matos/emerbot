@@ -84,7 +84,7 @@ func entryToMap(e domain.FinancialEntry) map[string]any {
 		"amount":      centavosToReais(e.Amount),
 		"category":    e.Category,
 		"description": e.Description,
-		"date":        e.Date.Format("2006-01-02"),
+		"date":        e.TransactionDate.String(),
 		"status":      string(e.PaymentStatus),
 	}
 	if e.DueDate != nil {

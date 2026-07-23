@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -25,6 +23,40 @@ const (
 
 type EntriesHandler struct {
 	store pkgfinance.Store
+}
+
+// entryResponse is the transport shape; it intentionally has no JSON tags so
+// encoding/json exposes Go's default field names.
+type entryResponse struct {
+	UserID                           string
+	EntryID                          domain.EntryID
+	TransactionDate                  string
+	DueDate                          *string
+	PaymentDate                      *string
+	Amount                           int64
+	Category                         string
+	Description                      string
+	Supplier                         string
+	Type                             domain.EntryType
+	PaymentStatus                    domain.PaymentStatus
+	Source                           domain.EntrySource
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
+	RecurrenceID                     string
+	RecurrenceIndex, RecurrenceTotal int
+}
+
+func responseEntry(e domain.FinancialEntry) entryResponse {
+	r := entryResponse{UserID: e.UserID, EntryID: e.EntryID, TransactionDate: e.TransactionDate.String(), Amount: e.Amount, Category: e.Category, Description: e.Description, Supplier: e.Supplier, Type: e.Type, PaymentStatus: e.PaymentStatus, Source: e.Source, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, RecurrenceID: e.RecurrenceID, RecurrenceIndex: e.RecurrenceIndex, RecurrenceTotal: e.RecurrenceTotal}
+	if e.DueDate != nil {
+		s := e.DueDate.String()
+		r.DueDate = &s
+	}
+	if e.PaymentDate != nil {
+		s := e.PaymentDate.String()
+		r.PaymentDate = &s
+	}
+	return r
 }
 
 func NewEntriesHandler(store pkgfinance.Store) *EntriesHandler {
@@ -79,7 +111,11 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to list entries", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"entries": entries, "count": len(entries)})
+	response := make([]entryResponse, len(entries))
+	for i := range entries {
+		response[i] = responseEntry(entries[i])
+	}
+	jsonOK(w, map[string]any{"entries": response, "count": len(entries)})
 }
 
 type createEntryRequest struct {
@@ -108,14 +144,14 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	date := time.Now().UTC()
+	date := domain.NewCalendarDate(time.Now().UTC())
 	if req.Date != "" {
 		t, err := time.Parse("2006-01-02", req.Date)
 		if err != nil {
 			jsonError(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
 			return
 		}
-		date = t
+		date = domain.NewCalendarDate(t)
 	}
 
 	if req.Amount <= 0 {
@@ -137,37 +173,38 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		status = domain.PaymentStatusPaid
 	}
 
-	var dueDate *time.Time
+	var dueDate *domain.CalendarDate
 	if req.DueDate != "" {
 		t, err := time.Parse("2006-01-02", req.DueDate)
 		if err == nil {
-			dueDate = &t
+			d := domain.NewCalendarDate(t)
+			dueDate = &d
 		}
 	}
 
-	source := strings.TrimSpace(req.Source)
+	source := domain.EntrySource(strings.TrimSpace(req.Source))
 	if source == "" {
-		source = "manual"
+		source = domain.SourceManual
 	}
-
-	now := time.Now().UTC()
-	entry := domain.FinancialEntry{
-		UserID:        claims.UserID,
-		EntryID:       uuid.New().String(),
-		Date:          date,
-		Amount:        req.Amount,
-		Category:      req.Category,
-		Type:          entryType,
-		Description:   req.Description,
-		DueDate:       dueDate,
-		PaymentStatus: status,
-		Supplier:      req.Supplier,
-		Source:        source,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
+		UserID:          claims.UserID,
+		TransactionDate: date,
+		Amount:          req.Amount,
+		Category:        req.Category,
+		Type:            entryType,
+		Description:     req.Description,
+		DueDate:         dueDate,
+		PaymentStatus:   status,
+		Supplier:        req.Supplier,
+		Source:          source,
+	})
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	if status == domain.PaymentStatusPaid {
-		entry.PaymentDate = &date
+	if err := entry.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if err := h.store.SaveEntry(r.Context(), entry); err != nil {
@@ -176,7 +213,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(entry) //nolint:errcheck
+	json.NewEncoder(w).Encode(responseEntry(entry)) //nolint:errcheck
 }
 
 // Update handles PUT /entries/{id}
@@ -221,8 +258,11 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.PaymentStatus != "" {
 		existing.PaymentStatus = domain.PaymentStatus(req.PaymentStatus)
 		if req.PaymentStatus == "paid" && existing.PaymentDate == nil {
-			now := time.Now().UTC()
-			existing.PaymentDate = &now
+			d := existing.TransactionDate
+			existing.PaymentDate = &d
+		}
+		if req.PaymentStatus == "pending" {
+			existing.PaymentDate = nil
 		}
 	}
 	if req.Supplier != "" {
@@ -231,7 +271,8 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.DueDate != "" {
 		t, err := time.Parse("2006-01-02", req.DueDate)
 		if err == nil {
-			existing.DueDate = &t
+			d := domain.NewCalendarDate(t)
+			existing.DueDate = &d
 		}
 	}
 	existing.UpdatedAt = time.Now().UTC()
@@ -240,7 +281,11 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to update entry", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, existing)
+	if err := existing.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, responseEntry(existing))
 }
 
 // Delete handles DELETE /entries/{id}

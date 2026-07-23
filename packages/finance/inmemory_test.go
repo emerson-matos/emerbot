@@ -17,6 +17,7 @@ func TestInMemoryStoreListEntriesAppliesFiltersAndSortsDesc(t *testing.T) {
 	entry1 := testEntry("u1", "e1", "2026-07-10", 10000, "aluguel", domain.EntryTypeExpense)
 	entry2 := testEntry("u1", "e2", "2026-07-12", 20000, "venda_balcao", domain.EntryTypeIncome)
 	entry2.PaymentStatus = domain.PaymentStatusPending
+	entry2.PaymentDate = nil
 	entry3 := testEntry("u1", "e3", "2026-07-11", 15000, "aluguel", domain.EntryTypeExpense)
 	otherUser := testEntry("u2", "e4", "2026-07-13", 5000, "aluguel", domain.EntryTypeExpense)
 
@@ -156,9 +157,10 @@ func TestInMemoryStoreMonthlySummaryBucketsByDueDateNotRegistrationDate(t *testi
 
 	// A /recorrente-style pending expense: registered in July but due in
 	// September — it must count toward September's totals, not July's.
-	dueInSeptember := mustDate("2026-09-10")
+	dueInSeptember := domain.NewCalendarDate(mustDate("2026-09-10"))
 	installment := testEntry("u1", "e1", "2026-07-14", 35000, "aluguel", domain.EntryTypeExpense)
 	installment.PaymentStatus = domain.PaymentStatusPending
+	installment.PaymentDate = nil
 	installment.DueDate = &dueInSeptember
 
 	// An already-settled July expense (no DueDate) still counts toward July.
@@ -194,8 +196,8 @@ func TestInMemoryStoreCashFlowForecastCoversWholeCalendarMonth(t *testing.T) {
 	ctx := context.Background()
 
 	beforeMonth := mustDate("2026-06-28")
-	day1Due := mustDate("2026-07-01")
-	day2Due := mustDate("2026-07-02")
+	day1Due := domain.NewCalendarDate(mustDate("2026-07-01"))
+	day2Due := domain.NewCalendarDate(mustDate("2026-07-02"))
 
 	pastIncome := testEntryAt("u1", "past-income", beforeMonth, 50000, "venda_balcao", domain.EntryTypeIncome)
 	day1Income := testEntryAt("u1", "day1-income", mustDate("2026-07-01"), 15000, "venda_balcao", domain.EntryTypeIncome)
@@ -276,7 +278,7 @@ func TestInMemoryStorePreservesPaymentDate(t *testing.T) {
 	store := NewInMemoryStore()
 	ctx := context.Background()
 
-	payDate := mustDate("2026-07-10")
+	payDate := domain.NewCalendarDate(mustDate("2026-07-10"))
 	entry := testEntry("u1", "e1", "2026-07-10", 10000, "aluguel", domain.EntryTypeExpense)
 	entry.PaymentDate = &payDate
 
@@ -322,18 +324,23 @@ func testEntry(userID, entryID, date string, amount int64, category string, entr
 }
 
 func testEntryAt(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
-	return domain.FinancialEntry{
-		UserID:        userID,
-		EntryID:       entryID,
-		Date:          date,
-		Amount:        amount,
-		Category:      category,
-		Type:          entryType,
-		Description:   category,
-		PaymentStatus: domain.PaymentStatusPaid,
-		CreatedAt:     date,
-		UpdatedAt:     date,
+	cd := domain.NewCalendarDate(date)
+	entry := domain.FinancialEntry{
+		UserID:          userID,
+		EntryID:         domain.EntryID(entryID),
+		TransactionDate: cd,
+		Amount:          amount,
+		Category:        category,
+		Type:            entryType,
+		Description:     category,
+		PaymentStatus:   domain.PaymentStatusPaid,
+		Source:          domain.SourceManual,
+		CreatedAt:       date,
+		UpdatedAt:       date,
 	}
+	payDate := cd
+	entry.PaymentDate = &payDate
+	return entry
 }
 
 func mustDate(s string) time.Time {

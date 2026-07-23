@@ -178,7 +178,7 @@ func TestAgentAnswersSummaryQuery(t *testing.T) {
 	store := finance.NewInMemoryStore()
 	month := time.Now().UTC().Format("2006-01")
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
-		functionCallResponse("get_month_summary", map[string]any{"month": month}),
+		functionCallResponse("get_resumo_mensal", map[string]any{"month": month}),
 		textResponse("Este mês: R$0,00 de saldo."),
 	}}
 	agent := newTestAgent(gen, store)
@@ -195,6 +195,40 @@ func TestAgentAnswersSummaryQuery(t *testing.T) {
 	}
 }
 
+func TestAgentSetsGoalViaTool(t *testing.T) {
+	t.Parallel()
+
+	store := finance.NewInMemoryStore()
+	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
+		functionCallResponse("definir_meta", map[string]any{
+			"meta_faturamento": 80000.0,
+			"teto_despesas":    60000.0,
+		}),
+		textResponse("✅ Meta de faturamento de R$80.000,00 e teto de despesas de R$60.000,00 salva."),
+	}}
+	agent := newTestAgent(gen, store)
+
+	reply, err := agent.Process(context.Background(), "u1", userTurn("quero definir meta de 80 mil de faturamento e 60 mil de teto"), time.Now())
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if !strings.Contains(reply, "salva") {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+	if gen.calls != 2 {
+		t.Fatalf("expected 2 Gemini calls, got %d", gen.calls)
+	}
+
+	month := time.Now().UTC().Format("2006-01")
+	goal, err := store.GetGoal(context.Background(), "u1", month)
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if goal.RevenueTarget != 8000000 || goal.ExpenseTarget != 6000000 {
+		t.Fatalf("unexpected goal: %+v", goal)
+	}
+}
+
 func TestAgentChainsMultipleToolRounds(t *testing.T) {
 	t.Parallel()
 
@@ -204,7 +238,7 @@ func TestAgentChainsMultipleToolRounds(t *testing.T) {
 		functionCallResponse("create_financial_entry", map[string]any{
 			"type": "expense", "amount": 500.0, "category": "aluguel", "is_pending": false,
 		}),
-		functionCallResponse("get_month_summary", map[string]any{"month": month}),
+		functionCallResponse("get_resumo_mensal", map[string]any{"month": month}),
 		textResponse("Registrei e o saldo do mês está atualizado."),
 	}}
 	agent := newTestAgent(gen, store)
@@ -269,7 +303,7 @@ func TestAgentExposesAllFinanceTools(t *testing.T) {
 			names = append(names, decl.Name)
 		}
 	}
-	for _, want := range []string{"create_financial_entry", "get_month_summary", "list_due_entries", "search_entries"} {
+	for _, want := range []string{"create_financial_entry", "get_resumo_mensal", "definir_meta", "list_due_entries", "search_entries"} {
 		if !contains(names, want) {
 			t.Fatalf("expected tool %q to be exposed, got %v", want, names)
 		}
@@ -293,7 +327,7 @@ func TestAgentStopsAfterMaxToolRounds(t *testing.T) {
 	t.Parallel()
 
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
-		functionCallResponse("get_month_summary", map[string]any{}),
+		functionCallResponse("get_resumo_mensal", map[string]any{}),
 	}}
 	agent := newTestAgent(gen, finance.NewInMemoryStore())
 

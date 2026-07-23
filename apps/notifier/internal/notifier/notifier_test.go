@@ -35,7 +35,7 @@ func day(s string) time.Time {
 	return t
 }
 
-func ptr(t time.Time) *time.Time { return &t }
+func ptrCD(t time.Time) *domain.CalendarDate { cd := domain.NewCalendarDate(t); return &cd }
 
 // runDay is the fixed "now" the test notifier uses. inWindow / outWindow are
 // last-inbound timestamps whose sessions are respectively still open / expired
@@ -85,10 +85,11 @@ func newNotifier(s stores, wa *fakeWA) *Notifier {
 // recipient's prefs point at their own real Cognito user, but they all read
 // this same ledger.
 func dueExpense(id string, amount int64) domain.FinancialEntry {
+	cd := domain.NewCalendarDate(runDay)
 	return domain.FinancialEntry{
-		UserID: shared.FinanceLedgerID, EntryID: id, Description: id, Amount: amount,
-		Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending,
-		DueDate: ptr(runDay),
+		UserID: shared.FinanceLedgerID, EntryID: domain.EntryID(id), Description: id, Amount: amount,
+		TransactionDate: cd, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPending,
+		DueDate: ptrCD(runDay), Source: domain.SourceManual,
 	}
 }
 
@@ -203,7 +204,7 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	seedUser(
 		t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
-		domain.FinancialEntry{UserID: shared.FinanceLedgerID, EntryID: "e1", Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, DueDate: ptr(runDay)},
+		domain.FinancialEntry{UserID: shared.FinanceLedgerID, EntryID: domain.EntryID("e1"), TransactionDate: domain.NewCalendarDate(runDay), Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(runDay), DueDate: ptrCD(runDay), Source: domain.SourceManual},
 	)
 
 	res, err := newNotifier(s, wa).Run(context.Background())

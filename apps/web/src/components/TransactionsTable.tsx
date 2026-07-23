@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { Receipt } from "lucide-react";
+import { format } from "date-fns";
+import { ChevronDown, ChevronUp, Receipt } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Entry } from "../api/types";
-import { effectiveDate } from "@/lib/entries";
+import { bucketByUrgency } from "@/lib/entries";
 import EmptyState from "./EmptyState";
-import EntriesTable from "./EntriesTable";
+import PaymentList from "./payments/PaymentList";
+import type { PaymentGroupData } from "./payments/PaymentGroup";
 
 interface Props {
   entries: Entry[];
@@ -15,17 +17,30 @@ interface Props {
   onDelete?: (id: string) => void;
 }
 
-const PAGE_SIZE = 20;
-
 export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDelete }: Props) {
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [showHistory, setShowHistory] = useState(false);
+  const todayISO = format(new Date(), "yyyy-MM-dd");
+  const { overdue, dueToday, upcoming, history } = bucketByUrgency(entries, todayISO);
 
-  const sorted = [...entries].sort((a, b) => {
-    const da = effectiveDate(a) ?? "";
-    const db = effectiveDate(b) ?? "";
-    return da.localeCompare(db);
-  });
-  const visible = sorted.slice(0, visibleCount);
+  const groups: PaymentGroupData[] = [];
+  if (overdue.length) {
+    groups.push({ key: "overdue", label: "Em atraso", kind: "status", tone: "negative", items: overdue });
+  }
+  if (dueToday.length) {
+    groups.push({
+      key: "today",
+      label: `Hoje · ${format(new Date(), "dd/MM")}`,
+      kind: "status",
+      tone: "warning",
+      items: dueToday,
+    });
+  }
+  if (upcoming.length) {
+    groups.push({ key: "upcoming", label: "Próximos vencimentos", kind: "status", tone: "info", items: upcoming });
+  }
+  if (showHistory && history.length) {
+    groups.push({ key: "history", label: "Histórico do mês", kind: "status", tone: "neutral", items: history });
+  }
 
   return (
     <Card>
@@ -49,15 +64,12 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDe
           />
         ) : (
           <>
-            <EntriesTable entries={visible} onMarkPaid={onMarkPaid} onDelete={onDelete} />
-            {visibleCount < sorted.length && (
-              <div className="flex justify-center pt-3">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-                >
-                  Carregar mais
+            <PaymentList groups={groups} onMarkPaid={onMarkPaid} onDelete={onDelete} />
+            {history.length > 0 && (
+              <div className="flex justify-center pt-1">
+                <Button variant="ghost" size="sm" onClick={() => setShowHistory(v => !v)}>
+                  {showHistory ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                  {showHistory ? "Ocultar" : "Mostrar"} histórico do mês ({history.length})
                 </Button>
               </div>
             )}

@@ -92,7 +92,8 @@ func TestCreateEntryToolPendingWithDueDate(t *testing.T) {
 	if e.PaymentDate != nil {
 		t.Fatal("expected no PaymentDate for a pending entry")
 	}
-	if e.DueDate == nil || !e.DueDate.Equal(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)) {
+	wantDue := domain.NewCalendarDate(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	if e.DueDate == nil || !e.DueDate.Equal(wantDue) {
 		t.Fatalf("unexpected due date: %+v", e.DueDate)
 	}
 }
@@ -179,15 +180,17 @@ func TestCreateEntryToolIgnoresDueDateWhenNotPending(t *testing.T) {
 	}
 }
 
-func TestMonthSummaryToolReturnsReais(t *testing.T) {
+func TestResumoMensalToolReturnsIncomeExpenseBalanceAndGoal(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
 	month := "2026-07"
-	seed := func(entryID string, amount int64, typ domain.EntryType) {
+	seed := func(id string, amount int64, typ domain.EntryType) {
+		cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 		if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-			UserID: "u1", EntryID: entryID, Date: time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC),
+			UserID: "u1", EntryID: domain.EntryID(id), TransactionDate: cd,
 			Amount: amount, Type: typ, PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate: &cd, Source: domain.SourceManual,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -195,7 +198,7 @@ func TestMonthSummaryToolReturnsReais(t *testing.T) {
 	seed("a", 90000, domain.EntryTypeIncome)
 	seed("b", 25000, domain.EntryTypeExpense)
 
-	h := handlerFor(t, store, "get_month_summary")
+	h := handlerFor(t, store, "get_resumo_mensal")
 	out := callTool(t, h, "u1", map[string]any{"month": month})
 
 	m, ok := out.(map[string]any)
@@ -205,6 +208,9 @@ func TestMonthSummaryToolReturnsReais(t *testing.T) {
 	if m["income"] != 900.0 || m["expense"] != 250.0 || m["balance"] != 650.0 {
 		t.Fatalf("unexpected summary: %+v", m)
 	}
+	if m["goal"] != nil {
+		t.Fatalf("expected goal to be nil, got %+v", m["goal"])
+	}
 }
 
 func TestSearchEntriesToolFiltersByDescription(t *testing.T) {
@@ -212,10 +218,12 @@ func TestSearchEntriesToolFiltersByDescription(t *testing.T) {
 
 	store := NewInMemoryStore()
 	save := func(id, desc string) {
+		cd := domain.NewCalendarDate(time.Now().UTC())
 		if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-			UserID: "u1", EntryID: id, Date: time.Now().UTC(), Amount: 1000,
-			Category: "outros_despesas", Type: domain.EntryTypeExpense,
+			UserID: "u1", EntryID: domain.EntryID(id), TransactionDate: cd,
+			Amount: 1000, Category: "outros_despesas", Type: domain.EntryTypeExpense,
 			Description: desc, PaymentStatus: domain.PaymentStatusPaid,
+			PaymentDate: &cd, Source: domain.SourceManual,
 		}); err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -243,18 +251,19 @@ func TestListDueEntriesToolDefaultsToPending(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
-	due := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	due := domain.NewCalendarDate(time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC))
+	now := domain.NewCalendarDate(time.Now().UTC())
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-		UserID: "u1", EntryID: "p", Date: time.Now().UTC(), Amount: 5000,
+		UserID: "u1", EntryID: domain.EntryID("p"), TransactionDate: now, Amount: 5000,
 		Category: "aluguel", Type: domain.EntryTypeExpense, DueDate: &due,
-		PaymentStatus: domain.PaymentStatusPending,
+		PaymentStatus: domain.PaymentStatusPending, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("save pending: %v", err)
 	}
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-		UserID: "u1", EntryID: "paid", Date: time.Now().UTC(), Amount: 5000,
+		UserID: "u1", EntryID: domain.EntryID("paid"), TransactionDate: now, Amount: 5000,
 		Category: "aluguel", Type: domain.EntryTypeExpense,
-		PaymentStatus: domain.PaymentStatusPaid,
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &now, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("save paid: %v", err)
 	}
@@ -275,10 +284,12 @@ func TestEditEntryToolUpdatesFields(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-		UserID: "u1", EntryID: "e1", Date: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: cd,
 		Amount: 1000, Category: "outros_despesas", Type: domain.EntryTypeExpense,
 		Description: "old", PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -304,11 +315,12 @@ func TestEditEntryToolMarkingPaidSetsPaymentDate(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
-	due := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	due := domain.NewCalendarDate(time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC))
+	now := domain.NewCalendarDate(time.Now().UTC())
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-		UserID: "u1", EntryID: "e1", Date: time.Now().UTC(), Amount: 5000,
+		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: now, Amount: 5000,
 		Category: "aluguel", Type: domain.EntryTypeExpense, DueDate: &due,
-		PaymentStatus: domain.PaymentStatusPending,
+		PaymentStatus: domain.PaymentStatusPending, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -344,9 +356,11 @@ func TestEditEntryToolRejectsAmountOverCap(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
+	cd := domain.NewCalendarDate(time.Now().UTC())
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
-		UserID: "u1", EntryID: "e1", Date: time.Now().UTC(), Amount: 1000,
+		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: cd, Amount: 1000,
 		Category: "aluguel", Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -363,5 +377,341 @@ func TestEditEntryToolRejectsAmountOverCap(t *testing.T) {
 	}
 	if entry.Amount != 1000 {
 		t.Fatalf("expected amount unchanged after rejected edit, got %d", entry.Amount)
+	}
+}
+
+func TestResumoMensalToolComMetaIncluiProgresso(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	month := "2026-07"
+
+	// Seed entries: R$ 500 income, R$ 200 expense
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	for _, e := range []domain.FinancialEntry{
+		{UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd, Amount: 50000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual},
+		{UserID: "u1", EntryID: domain.EntryID("exp1"), TransactionDate: cd, Amount: 20000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual},
+	} {
+		if err := store.SaveEntry(ctx, e); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// Seed goal: R$ 1000 revenue target, R$ 500 expense ceiling
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
+	if err := store.SaveGoal(ctx, goal); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{"month": month})
+
+	m := out.(map[string]any)
+	g := m["goal"].(map[string]any)
+
+	if g["revenue_target"] != 1000.0 {
+		t.Fatalf("expected revenue_target 1000, got %v", g["revenue_target"])
+	}
+	if g["revenue_progress_pct"] != 50.0 {
+		t.Fatalf("expected revenue_progress_pct 50, got %v", g["revenue_progress_pct"])
+	}
+	if g["expense_target"] != 500.0 {
+		t.Fatalf("expected expense_target 500, got %v", g["expense_target"])
+	}
+	if g["expense_progress_pct"] != 40.0 {
+		t.Fatalf("expected expense_progress_pct 40, got %v", g["expense_progress_pct"])
+	}
+}
+
+func TestResumoMensalToolSemMetaRetornaGoalNil(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	month := "2026-07"
+
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: cd,
+		Amount: 1000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{"month": month})
+
+	m := out.(map[string]any)
+	if m["goal"] != nil {
+		t.Fatalf("expected goal to be nil, got %+v", m["goal"])
+	}
+}
+
+func TestDefinirMetaPersisteRevenueTarget(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	out := callTool(t, h, "u1", map[string]any{
+		"month":            "2026-08",
+		"meta_faturamento": 50000.0,
+	})
+
+	m := out.(map[string]any)
+	if m["meta_faturamento"] != 50000.0 {
+		t.Fatalf("expected meta_faturamento 50000, got %v", m["meta_faturamento"])
+	}
+
+	goal, err := store.GetGoal(context.Background(), "u1", "2026-08")
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if goal.RevenueTarget != reaisToCentavos(50000.0) {
+		t.Fatalf("expected RevenueTarget %d, got %d", reaisToCentavos(50000.0), goal.RevenueTarget)
+	}
+}
+
+func TestDefinirMetaPersisteExpenseTarget(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	out := callTool(t, h, "u1", map[string]any{
+		"month":         "2026-08",
+		"teto_despesas": 30000.0,
+	})
+
+	m := out.(map[string]any)
+	if m["teto_despesas"] != 30000.0 {
+		t.Fatalf("expected teto_despesas 30000, got %v", m["teto_despesas"])
+	}
+
+	goal, err := store.GetGoal(context.Background(), "u1", "2026-08")
+	if err != nil {
+		t.Fatalf("GetGoal: %v", err)
+	}
+	if goal.ExpenseTarget != reaisToCentavos(30000.0) {
+		t.Fatalf("expected ExpenseTarget %d, got %d", reaisToCentavos(30000.0), goal.ExpenseTarget)
+	}
+}
+
+func TestDefinirMetaRejeitaSemTargets(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	raw, _ := json.Marshal(map[string]any{"month": "2026-08"})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected error when no targets provided")
+	}
+}
+
+func TestDefinirMetaMergeComExisting(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	// Pre-save a goal with only revenue target
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-09", RevenueTarget: 100000}); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "definir_meta")
+	out := callTool(t, h, "u1", map[string]any{
+		"month":         "2026-09",
+		"teto_despesas": 40000.0,
+	})
+
+	m := out.(map[string]any)
+	if m["meta_faturamento"] != 1000.0 {
+		t.Fatalf("expected existing meta_faturamento 1000 preserved, got %v", m["meta_faturamento"])
+	}
+	if m["teto_despesas"] != 40000.0 {
+		t.Fatalf("expected teto_despesas 40000, got %v", m["teto_despesas"])
+	}
+}
+
+func TestDefinirMetaDefaultsToCurrentMonth(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	now := time.Now().UTC()
+	expectedMonth := now.Format("2006-01")
+
+	out := callTool(t, h, "u1", map[string]any{
+		"meta_faturamento": 1000.0,
+	})
+
+	m := out.(map[string]any)
+	if m["month"] != expectedMonth {
+		t.Fatalf("expected month %q, got %q", expectedMonth, m["month"])
+	}
+}
+
+func TestResumoMensalRevenueCappedAt100WhenExceedsTarget(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	month := "2026-07"
+
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	if err := store.SaveEntry(ctx, domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd,
+		Amount: 200000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000}
+	if err := store.SaveGoal(ctx, goal); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{"month": month})
+	g := out.(map[string]any)["goal"].(map[string]any)
+
+	if g["revenue_progress_pct"] != 100.0 {
+		t.Fatalf("expected revenue_progress_pct capped at 100, got %v", g["revenue_progress_pct"])
+	}
+}
+
+func TestResumoMensalExpenseCappedAt100WhenExceedsTarget(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	month := "2026-07"
+
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	if err := store.SaveEntry(ctx, domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("exp1"), TransactionDate: cd,
+		Amount: 60000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
+	if err := store.SaveGoal(ctx, goal); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{"month": month})
+	g := out.(map[string]any)["goal"].(map[string]any)
+
+	if g["expense_progress_pct"] != 100.0 {
+		t.Fatalf("expected expense_progress_pct capped at 100, got %v", g["expense_progress_pct"])
+	}
+}
+
+func TestResumoMensalOnlyExpenseTargetShowsGoalBlock(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	month := "2026-07"
+
+	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
+	if err := store.SaveEntry(ctx, domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("exp1"), TransactionDate: cd,
+		Amount: 20000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Only expense target set, no revenue target
+	goal := domain.Goal{UserID: "u1", Month: month, ExpenseTarget: 50000}
+	if err := store.SaveGoal(ctx, goal); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{"month": month})
+	g := out.(map[string]any)["goal"].(map[string]any)
+
+	if g["expense_target"] != 500.0 {
+		t.Fatalf("expected expense_target 500, got %v", g["expense_target"])
+	}
+	if g["expense_progress_pct"] != 40.0 {
+		t.Fatalf("expected expense_progress_pct 40, got %v", g["expense_progress_pct"])
+	}
+	if _, ok := g["revenue_progress_pct"]; ok {
+		t.Fatal("expected no revenue_progress_pct when revenue target is 0")
+	}
+}
+
+func TestResumoMensalDefaultsToCurrentMonth(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	expectedMonth := now.Format("2006-01")
+
+	cd := domain.NewCalendarDate(now)
+	if err := store.SaveEntry(ctx, domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd,
+		Amount: 50000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid,
+		PaymentDate: &cd, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	goal := domain.Goal{UserID: "u1", Month: expectedMonth, RevenueTarget: 100000}
+	if err := store.SaveGoal(ctx, goal); err != nil {
+		t.Fatalf("SaveGoal: %v", err)
+	}
+
+	h := handlerFor(t, store, "get_resumo_mensal")
+	out := callTool(t, h, "u1", map[string]any{})
+
+	m := out.(map[string]any)
+	if m["month"] != expectedMonth {
+		t.Fatalf("expected month %q, got %q", expectedMonth, m["month"])
+	}
+}
+
+func TestDefinirMetaAmbosTargets(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	out := callTool(t, h, "u1", map[string]any{
+		"month":            "2026-10",
+		"meta_faturamento": 80000.0,
+		"teto_despesas":    60000.0,
+	})
+
+	m := out.(map[string]any)
+	if m["meta_faturamento"] != 80000.0 {
+		t.Fatalf("expected meta_faturamento 80000, got %v", m["meta_faturamento"])
+	}
+	if m["teto_despesas"] != 60000.0 {
+		t.Fatalf("expected teto_despesas 60000, got %v", m["teto_despesas"])
+	}
+}
+
+func TestDefinirMetaRejeitaValorZerado(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, "definir_meta")
+
+	raw, _ := json.Marshal(map[string]any{
+		"month":            "2026-08",
+		"meta_faturamento": 0.0,
+		"teto_despesas":    0.0,
+	})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected error when both targets are zero")
 	}
 }

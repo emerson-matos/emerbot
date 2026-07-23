@@ -14,7 +14,7 @@ export interface UserProfile {
 export interface Entry {
   UserID: string;
   EntryID: string;
-  Date: string;
+  TransactionDate: string;
   Amount: number;
   Category: string;
   Type: "expense" | "income";

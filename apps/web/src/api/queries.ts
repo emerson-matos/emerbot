@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { addMonths, endOfMonth, format, startOfMonth } from "date-fns";
 import { CognitoAuthError } from "./types";
 import type { CreateEntryInput, Entry, NotificationPrefs } from "./types";
 import { api } from "./http";
@@ -18,7 +19,7 @@ export const queryKeys = {
     ["summary", "categories", from, to] as const,
   cashflow: (month: string) => ["summary", "cashflow", month] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
-  entriesPaged: (pageSize: number) => ["entries", "paged", pageSize] as const,
+  entriesByMonth: () => ["entries", "byMonth"] as const,
   goal: (month: string) => ["goal", month] as const,
   notificationPrefs: () => ["notifications", "preferences"] as const,
 };
@@ -60,21 +61,47 @@ export function useEntries(from: string, to: string) {
   });
 }
 
-export function useEntriesInfinite(pageSize = 50) {
+const MAX_MONTHS_FORWARD = 12;
+const MAX_MONTHS_BACK = 18;
+
+function monthKeyOffset(key: string, offset: number): string {
+  const [y, m] = key.split("-").map(Number);
+  return format(addMonths(new Date(y, m - 1, 1), offset), "yyyy-MM");
+}
+
+function monthDiff(fromKey: string, toKey: string): number {
+  const [fy, fm] = fromKey.split("-").map(Number);
+  const [ty, tm] = toKey.split("-").map(Number);
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+async function fetchEntriesForMonth(monthKey: string) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const monthStart = new Date(y, m - 1, 1);
+  const { entries } = await api.entries.list({
+    from: format(startOfMonth(monthStart), "yyyy-MM-dd"),
+    to: format(endOfMonth(monthStart), "yyyy-MM-dd"),
+  });
+  return { month: monthKey, entries };
+}
+
+// One page per calendar month, expandable in both directions from the
+// current month via fetchNextPage (future) / fetchPreviousPage (past).
+export function useEntriesByMonth() {
+  const currentMonth = format(new Date(), "yyyy-MM");
+
   return useInfiniteQuery({
-    queryKey: queryKeys.entriesPaged(pageSize),
-	queryFn: ({ pageParam }: { pageParam?: string }) =>
-		api.entries.list({
-			limit: String(pageSize),
-			...(pageParam ? { cursor: pageParam } : {}),
-		}),
-	initialPageParam: undefined as string | undefined,
-	getNextPageParam: (lastPage) => {
-		if (lastPage.entries.length < pageSize) return undefined;
-		const oldest = lastPage.entries[lastPage.entries.length - 1];
-		const effectiveDate = oldest.DueDate || oldest.Date;
-		return effectiveDate.slice(0, 10) + "#" + oldest.EntryID;
-	},
+    queryKey: queryKeys.entriesByMonth(),
+    queryFn: ({ pageParam }: { pageParam: string }) => fetchEntriesForMonth(pageParam),
+    initialPageParam: currentMonth,
+    getNextPageParam: (lastPage) => {
+      if (monthDiff(currentMonth, lastPage.month) >= MAX_MONTHS_FORWARD) return undefined;
+      return monthKeyOffset(lastPage.month, 1);
+    },
+    getPreviousPageParam: (firstPage) => {
+      if (monthDiff(currentMonth, firstPage.month) <= -MAX_MONTHS_BACK) return undefined;
+      return monthKeyOffset(firstPage.month, -1);
+    },
   });
 }
 
@@ -255,4 +282,3 @@ export function useLoginMutation() {
     },
   });
 }
-

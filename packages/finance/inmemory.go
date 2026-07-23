@@ -39,9 +39,12 @@ func notifLogKey(userID, key string) string  { return userID + "#" + key }
 // --- Entries ---
 
 func (s *InMemoryStore) SaveEntry(_ context.Context, entry domain.FinancialEntry) error {
+	if err := entry.Validate(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[entryKey(entry.UserID, entry.EntryID)] = entry
+	s.entries[entryKey(entry.UserID, string(entry.EntryID))] = entry
 	return nil
 }
 
@@ -49,10 +52,15 @@ func (s *InMemoryStore) SaveEntry(_ context.Context, entry domain.FinancialEntry
 // observe a partial series (mirrors the atomicity DynamoDBStore gets from
 // TransactWriteItems).
 func (s *InMemoryStore) SaveEntries(_ context.Context, entries []domain.FinancialEntry) error {
+	for _, e := range entries {
+		if err := e.Validate(); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, e := range entries {
-		s.entries[entryKey(e.UserID, e.EntryID)] = e
+		s.entries[entryKey(e.UserID, string(e.EntryID))] = e
 	}
 	return nil
 }
@@ -79,7 +87,7 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 
 		// Cursor is an exclusive upper bound on the GSI2SK value.
 		if filter.Cursor != "" {
-			gsi2sk := effectiveDate(e).Format("2006-01-02") + "#" + e.EntryID
+			gsi2sk := effectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID)
 			if gsi2sk >= filter.Cursor {
 				continue
 			}
@@ -119,7 +127,7 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 func (s *InMemoryStore) UpdateEntry(_ context.Context, entry domain.FinancialEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := entryKey(entry.UserID, entry.EntryID)
+	key := entryKey(entry.UserID, string(entry.EntryID))
 	if _, ok := s.entries[key]; !ok {
 		return fmt.Errorf("entry %q not found", entry.EntryID)
 	}
