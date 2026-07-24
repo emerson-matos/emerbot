@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  validate:
+  go:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,26 +18,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-
-      - name: Install web deps
-        run: npm --prefix apps/web ci
-
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v2
-
       - name: Setup golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12
-
-      - name: Check formatting
-        run: make tofu-fmt-check
 
       - name: Build
         run: make build
@@ -46,7 +30,19 @@ jobs:
         run: make test
 
       - name: Lint
-        run: make lint
+        run: golangci-lint run ./...
+
+  tofu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v2
+
+      - name: Check formatting
+        run: make tofu-fmt-check
 
   web:
     runs-on: ubuntu-latest
