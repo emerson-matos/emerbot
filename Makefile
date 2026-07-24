@@ -19,6 +19,7 @@ LAMBDA_DIR := $(TOFU_DIR)/.lambdas
 LAMBDA_ZIP := $(LAMBDA_DIR)/webhook.zip
 DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
 NOTIFIER_ZIP := $(LAMBDA_DIR)/notifier.zip
+IMPORTER_ZIP := $(LAMBDA_DIR)/payment-importer.zip
 
 # Every Lambda links against the shared packages/, so any Go change can affect
 # any zip. We over-approximate each zip's dependency set to all non-test Go
@@ -32,7 +33,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         logs-webhook logs-api \
         seed demo demo-ollama \
         web-dev \
-        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambdas clean-lambdas \
+        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
         tofu-plan tofu-apply tofu-destroy
 
@@ -72,10 +73,14 @@ $(DASHBOARD_ZIP): $(GO_SOURCES)
 $(NOTIFIER_ZIP): $(GO_SOURCES)
 	$(call build_lambda,notifier,./apps/notifier/cmd/lambda)
 
+$(IMPORTER_ZIP): $(GO_SOURCES)
+	$(call build_lambda,payment-importer,./apps/payment-importer/cmd/lambda)
+
 build-lambda-webhook: $(LAMBDA_ZIP)
 build-lambda-dashboard-api: $(DASHBOARD_ZIP)
 build-lambda-notifier: $(NOTIFIER_ZIP)
-build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier
+build-lambda-payment-importer: $(IMPORTER_ZIP)
+build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer
 
 # Escape hatch only — the zips now rebuild themselves when Go sources change.
 clean-lambdas:
@@ -116,7 +121,7 @@ run-lambda:
 COMPOSE_EXTRA ?=
 
 up:
-	$(COMPOSE) $(COMPOSE_EXTRA) up --build
+	$(COMPOSE) $(COMPOSE_EXTRA) up --build -d
 
 down:
 	$(COMPOSE) $(COMPOSE_EXTRA) down

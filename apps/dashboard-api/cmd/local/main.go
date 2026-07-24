@@ -8,6 +8,7 @@ import (
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/app"
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	pkgpayments "github.com/emerson/emerbot/packages/payments"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
@@ -17,6 +18,7 @@ func main() {
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
 
 	var finStore pkgfinance.Store
+	var payRepo pkgpayments.Repository
 
 	if endpoint != "" {
 		finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries")
@@ -26,9 +28,16 @@ func main() {
 			log.Fatalf("finance store: %v", err)
 		}
 		finStore = fs
+
+		pr, err := pkgpayments.NewDynamoDBRepository(ctx, finTable, endpoint, shared.FinanceLedgerID)
+		if err != nil {
+			log.Fatalf("payments repo: %v", err)
+		}
+		payRepo = pr
 	} else {
 		log.Println("DYNAMODB_ENDPOINT not set — using in-memory store")
 		finStore = pkgfinance.NewInMemoryStore()
+		payRepo = pkgpayments.NewInMemoryRepository()
 	}
 
 	// cognito-local generates its own pool/client IDs at creation time (see
@@ -50,7 +59,7 @@ func main() {
 		log.Fatalf("cognito JWKS setup failed (is cognito-local up? try `podman compose up cognito-local cognito-init -d`): %v", err)
 	}
 
-	application := app.NewLocal(finStore, authMw)
+	application := app.NewLocal(finStore, payRepo, authMw)
 	log.Printf("dashboard-api listening on %s", addr)
 	if err := http.ListenAndServe(addr, application); err != nil {
 		log.Fatal(err)

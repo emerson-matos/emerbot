@@ -207,6 +207,18 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "${aws_s3_bucket.state.arn}/*",
     ]
   }
+
+  # App-data buckets the stack creates (e.g. the payment-imports bucket the
+  # payment-importer reads). CI needs to create/configure/refresh these — bucket
+  # creation, public-access-block and the S3→Lambda notification — so grant the
+  # bucket-management actions on the project's bucket namespace. Scoped to
+  # emerbot-* buckets, which the state bucket already covers via StateBucket.
+  statement {
+    sid       = "AppBuckets"
+    effect    = "Allow"
+    actions   = ["s3:*"]
+    resources = ["arn:aws:s3:::emerbot-*-payment-imports", "arn:aws:s3:::emerbot-*-payment-imports/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "deploy" {
