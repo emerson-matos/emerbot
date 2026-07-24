@@ -5,6 +5,7 @@ export function getGoalProgress(
   summary: MonthlySummary,
   goal: GoalInput | null,
   now: Date,
+  vendaBalcaoIncome: number,
 ): GoalProgress {
   const daysInMonth = new Date(
     now.getFullYear(),
@@ -16,7 +17,7 @@ export function getGoalProgress(
   if (!goal) {
     return {
       revenueTarget: 0,
-      revenueActual: summary.TotalIncome,
+      revenueActual: vendaBalcaoIncome,
       revenuePct: 0,
       expenseTarget: 0,
       expenseActual: summary.TotalExpense,
@@ -27,7 +28,7 @@ export function getGoalProgress(
   }
 
   const revenuePct = goal.revenueTarget > 0
-    ? Math.min(100, Math.round((summary.TotalIncome / goal.revenueTarget) * 100))
+    ? Math.min(100, Math.round((vendaBalcaoIncome / goal.revenueTarget) * 100))
     : 0
 
   const expensePct = goal.expenseTarget > 0
@@ -36,7 +37,7 @@ export function getGoalProgress(
 
   return {
     revenueTarget: goal.revenueTarget,
-    revenueActual: summary.TotalIncome,
+    revenueActual: vendaBalcaoIncome,
     revenuePct,
     expenseTarget: goal.expenseTarget,
     expenseActual: summary.TotalExpense,

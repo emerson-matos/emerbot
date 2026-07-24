@@ -46,6 +46,18 @@ func parseDate(s string) (time.Time, bool) {
 	return t, true
 }
 
+// VendaBalcaoIncome sums the Amount of entries where Type is income and
+// Category is "venda_balcao".
+func VendaBalcaoIncome(entries []domain.FinancialEntry) int64 {
+	var total int64
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
+			total += e.Amount
+		}
+	}
+	return total
+}
+
 func clampLimit(n int) int {
 	if n <= 0 {
 		return 20

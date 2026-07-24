@@ -237,13 +237,13 @@ function ProjectionSection({ weekdays, kpis, goals }: { weekdays: Analysis['week
     projected += avg
   }
 
-  const total = kpis.receita + projected
+  const total = goals.revenueActual + projected
   const gap = goals.revenueTarget - total
   const hitGoal = total >= goals.revenueTarget
   const necessaryPerDay = remainingDays > 0 ? gap / remainingDays : 0
 
   const prevDiff = kpis.previousMonthIncomeUpToDay > 0
-    ? Math.round(((kpis.receita - kpis.previousMonthIncomeUpToDay) / kpis.previousMonthIncomeUpToDay) * 100)
+    ? Math.round(((goals.revenueActual - kpis.previousMonthIncomeUpToDay) / kpis.previousMonthIncomeUpToDay) * 100)
     : null
 
   return (
@@ -258,14 +258,14 @@ function ProjectionSection({ weekdays, kpis, goals }: { weekdays: Analysis['week
         <div className="grid grid-cols-[1fr_auto] gap-x-4">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Projeção</p>
-            <p className="text-lg tabular-nums truncate">
+            <p className="truncate text-lg tabular-nums">
               {formatBRL(total)}
             </p>
           </div>
 
           <div className="text-right">
             <p className="text-sm text-muted-foreground">Meta</p>
-            <p className="text-lg tabular-nums whitespace-nowrap">
+            <p className="text-lg whitespace-nowrap tabular-nums">
               {formatBRL(goals.revenueTarget)}
             </p>
           </div>
@@ -274,7 +274,7 @@ function ProjectionSection({ weekdays, kpis, goals }: { weekdays: Analysis['week
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Até hoje</span>
-              <span className="text-sm tabular-nums">{formatBRL(kpis.receita)}</span>
+              <span className="text-sm tabular-nums">{formatBRL(goals.revenueActual)}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Mês passado (dia {currentDay})</span>
@@ -286,15 +286,17 @@ function ProjectionSection({ weekdays, kpis, goals }: { weekdays: Analysis['week
           </div>
         )}
         {!hitGoal && (
-          <div className="border-t space-y-2 pt-3">
+          <div className="space-y-2 border-t pt-3">
             <div className="flex items-center justify-between">
               <p className="text-sm text-muted-foreground">Faltam</p>
-              <p className="text-base tabular-nums text-destructive">{formatBRL(gap)}</p>
+              <p className="text-base text-destructive tabular-nums">{formatBRL(gap)}</p>
             </div>
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">Necessário por dia útil</p>
-              <p className="text-base tabular-nums">{formatBRL(necessaryPerDay)}</p>
-            </div>
+            {necessaryPerDay > 0 && (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">Necessário por dia útil</p>
+                <p className="text-base tabular-nums">{formatBRL(necessaryPerDay)}</p>
+              </div>
+            )}
           </div>
         )}
         {hitGoal && (

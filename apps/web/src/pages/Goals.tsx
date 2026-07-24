@@ -12,7 +12,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
-import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation } from '../api/queries'
+import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation, useEntries } from '../api/queries'
 
 // CSS `capitalize` (text-transform) uppercases every word, which is wrong
 // for a multi-word Portuguese date like "abril de 2026" (→ "Abril De 2026").
@@ -44,6 +44,13 @@ export default function Goals() {
   const summaryQuery = useMonthlySummary(currentMonth)
   const saveGoal = useSaveGoalMutation(currentMonth)
 
+  const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
+  const monthEnd = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const entriesQuery = useEntries(monthStart, monthEnd)
+  const vendaBalcaoIncome = (entriesQuery.data?.entries ?? [])
+    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
+    .reduce((sum, e) => sum + e.Amount, 0)
+
   const trendQueries = useMonthlyTrend(months3)
   const goalQuery0 = useGoal(months3[0])
   const goalQuery1 = useGoal(months3[1])
@@ -69,7 +76,7 @@ export default function Goals() {
 
 
   const summary = summaryQuery.data ?? null
-  const actualIncome = summary?.TotalIncome ?? 0
+  const actualIncome = vendaBalcaoIncome
   const actualExpense = summary?.TotalExpense ?? 0
 
   const revenueTarget = Math.round(Number(revenueInput) * 100)
@@ -228,6 +235,7 @@ export default function Goals() {
             { revenue_target: revenueTarget, expense_target: expenseTarget },
             { onSuccess: () => setSaved(true) },
           )}
+          className="grow"
           disabled={saveGoal.isPending}
         >
           Salvar Metas

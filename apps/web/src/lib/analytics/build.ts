@@ -25,6 +25,10 @@ export function buildMonthlyAnalysis(input: AnalysisInput): Analysis {
     })
     .reduce((sum, e) => sum + e.Amount, 0)
 
+  const vendaBalcaoIncome = entries
+    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
+    .reduce((sum, e) => sum + e.Amount, 0)
+
   const kpis = {
     resultado: currentSummary?.Balance ?? 0,
     receita: currentSummary?.TotalIncome ?? 0,
@@ -38,13 +42,14 @@ export function buildMonthlyAnalysis(input: AnalysisInput): Analysis {
   const weekComparison = getWeekComparison(
     entries,
     now,
-    currentSummary?.TotalIncome ?? 0,
+    vendaBalcaoIncome,
     currentGoal?.revenueTarget ?? 0,
   )
   const goals_ = getGoalProgress(
     currentSummary ?? { Month: month, TotalIncome: 0, TotalExpense: 0, Balance: 0 },
     currentGoal,
     now,
+    vendaBalcaoIncome,
   )
 
   const health = getHealth(
