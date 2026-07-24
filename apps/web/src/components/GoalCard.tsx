@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatBRL } from '@/lib/format'
-import { useGoal, useMonthlySummary } from '../api/queries'
+import { useGoal, useMonthlySummary, useEntries } from '../api/queries'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -25,6 +25,13 @@ export default function GoalCard() {
   const summary = summaryQuery.data ?? null
   const goal = goalQuery.data?.goal ?? null
 
+  const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
+  const monthEnd = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const entriesQuery = useEntries(monthStart, monthEnd)
+  const vendaBalcaoIncome = (entriesQuery.data?.entries ?? [])
+    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
+    .reduce((sum, e) => sum + e.Amount, 0)
+
   if (summaryQuery.isLoading || goalQuery.isLoading) {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
@@ -33,7 +40,7 @@ export default function GoalCard() {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><p className="text-xs text-destructive">Erro ao carregar meta do mês</p></CardContent></Card>
   }
 
-  const actualIncome = summary?.TotalIncome ?? 0
+  const actualIncome = vendaBalcaoIncome
   const actualExpense = summary?.TotalExpense ?? 0
   const revPct = goal?.RevenueTarget && goal.RevenueTarget > 0
     ? Math.min(100, (actualIncome / goal.RevenueTarget) * 100) : 0
