@@ -39,8 +39,12 @@ de serviço rodando 24/7.
   transação, então não se finge que é atômica: as escritas vão em
   `BatchWriteItem` e o item de índice é gravado **por último**. Uma falha no
   meio deixa o índice ainda descrevendo a versão anterior, e a reexecução
-  reconstrói o conjunto completo de deleções. Falhas caem numa **DLQ** (SQS),
-  já que a invocação por S3 é assíncrona e descartaria o evento em silêncio.
+  reconstrói o conjunto completo de deleções.
+- **Sem DLQ; o log basta.** A invocação por S3 é assíncrona e descarta o evento
+  depois de duas retentativas, mas o envelope continua no bucket — nada se
+  perde de fato. A Lambda registra `bucket` e `key` de toda falha, e recuperar
+  é re-subir o objeto. Uma fila só para guardar um ponteiro para um arquivo que
+  já está guardado não se paga nesta fase (ADR-008).
 
 ## Consequências
 

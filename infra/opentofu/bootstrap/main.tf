@@ -150,7 +150,6 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "logs:*",
       "acm:*",
       "cognito-idp:*",
-      "sqs:*", # payment-importer dead-letter queue
     ]
     resources = ["*"]
   }

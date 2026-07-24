@@ -730,42 +730,11 @@ resource "aws_lambda_function" "payment_importer" {
   }
 }
 
-# S3 invokes the importer asynchronously, so a returned error is retried twice
-# and then the event is dropped — a failed import would vanish with nothing but a
-# log line. Failures land in this queue instead, keeping the S3 key that needs
-# re-dropping. 14 days of retention is the maximum and costs nothing at this
-# volume (SQS's perpetual free tier covers it).
-resource "aws_sqs_queue" "importer_dlq" {
-  name                      = "${local.prefix}-payment-importer-dlq"
-  message_retention_seconds = 1209600
-  sqs_managed_sse_enabled   = true
-}
-
-resource "aws_lambda_function_event_invoke_config" "payment_importer" {
-  function_name          = aws_lambda_function.payment_importer.function_name
-  maximum_retry_attempts = 2
-
-  destination_config {
-    on_failure {
-      destination = aws_sqs_queue.importer_dlq.arn
-    }
-  }
-}
-
-resource "aws_iam_role_policy" "importer_dlq" {
-  name = "${local.prefix}-importer-dlq"
-  role = aws_iam_role.importer_exec.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["sqs:SendMessage"]
-      Resource = [aws_sqs_queue.importer_dlq.arn]
-    }]
-  })
-}
-
+# S3 invokes the importer asynchronously: a returned error is retried twice and
+# then the event is dropped. There is deliberately no dead-letter queue — this is
+# a POC, the envelope itself is still sitting in the bucket, and recovery is
+# re-dropping that object. The Lambda logs the bucket and key of anything it
+# fails to import, so the log group is the record of what to replay.
 resource "aws_lambda_permission" "allow_s3_importer" {
   statement_id  = "AllowExecutionFromS3"
   action        = "lambda:InvokeFunction"
