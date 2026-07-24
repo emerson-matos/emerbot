@@ -503,6 +503,9 @@ resource "aws_lambda_function" "notifier" {
   timeout     = 60
   memory_size = 128
 
+  # DASHBOARD_URL fecha o resumo diário com o link da análise. Sem ela o texto
+  # sai sem link nenhum (o webhook já recebia a variável; o notifier tinha sido
+  # esquecido).
   environment {
     variables = {
       FINANCIAL_ENTRIES_TABLE  = aws_dynamodb_table.financial_entries.name
@@ -511,6 +514,7 @@ resource "aws_lambda_function" "notifier" {
       WHATSAPP_PHONE_NUMBER_ID = var.whatsapp_phone_number_id
       NOTIFIER_TIMEZONE        = var.notifier_timezone
       GEMINI_API_KEY           = var.gemini_api_key_value
+      DASHBOARD_URL            = var.dashboard_origin
     }
   }
 }
