@@ -2,6 +2,8 @@ package notifier
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,9 +78,32 @@ func seedUser(t *testing.T, s stores, inboundAt time.Time, prefs domain.Notifica
 }
 
 func newNotifier(s stores, wa *fakeWA) *Notifier {
-	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC, orchestrator.StaticClient{})
+	return newNotifierWithGen(s, wa, orchestrator.StaticClient{})
+}
+
+func newNotifierWithGen(s stores, wa *fakeWA, gen orchestrator.TextGenerator) *Notifier {
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC, gen)
 	n.SetClock(func() time.Time { return runDay })
 	return n
+}
+
+// fakeGen is a TextGenerator that records what buildDigest hands it and returns
+// a canned reply (or error), so tests can assert the digest is humanized rather
+// than sent as the raw static template.
+type fakeGen struct {
+	reply      string
+	err        error
+	gotSystem  string
+	gotMessage string
+}
+
+func (f *fakeGen) Generate(_ context.Context, input orchestrator.Input) (orchestrator.Output, error) {
+	f.gotSystem = input.SystemPrompt
+	f.gotMessage = input.UserMessage.Text
+	if f.err != nil {
+		return orchestrator.Output{}, f.err
+	}
+	return orchestrator.Output{Text: f.reply}, nil
 }
 
 // dueExpense creates an entry on the one shared financial ledger — every
@@ -213,6 +238,65 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	}
 	if len(wa.sent) != 0 || res.Sent != 0 || res.Skipped != 1 {
 		t.Fatalf("want no send, res=%+v sent=%d", res, len(wa.sent))
+	}
+}
+
+// TestRunSendsHumanizedDigestWhenGeneratorSucceeds is the regression test for
+// issue #36: the digest must actually send the model's rewritten text, feeding
+// the generator a non-empty draft plus the system prompt. Before the fix the
+// generator errored on the (always empty) history and the humanized text was
+// never sent.
+func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "Olá! Você tem uma conta de R$2.850,00 vencendo hoje. 🙂"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 1 || len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
+	}
+	if wa.sent[0].body != gen.reply {
+		t.Fatalf("digest was not humanized: got %q, want %q", wa.sent[0].body, gen.reply)
+	}
+	// The generator must receive both the system prompt and a non-empty draft to
+	// rewrite — the fields the old agent-based path dropped.
+	if gen.gotSystem == "" {
+		t.Fatal("generator received no system prompt")
+	}
+	if gen.gotMessage == "" {
+		t.Fatal("generator received an empty draft to rewrite")
+	}
+}
+
+// TestRunFallsBackToStaticDigestOnGeneratorError proves the static template is
+// still the safety net: a failing generator must not block the alert.
+func TestRunFallsBackToStaticDigestOnGeneratorError(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{err: errors.New("gemini down")}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 1 || len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
+	}
+	if !strings.Contains(wa.sent[0].body, "Farmácia Financeira") {
+		t.Fatalf("expected the static digest fallback, got %q", wa.sent[0].body)
 	}
 }
 

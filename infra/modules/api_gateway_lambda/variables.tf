@@ -71,8 +71,8 @@ variable "whatsapp_phone_number_id" {
 
 variable "notifier_schedule" {
   type        = string
-  default     = "cron(0 11 * * ? *)"
-  description = "Expressão de agenda do EventBridge para o notifier. Padrão: 08h em São Paulo (11h UTC)."
+  default     = "cron(0 9 * * ? *)"
+  description = "Horário do notifier (cron). O fuso horário é notifier_timezone."
 }
 
 variable "notifier_timezone" {
