@@ -33,15 +33,15 @@ export default function App() {
               <Route path="ajustes" element={<Settings />} />
               <Route path="analise" element={<Analysis />} />
               <Route path="metas" element={<Goals />} />
-              <Route path="nova-transacao" element={<NovaTransacao />} />
               <Route path="notificacoes" element={<Notificacoes />} />
+              <Route path="nova-transacao" element={<NovaTransacao />} />
               <Route path="transacoes" element={<Transactions />} />
             </Route>
-          </Route>
+          </Route >
 
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+        </Routes >
+      </BrowserRouter >
+    </AuthProvider >
   )
 }
