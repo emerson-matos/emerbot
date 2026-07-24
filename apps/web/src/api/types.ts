@@ -80,3 +80,57 @@ export interface Category {
   Type: "expense" | "income";
   Default: boolean;
 }
+
+// --- Imported payment-processor data (PagBank; Stone later) ---
+
+export type PaymentMethod = "credito" | "debito" | "pix" | "boleto" | "outros";
+
+export interface Sale {
+  ID: string;
+  Provider: string;
+  ExternalID: string;
+  SaleDate: string;
+  GrossAmount: number;
+  NetAmount: number;
+  FeeAmount: number;
+  Method: PaymentMethod;
+  Brand: string;
+  Installments: number;
+}
+
+export interface ExpectedReceivable {
+  Provider: string;
+  SaleID: string;
+  ExpectedDate: string;
+  Amount: number;
+  InstallmentNumber: number;
+  InstallmentTotal: number;
+}
+
+export interface SalesResponse {
+  sales: Sale[] | null;
+  totals: { gross: number; net: number; fee: number };
+  by_method: Record<string, number> | null;
+  from: string;
+  to: string;
+}
+
+export interface ReceivablesResponse {
+  receivables: ExpectedReceivable[] | null;
+  total: number;
+  from: string;
+  to: string;
+}
+
+export interface PaymentForecastPoint {
+  Date: string;
+  ProjectedIncome: number;
+  ProjectedReceivable: number;
+  ProjectedExpense: number;
+  RunningBalance: number;
+}
+
+export interface ForecastResponse {
+  points: PaymentForecastPoint[] | null;
+  month: string;
+}

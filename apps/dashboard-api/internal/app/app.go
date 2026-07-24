@@ -8,7 +8,9 @@ import (
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	apifinance "github.com/emerson/emerbot/apps/dashboard-api/internal/finance"
+	apipayments "github.com/emerson/emerbot/apps/dashboard-api/internal/payments"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	pkgpayments "github.com/emerson/emerbot/packages/payments"
 )
 
 // App wires all handlers and exposes both a local HTTP server
@@ -29,25 +31,26 @@ type App struct {
 // cors_configuration's real job is attaching CORS headers to responses API
 // Gateway generates itself, like a 401/403 from the JWT authorizer rejecting
 // a request before it ever reaches this Lambda.
-func NewGateway(finStore pkgfinance.Store) *App {
-	return newApp(finStore, apiauth.GatewayMiddleware)
+func NewGateway(finStore pkgfinance.Store, payRepo pkgpayments.Repository) *App {
+	return newApp(finStore, payRepo, apiauth.GatewayMiddleware)
 }
 
 // NewLocal is used by cmd/local, which has no API Gateway in front of it — it
 // verifies Cognito JWTs itself via JWKS (see apiauth.NewLocalCognitoMiddleware)
 // instead of trusting pre-validated claims.
-func NewLocal(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
-	return newApp(finStore, authMw)
+func NewLocal(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
+	return newApp(finStore, payRepo, authMw)
 }
 
 // newApp wires the routes shared by both entrypoints. NOTE: this route list
 // must stay in sync with the dashboard_protected_routes/dashboard_public_routes
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
-func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *App {
+func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
 	entriesHandler := apifinance.NewEntriesHandler(finStore)
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
+	paymentsHandler := apipayments.NewHandler(payRepo, finStore)
 
 	mux := http.NewServeMux()
 
@@ -78,6 +81,12 @@ func newApp(finStore pkgfinance.Store, authMw func(http.Handler) http.Handler) *
 
 	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
 	mux.Handle("PUT /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Save)))
+
+	// Imported payment-processor data (read-only; writes go through the
+	// payment-importer Lambda triggered by S3).
+	mux.Handle("GET /payments/sales", authMw(http.HandlerFunc(paymentsHandler.Sales)))
+	mux.Handle("GET /payments/receivables", authMw(http.HandlerFunc(paymentsHandler.Receivables)))
+	mux.Handle("GET /payments/forecast", authMw(http.HandlerFunc(paymentsHandler.Forecast)))
 
 	return &App{handler: withCORS(mux)}
 }

@@ -6,7 +6,7 @@ require (
 	github.com/MicahParks/jwkset v0.11.0
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/aws/aws-lambda-go v1.49.0
-	github.com/aws/aws-sdk-go-v2 v1.42.1
+	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.29
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.51
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.60.0
@@ -20,15 +20,19 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.28 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.30 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.31 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.31 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.32 // indirect
 	github.com/aws/aws-sdk-go-v2/service/dynamodbstreams v1.35.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.12.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.31 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.32 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.4.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.32.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.37.0 // indirect
