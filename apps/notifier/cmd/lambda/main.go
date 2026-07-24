@@ -52,8 +52,11 @@ func main() {
 		loc = time.UTC
 	}
 
-	gen := orchestrator.NewTextGenerator(orchestrator.Config{
-		FinanceStore: finStore,
+	// The digest rewrites a static draft into friendlier prose — a one-shot text
+	// call with a system prompt, no tools and no history — so it uses the
+	// direct writer, not the tool-calling agent generator (which requires a
+	// conversation history the digest never has; see NewDigestGenerator).
+	gen := orchestrator.NewDigestGenerator(orchestrator.Config{
 		GeminiAPIKey: shared.Getenv("GEMINI_API_KEY", ""),
 	})
 	n := notifier.New(finStore, sessions, wa, phoneNumberID, loc, gen)
