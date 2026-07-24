@@ -171,6 +171,14 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 		return "", fmt.Errorf("resumo: %w", err)
 	}
 
+	from, _ := time.Parse("2006-01", yearMonth)
+	to := from.AddDate(0, 1, -1)
+	monthEntries, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
+	if err != nil {
+		return "", fmt.Errorf("resumo entries: %w", err)
+	}
+	vbIncome := vendaBalcaoIncome(monthEntries)
+
 	due := now.AddDate(0, 0, 1)
 	tomorrow := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
 	pending, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{
@@ -192,10 +200,12 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 	msg += fmt.Sprintf("💵 *Saldo:* R$%s\n", money(summary.Balance))
 
 	goal, err := h.store.GetGoal(ctx, userID, yearMonth)
-	if err == nil {
-		revPct := float64(summary.TotalIncome) / float64(goal.RevenueTarget) * 100
+	if err == nil && goal.RevenueTarget > 0 {
+		revPct := float64(vbIncome) / float64(goal.RevenueTarget) * 100
+		msg += fmt.Sprintf("\n🎯 *Meta Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(vbIncome), money(goal.RevenueTarget), revPct)
+	}
+	if err == nil && goal.ExpenseTarget > 0 {
 		expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
-		msg += fmt.Sprintf("\n🎯 *Meta Faturamento:* R$%s (*%.0f%%*)\n", money(goal.RevenueTarget), revPct)
 		msg += fmt.Sprintf("🚫 *Teto Despesas:* R$%s (*%.0f%%*)\n", money(goal.ExpenseTarget), expPct)
 	}
 
@@ -214,16 +224,24 @@ func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
 		return "", fmt.Errorf("goal: %w", err)
 	}
 
+	from, _ := time.Parse("2006-01", yearMonth)
+	to := from.AddDate(0, 1, -1)
+	monthEntries, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
+	if err != nil {
+		return "", fmt.Errorf("goal entries: %w", err)
+	}
+	vbIncome := vendaBalcaoIncome(monthEntries)
+
 	goal, err := h.store.GetGoal(ctx, userID, yearMonth)
 	if err != nil {
 		return "Nenhuma meta definida para este mês.", nil
 	}
 
-	revPct := float64(summary.TotalIncome) / float64(goal.RevenueTarget) * 100
+	revPct := float64(vbIncome) / float64(goal.RevenueTarget) * 100
 	expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
 
 	msg := "🎯 *Metas — " + now.Format("01/2006") + "*\n\n"
-	msg += fmt.Sprintf("📈 *Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.RevenueTarget), revPct)
+	msg += fmt.Sprintf("📈 *Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(vbIncome), money(goal.RevenueTarget), revPct)
 	msg += progressBar(revPct)
 	msg += fmt.Sprintf("\n📉 *Despesas:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalExpense), money(goal.ExpenseTarget), expPct)
 	msg += progressBar(expPct)
@@ -281,6 +299,16 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	msg += fmt.Sprintf("📉 *Teto Despesas:* R$%s\n", money(exp))
 	msg += "\nDigite /goal para ver o progresso."
 	return msg, nil
+}
+
+func vendaBalcaoIncome(entries []domain.FinancialEntry) int64 {
+	var total int64
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
+			total += e.Amount
+		}
+	}
+	return total
 }
 
 func money(centavos int64) string {

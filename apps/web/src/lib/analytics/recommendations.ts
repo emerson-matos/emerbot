@@ -42,7 +42,9 @@ export function getRecommendations(input: RecommendationInput): Recommendation[]
         recs.push({
           severity: RecommendationSeverity.Warning,
           title: 'Ritmo subiu mas ainda falta',
-          message: `Melhorou vs semana passada, mas precisa de ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para bater a meta.`,
+          message: neededPerDay > 0
+            ? `Melhorou vs semana passada, mas precisa de ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para bater a meta.`
+            : 'Melhorou vs semana passada. Continue nesse ritmo.',
         })
       } else if (weekBehind && onTrack) {
         recs.push({
@@ -54,7 +56,9 @@ export function getRecommendations(input: RecommendationInput): Recommendation[]
         recs.push({
           severity: RecommendationSeverity.Danger,
           title: 'Faturamento caiu e não bate a meta',
-          message: `Precisa de ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para atingir a meta do mês.`,
+          message: neededPerDay > 0
+            ? `Precisa de ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para atingir a meta do mês.`
+            : 'Faturamento caiu mas já superou a meta do mês.',
         })
       } else {
         // stable (±5%)
@@ -68,7 +72,9 @@ export function getRecommendations(input: RecommendationInput): Recommendation[]
           recs.push({
             severity: RecommendationSeverity.Warning,
             title: 'Ritmo estável mas não é suficiente',
-            message: `Precisa acelerar para ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para bater a meta.`,
+            message: neededPerDay > 0
+              ? `Precisa acelerar para ${formatBRL(neededPerDay)}/dia nos próximos ${goals.daysRemaining} dias para bater a meta.`
+              : 'Ritmo estável. Continue para preservar a projeção.',
           })
         }
       }

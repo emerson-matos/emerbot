@@ -130,12 +130,6 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		log.Printf("notifier: level=error msg=%q", err)
 		return res, err
 	}
-	summary, err := n.store.MonthlySummary(ctx, shared.FinanceLedgerID, month)
-	if err != nil {
-		err = fmt.Errorf("monthly summary: %w", err)
-		log.Printf("notifier: level=error msg=%q", err)
-		return res, err
-	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
 
@@ -156,7 +150,13 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, summary.TotalIncome, goal, today)
+		var vbIncome int64
+		for _, e := range entries {
+			if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
+				vbIncome += e.Amount
+			}
+		}
+		alerts := notifications.Evaluate(prefs, entries, vbIncome, goal, today)
 		if len(alerts) == 0 {
 			res.Skipped++
 			continue

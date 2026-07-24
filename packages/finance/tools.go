@@ -282,6 +282,19 @@ func resumoMensalTool(store Store) Tool {
 				return nil, fmt.Errorf("monthly summary: %w", err)
 			}
 
+			from, _ := time.Parse("2006-01", args.Month)
+			to := from.AddDate(0, 1, -1)
+			monthEntries, err := store.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
+			if err != nil {
+				return nil, fmt.Errorf("monthly entries: %w", err)
+			}
+			var vbIncome int64
+			for _, e := range monthEntries {
+				if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
+					vbIncome += e.Amount
+				}
+			}
+
 			result := map[string]any{
 				"month":   summary.Month,
 				"income":  centavosToReais(summary.TotalIncome),
@@ -292,14 +305,13 @@ func resumoMensalTool(store Store) Tool {
 
 			goal, err := store.GetGoal(ctx, userID, args.Month)
 			if err == nil && (goal.RevenueTarget > 0 || goal.ExpenseTarget > 0) {
-				income := summary.TotalIncome
 				goalMap := map[string]any{
 					"revenue_target": centavosToReais(goal.RevenueTarget),
 					"expense_target": centavosToReais(goal.ExpenseTarget),
 				}
 				if goal.RevenueTarget > 0 {
-					if income <= goal.RevenueTarget {
-						goalMap["revenue_progress_pct"] = float64(income*100) / float64(goal.RevenueTarget)
+					if vbIncome <= goal.RevenueTarget {
+						goalMap["revenue_progress_pct"] = float64(vbIncome*100) / float64(goal.RevenueTarget)
 					} else {
 						goalMap["revenue_progress_pct"] = 100.0
 					}

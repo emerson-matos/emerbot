@@ -125,9 +125,11 @@ export function getHealth(
           type: InsightType.GoalOnTrack,
           severity: InsightSeverity.Info,
           title: 'No ritmo para bater a meta',
-          description: `Necessário ${formatBRL(neededPerDay)}/dia — você está acima`,
+          description: neededPerDay > 0
+            ? `Necessário ${formatBRL(neededPerDay)}/dia — você está acima`
+            : 'Faturamento já superou a meta',
         })
-      } else {
+      } else if (neededPerDay > 0) {
         messages.push({
           type: InsightType.GoalBehind,
           severity: InsightSeverity.Warning,
