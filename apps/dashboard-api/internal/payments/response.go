@@ -55,12 +55,12 @@ func responseReceivable(r payments.ExpectedReceivable) receivableResponse {
 	}
 }
 
+// responsePoint is a plain conversion today because forecastPointResponse
+// mirrors ForecastPoint field for field, differing only in json tags. If the two
+// ever diverge this stops compiling, which is the signal to spell the mapping
+// out — the DTO exists so the wire format *can* diverge from the domain.
 func responsePoint(p ForecastPoint) forecastPointResponse {
-	return forecastPointResponse{
-		Date: p.Date, ProjectedIncome: p.ProjectedIncome,
-		ProjectedReceivable: p.ProjectedReceivable, ProjectedExpense: p.ProjectedExpense,
-		RunningBalance: p.RunningBalance,
-	}
+	return forecastPointResponse(p)
 }
 
 // responseSales and friends always return a non-nil slice so the JSON carries

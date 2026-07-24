@@ -101,7 +101,7 @@ func TestSKHighIsValidUTF8AndSortsLast(t *testing.T) {
 
 	for _, id := range []string{"pagbank:S1", "pagbank:zzzzzz", "pagbank:~~~", "stone:0"} {
 		sk := saleSK(date, SaleID(id))
-		if !(sk < upper) {
+		if sk >= upper {
 			t.Errorf("SK %q does not sort below the range upper bound %q", sk, upper)
 		}
 	}
