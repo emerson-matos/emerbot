@@ -46,3 +46,4 @@ result
 # .idea/
 # .vscode/
 /lambda
+/.playwright-mcp
