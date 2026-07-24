@@ -59,7 +59,8 @@ func main() {
 	gen := orchestrator.NewDigestGenerator(orchestrator.Config{
 		GeminiAPIKey: shared.Getenv("GEMINI_API_KEY", ""),
 	})
-	n := notifier.New(finStore, sessions, wa, phoneNumberID, loc, gen)
+	dashboardURL := shared.Getenv("DASHBOARD_URL", "")
+	n := notifier.New(finStore, sessions, wa, phoneNumberID, dashboardURL, loc, gen)
 
 	// EventBridge Scheduler invokes with an event we don't need to inspect —
 	// the job is the same every time.
