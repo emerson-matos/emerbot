@@ -86,29 +86,29 @@ export interface Category {
 export type PaymentMethod = "credito" | "debito" | "pix" | "boleto" | "outros";
 
 export interface Sale {
-  ID: string;
-  Provider: string;
-  ExternalID: string;
-  SaleDate: string;
-  GrossAmount: number;
-  NetAmount: number;
-  FeeAmount: number;
-  Method: PaymentMethod;
-  Brand: string;
-  Installments: number;
+  id: string;
+  provider: string;
+  external_id: string;
+  sale_date: string;
+  gross_amount: number;
+  net_amount: number;
+  fee_amount: number;
+  method: PaymentMethod;
+  brand: string;
+  installments: number;
 }
 
 export interface ExpectedReceivable {
-  Provider: string;
-  SaleID: string;
-  ExpectedDate: string;
-  Amount: number;
-  InstallmentNumber: number;
-  InstallmentTotal: number;
+  provider: string;
+  sale_id: string;
+  expected_date: string;
+  amount: number;
+  installment_number: number;
+  installment_total: number;
 }
 
 export interface SalesResponse {
-  sales: Sale[] | null;
+  sales: Sale[];
   totals: { gross: number; net: number; fee: number };
   by_method: Record<string, number> | null;
   from: string;
@@ -116,21 +116,21 @@ export interface SalesResponse {
 }
 
 export interface ReceivablesResponse {
-  receivables: ExpectedReceivable[] | null;
+  receivables: ExpectedReceivable[];
   total: number;
   from: string;
   to: string;
 }
 
 export interface PaymentForecastPoint {
-  Date: string;
-  ProjectedIncome: number;
-  ProjectedReceivable: number;
-  ProjectedExpense: number;
-  RunningBalance: number;
+  date: string;
+  projected_income: number;
+  projected_receivable: number;
+  projected_expense: number;
+  running_balance: number;
 }
 
 export interface ForecastResponse {
-  points: PaymentForecastPoint[] | null;
+  points: PaymentForecastPoint[];
   month: string;
 }

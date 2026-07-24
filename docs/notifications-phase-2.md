@@ -50,6 +50,12 @@ janela e voltar a receber os alertas. Templates pagos ficam como decisão futura
   notifier enviar. Sem o token, o cliente cai no simulador local.
 - **Agenda**: `var.notifier_schedule` (default `cron(0 11 * * ? *)` = 08h em
   São Paulo). Ajuste o fuso do "vence hoje" com `NOTIFIER_TIMEZONE`.
+- **`DASHBOARD_URL`** (vem de `var.dashboard_origin`, o mesmo do webhook) define
+  o link de "análise completa" no fim do resumo. Sem ela o resumo sai **sem
+  link** — nunca com um texto substituto. O link é montado pelo próprio notifier
+  **depois** da reescrita do modelo, então a URL enviada é sempre a configurada:
+  o modelo não pode parafraseá-la, perdê-la nem inventar um `[Link para o
+  dashboard]` (`stripInventedLinks` remove qualquer tentativa).
 - Rodar `make build-lambdas && make tofu-apply` (constrói também `notifier.zip`).
 
 ## Histórico de referência (plano original)

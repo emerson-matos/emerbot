@@ -1,19 +1,10 @@
-import { format } from 'date-fns'
 import { CreditCard, CalendarClock, LineChart } from 'lucide-react'
 import {
   usePaymentsSales, usePaymentsReceivables, usePaymentsForecast,
 } from '../api/queries'
 import KpiCard, { KpiCardContent, toneVar } from './KpiCard'
 import { formatBRL } from '@/lib/format'
-
-function currentMonthRange() {
-  const now = new Date()
-  return {
-    month: format(now, 'yyyy-MM'),
-    firstDay: format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd'),
-    lastDay: format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd'),
-  }
-}
+import { currentMonthRange } from '@/lib/period'
 
 const labelClass = 'text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
 const valueClass = 'mt-1 text-2xl font-semibold tabular-nums'
@@ -75,8 +66,8 @@ export function ForecastCard() {
   const { month } = currentMonthRange()
   const q = usePaymentsForecast(month)
   const points = q.data?.points ?? []
-  const endBalance = points.length ? points[points.length - 1].RunningBalance : 0
-  const goesNegative = points.some((p) => p.RunningBalance < 0)
+  const endBalance = points.length ? points[points.length - 1].running_balance : 0
+  const goesNegative = points.some((p) => p.running_balance < 0)
   const tone = endBalance >= 0 ? 'positive' : 'negative'
 
   return (

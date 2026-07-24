@@ -42,28 +42,43 @@ func main() {
 	}
 	s3c := s3.NewFromConfig(cfg)
 
+	// There is no dead-letter queue (see the Lambda's Tofu resource): S3 retries
+	// an async invocation twice and then drops it, so the log group is the only
+	// record of a failed import. Every failure is therefore logged with the
+	// bucket and key needed to replay it — re-uploading that object re-triggers
+	// the import, which is idempotent per (provider, source day).
 	lambda.Start(func(ctx context.Context, event events.S3Event) error {
 		for _, rec := range event.Records {
 			bucket := rec.S3.Bucket.Name
 			// S3 event object keys are URL-encoded (spaces as '+', etc.).
 			key, err := url.QueryUnescape(rec.S3.Object.Key)
 			if err != nil {
-				return fmt.Errorf("unescape key %q: %w", rec.S3.Object.Key, err)
+				return importFailed(bucket, rec.S3.Object.Key, fmt.Errorf("unescape key: %w", err))
 			}
 			out, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
 			if err != nil {
-				return fmt.Errorf("get s3://%s/%s: %w", bucket, key, err)
+				return importFailed(bucket, key, fmt.Errorf("get object: %w", err))
 			}
 			raw, err := io.ReadAll(out.Body)
 			_ = out.Body.Close()
 			if err != nil {
-				return fmt.Errorf("read s3://%s/%s: %w", bucket, key, err)
+				return importFailed(bucket, key, fmt.Errorf("read object: %w", err))
 			}
 			if err := application.ProcessRaw(ctx, raw); err != nil {
-				return fmt.Errorf("import %s: %w", key, err)
+				return importFailed(bucket, key, err)
 			}
 			slog.Info("imported payment envelope", "bucket", bucket, "key", key)
 		}
 		return nil
 	})
+}
+
+// importFailed logs the failure with everything needed to replay it, then
+// returns the error so Lambda still records the invocation as failed (and gets
+// its two free retries for transient problems).
+func importFailed(bucket, key string, err error) error {
+	slog.Error("payment envelope import failed",
+		"bucket", bucket, "key", key, "error", err,
+		"recovery", fmt.Sprintf("re-upload s3://%s/%s to retry", bucket, key))
+	return fmt.Errorf("import s3://%s/%s: %w", bucket, key, err)
 }

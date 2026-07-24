@@ -80,6 +80,37 @@ func ValidateImportResult(r ImportResult) error {
 			return err
 		}
 	}
+	return validateDistinctKeys(r)
+}
+
+// validateDistinctKeys rejects an import in which two items share a storage key.
+// Such a pair is unrepresentable: whichever repository persists it, the second
+// item silently replaces the first (and DynamoDB rejects the batch outright).
+// Enforcing it here keeps every Repository implementation honest about it.
+func validateDistinctKeys(r ImportResult) error {
+	seen := make(map[string]bool, len(r.Sales)+len(r.Receivables)+len(r.Payments))
+	check := func(kind, key string) error {
+		if seen[key] {
+			return fmt.Errorf("duplicate %s key %q in one import", kind, key)
+		}
+		seen[key] = true
+		return nil
+	}
+	for _, s := range r.Sales {
+		if err := check("sale", saleKey(s)); err != nil {
+			return err
+		}
+	}
+	for _, rc := range r.Receivables {
+		if err := check("receivable", recvKey(rc)); err != nil {
+			return err
+		}
+	}
+	for _, p := range r.Payments {
+		if err := check("payment", payKey(p)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

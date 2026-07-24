@@ -73,6 +73,28 @@ Pipeline: `.github/workflows/deploy.yml`.
 2. Merge.
 3. Go to **Actions → deploy → Run workflow** and run it on `main`. That applies.
 
+## Recovering a failed payment import
+
+The `payment-importer` Lambda is invoked asynchronously by S3, so a failure is
+retried twice and then the event is gone. There is no dead-letter queue by
+design — the envelope is still in the bucket, so nothing is actually lost, and
+the log group is the record of what failed:
+
+```sh
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/emerbot-dev-payment-importer \
+  --filter-pattern '"payment envelope import failed"'
+```
+
+Each failure logs the `bucket` and `key` of the envelope. To recover, re-upload
+that object to the same key under `imports/` — the `ObjectCreated` event fires
+again and the import replays. This is always safe: an import replaces exactly
+its own `(provider, source day)` set, so re-running one converges on the same
+state rather than duplicating rows.
+
+A malformed envelope will keep failing until the envelope or the parser is
+fixed, so read the logged error before replaying.
+
 ## Break-glass: deploy from your machine
 
 The Makefile still drives Tofu locally against the same remote state, for when

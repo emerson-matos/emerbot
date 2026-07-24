@@ -86,12 +86,17 @@ type ExpectedReceivable struct {
 	InstallmentTotal  int
 }
 
-// Payment is money that actually became available (a liquidation).
+// Payment is money that actually became available (a liquidation). One sale can
+// liquidate more than once on the same day — an anticipated multi-installment
+// sale settles every parcela at once — so InstallmentNumber is part of a
+// payment's identity, not decoration: without it two same-day liquidations of
+// one sale are indistinguishable and the second silently replaces the first.
 type Payment struct {
-	Provider    Provider
-	SaleID      SaleID
-	PaymentDate domain.CalendarDate
-	Amount      int64
+	Provider          Provider
+	SaleID            SaleID
+	PaymentDate       domain.CalendarDate
+	Amount            int64
+	InstallmentNumber int
 }
 
 // Validate checks a sale's invariants before persistence.
@@ -141,6 +146,9 @@ func (p Payment) Validate() error {
 	}
 	if !p.PaymentDate.Valid() {
 		return errors.New("payment date is required")
+	}
+	if p.InstallmentNumber <= 0 {
+		return errors.New("payment installment number must be positive")
 	}
 	return nil
 }

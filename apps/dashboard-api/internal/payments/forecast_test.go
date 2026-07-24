@@ -50,3 +50,32 @@ func TestCombineForecastEmptyBase(t *testing.T) {
 		t.Errorf("empty base should yield no points, got %+v", got)
 	}
 }
+
+// Every centavo imported has to appear in the projection. A receivable landing
+// on a day the ledger's cash-flow points don't cover must still be counted —
+// dropping it understates the projected balance with nothing to signal it.
+func TestCombineForecastCountsEveryReceivable(t *testing.T) {
+	base := []pkgfinance.CashFlowPoint{
+		{Date: "2026-07-01", ProjectedIncome: 0, ProjectedExpense: 0, RunningBalance: 1000},
+		{Date: "2026-07-02", ProjectedIncome: 0, ProjectedExpense: 0, RunningBalance: 1000},
+	}
+	recv := []payments.ExpectedReceivable{
+		{Provider: payments.ProviderPagBank, SaleID: "pagbank:S1", ExpectedDate: mustDate(t, "2026-07-02"), Amount: 300, InstallmentNumber: 1, InstallmentTotal: 1},
+		// Outside the days base covers.
+		{Provider: payments.ProviderPagBank, SaleID: "pagbank:S2", ExpectedDate: mustDate(t, "2026-09-15"), Amount: 700, InstallmentNumber: 1, InstallmentTotal: 1},
+	}
+
+	points := combineForecast(base, recv)
+
+	var totalReceivable int64
+	for _, p := range points {
+		totalReceivable += p.ProjectedReceivable
+	}
+	if totalReceivable != 1000 {
+		t.Errorf("projected receivables total = %d, want 1000 (every receivable counted)", totalReceivable)
+	}
+	// Starting balance 1000, no ledger movement, +1000 of receivables.
+	if last := points[len(points)-1].RunningBalance; last != 2000 {
+		t.Errorf("end balance = %d, want 2000", last)
+	}
+}
