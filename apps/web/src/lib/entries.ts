@@ -47,5 +47,6 @@ export function bucketByUrgency(entries: Entry[], todayISO: string): UrgencyBuck
     else if (e.PaymentStatus === 'pending') overdue.push(e)
     else history.push(e)
   }
+  upcoming.reverse()
   return { overdue, dueToday, upcoming, history }
 }
