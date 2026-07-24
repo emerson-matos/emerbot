@@ -263,8 +263,8 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 	if res.Sent != 1 || len(wa.sent) != 1 {
 		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
 	}
-	if wa.sent[0].body != gen.reply {
-		t.Fatalf("digest was not humanized: got %q, want %q", wa.sent[0].body, gen.reply)
+	if !strings.HasPrefix(wa.sent[0].body, gen.reply) {
+		t.Fatalf("digest was not humanized: got %q, want it to start with %q", wa.sent[0].body, gen.reply)
 	}
 	// The generator must receive both the system prompt and a non-empty draft to
 	// rewrite — the fields the old agent-based path dropped.
@@ -297,6 +297,103 @@ func TestRunFallsBackToStaticDigestOnGeneratorError(t *testing.T) {
 	}
 	if !strings.Contains(wa.sent[0].body, "Farmácia Financeira") {
 		t.Fatalf("expected the static digest fallback, got %q", wa.sent[0].body)
+	}
+}
+
+// TestDigestReplacesInventedLinkPlaceholderWithRealURL is the regression test
+// for the "[Link para o dashboard]" digest: the model was told to preserve a
+// link the draft never carried (the notifier Lambda had no DASHBOARD_URL), so
+// it invented a placeholder. The real link is now appended after generation and
+// any invented stand-in is stripped.
+func TestDigestReplacesInventedLinkPlaceholderWithRealURL(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "Olá! Tudo bem?\n\nHoje temos um compromisso:\n• *Pagamento de R$ 100,00* com vencimento para hoje.\n\n" +
+		"Para mais detalhes, acesse seu dashboard aqui: [Link para o dashboard]"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 10000),
+	)
+
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	body := wa.sent[0].body
+	if strings.Contains(body, "[Link para o dashboard]") {
+		t.Fatalf("placeholder shipped to the user: %q", body)
+	}
+	if !strings.Contains(body, "http://localhost:5173/analise") {
+		t.Fatalf("real dashboard link missing: %q", body)
+	}
+	// The alert itself must survive the placeholder cleanup.
+	if !strings.Contains(body, "R$ 100,00") {
+		t.Fatalf("alert content lost while stripping the placeholder: %q", body)
+	}
+}
+
+// TestDigestUnwrapsMarkdownLinks: WhatsApp renders no markdown, so a real URL
+// wrapped as "[texto](url)" would ship with its brackets showing.
+func TestDigestUnwrapsMarkdownLinks(t *testing.T) {
+	got := stripInventedLinks("Confira em [nosso painel](https://exemplo.com/analise) hoje.")
+	want := "Confira em https://exemplo.com/analise hoje."
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestDigestOmitsCallToActionWhenNoDashboardURL: with DASHBOARD_URL unset the
+// digest must simply have no link, never a stand-in for one.
+func TestDigestOmitsCallToActionWhenNoDashboardURL(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 10000),
+	)
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", "", time.UTC, orchestrator.StaticClient{})
+	n.SetClock(func() time.Time { return runDay })
+
+	if _, err := n.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	if strings.Contains(wa.sent[0].body, "Acesse a análise completa") {
+		t.Fatalf("call-to-action shipped without a URL: %q", wa.sent[0].body)
+	}
+}
+
+// TestStaticDigestCarriesLinkExactlyOnce guards the fallback path against a
+// duplicated call-to-action now that the link is appended after the body.
+func TestStaticDigestCarriesLinkExactlyOnce(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{err: errors.New("gemini down")}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 10000),
+	)
+
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(wa.sent[0].body, "/analise"); n != 1 {
+		t.Fatalf("want the dashboard link exactly once, got %d in %q", n, wa.sent[0].body)
+	}
+}
+
+// TestDashboardLinkTrimsTrailingSlash keeps a configured "https://host/" from
+// producing "https://host//analise".
+func TestDashboardLinkTrimsTrailingSlash(t *testing.T) {
+	if got := dashboardLink("https://dash.example.com/"); !strings.HasSuffix(got, "https://dash.example.com/analise") {
+		t.Fatalf("got %q", got)
 	}
 }
 
