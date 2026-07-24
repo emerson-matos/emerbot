@@ -88,9 +88,11 @@ test:
 	$(GO) test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1 && rm -f coverage.out
 
 fmt:
+	npm --prefix apps/web run lint -- --fix
 	gofumpt -w .
 
 lint:
+	npm --prefix apps/web run lint
 	golangci-lint run ./...
 
 # ---------------------------------------------------------------------------
