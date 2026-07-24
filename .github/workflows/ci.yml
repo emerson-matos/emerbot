@@ -63,5 +63,8 @@ jobs:
       - name: Lint
         run: npm --prefix apps/web run lint
 
+      - name: Test
+        run: npm --prefix apps/web run test
+
       - name: Build
         run: npm --prefix apps/web run build
