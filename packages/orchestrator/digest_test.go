@@ -70,14 +70,29 @@ func TestDirectGeneratorPropagatesWriterError(t *testing.T) {
 	}
 }
 
-// TestNewDigestGeneratorFallsBackToStatic proves that without a Gemini key the
-// factory degrades to the static responder rather than a nil generator.
-func TestNewDigestGeneratorFallsBackToStatic(t *testing.T) {
+// TestNewDigestGeneratorFallsBackToEcho proves that without a Gemini key the
+// factory degrades to the echo generator (not a nil generator, and not
+// StaticClient, whose "Resposta local do orchestrator:" prefix would leak into
+// the digest). The echo generator returns the caller's draft verbatim so the
+// notifier's static template is delivered unchanged.
+func TestNewDigestGeneratorFallsBackToEcho(t *testing.T) {
 	t.Parallel()
 
 	gen := NewDigestGenerator(Config{})
-	if _, ok := gen.(StaticClient); !ok {
-		t.Fatalf("expected StaticClient without a Gemini key, got %T", gen)
+	if _, ok := gen.(echoGenerator); !ok {
+		t.Fatalf("expected echoGenerator without a Gemini key, got %T", gen)
+	}
+
+	draft := "🔔 *Farmácia Financeira* — resumo de hoje:\n• conta vence hoje"
+	out, err := gen.Generate(context.Background(), Input{
+		UserMessage:  domain.Message{Text: draft},
+		SystemPrompt: "seja amigável",
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out.Text != draft {
+		t.Fatalf("echo must return the draft verbatim: got %q, want %q", out.Text, draft)
 	}
 }
 

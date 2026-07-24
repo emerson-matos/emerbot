@@ -32,6 +32,17 @@ func (g *directGenerator) Generate(ctx context.Context, input Input) (Output, er
 	return Output{Text: reply}, nil
 }
 
+// echoGenerator returns the caller's message unchanged — the digest's no-LLM
+// fallback. Its callers (the notifier) already pass a ready-to-send draft as
+// Input.UserMessage.Text, so echoing it back delivers that draft verbatim. This
+// is deliberately not StaticClient, whose chat-oriented Generate wraps the text
+// in a "Resposta local do orchestrator:" prefix that would leak into the digest.
+type echoGenerator struct{}
+
+func (echoGenerator) Generate(_ context.Context, input Input) (Output, error) {
+	return Output{Text: input.UserMessage.Text}, nil
+}
+
 // NewDigestGenerator builds a tool-less text generator for one-shot copy such as
 // the daily notifier digest, where the model rewrites a draft into friendlier
 // prose and never needs finance tools. Unlike NewTextGenerator, the returned
@@ -39,17 +50,19 @@ func (g *directGenerator) Generate(ctx context.Context, input Input) (Output, er
 // replaying a conversation history — so a caller that sends an empty history
 // (the digest does) actually reaches the model instead of erroring out.
 //
-// It falls back to StaticClient when Gemini isn't configured, matching
-// NewTextGenerator's behavior; callers like the notifier layer their own static
-// draft on top of that anyway.
+// When Gemini isn't configured it falls back to echoGenerator, which returns the
+// caller's own draft unchanged. The digest is thus delivered as-is rather than
+// wrapped or rewritten — the tool-less counterpart to how the digest already
+// falls back to its static template on any generation error. Only the Gemini
+// path is wired here; the notifier never selects the ollama provider.
 func NewDigestGenerator(cfg Config) TextGenerator {
 	if cfg.GeminiAPIKey != "" {
 		writer, err := gemini.NewWriter(context.Background(), cfg.GeminiAPIKey)
 		if err != nil {
-			log.Printf("orchestrator: gemini writer: %v, using static fallback", err)
+			log.Printf("orchestrator: gemini writer: %v, using echo fallback", err)
 		} else {
 			return &directGenerator{writer: writer}
 		}
 	}
-	return StaticClient{}
+	return echoGenerator{}
 }
