@@ -132,6 +132,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
+	vbIncome := pkgfinance.VendaBalcaoIncome(entries)
 
 	for _, prefs := range candidates {
 		res.Evaluated++
@@ -150,12 +151,6 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		var vbIncome int64
-		for _, e := range entries {
-			if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
-				vbIncome += e.Amount
-			}
-		}
 		alerts := notifications.Evaluate(prefs, entries, vbIncome, goal, today)
 		if len(alerts) == 0 {
 			res.Skipped++

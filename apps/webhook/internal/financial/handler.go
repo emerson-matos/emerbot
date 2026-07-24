@@ -177,7 +177,7 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resumo entries: %w", err)
 	}
-	vbIncome := vendaBalcaoIncome(monthEntries)
+	vbIncome := pkgfinance.VendaBalcaoIncome(monthEntries)
 
 	due := now.AddDate(0, 0, 1)
 	tomorrow := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
@@ -230,7 +230,7 @@ func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("goal entries: %w", err)
 	}
-	vbIncome := vendaBalcaoIncome(monthEntries)
+	vbIncome := pkgfinance.VendaBalcaoIncome(monthEntries)
 
 	goal, err := h.store.GetGoal(ctx, userID, yearMonth)
 	if err != nil {
@@ -299,16 +299,6 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	msg += fmt.Sprintf("📉 *Teto Despesas:* R$%s\n", money(exp))
 	msg += "\nDigite /goal para ver o progresso."
 	return msg, nil
-}
-
-func vendaBalcaoIncome(entries []domain.FinancialEntry) int64 {
-	var total int64
-	for _, e := range entries {
-		if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
-			total += e.Amount
-		}
-	}
-	return total
 }
 
 func money(centavos int64) string {

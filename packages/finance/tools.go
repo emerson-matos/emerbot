@@ -288,12 +288,7 @@ func resumoMensalTool(store Store) Tool {
 			if err != nil {
 				return nil, fmt.Errorf("monthly entries: %w", err)
 			}
-			var vbIncome int64
-			for _, e := range monthEntries {
-				if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
-					vbIncome += e.Amount
-				}
-			}
+			vbIncome := VendaBalcaoIncome(monthEntries)
 
 			result := map[string]any{
 				"month":   summary.Month,
