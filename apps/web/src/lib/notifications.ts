@@ -13,6 +13,7 @@ export interface AppNotification {
   tone: NotificationTone
   text: string
   time: string
+  link?: string
 }
 
 export const notificationToneVar: Record<NotificationTone, string> = {
@@ -70,6 +71,7 @@ export function useNotifications(): NotificationsResult {
       tone: 'warning',
       text: `Pagamento de ${formatBRL(dueTodayTotal)} vence hoje`,
       time: 'Hoje',
+      link: '/analise',
     })
   }
 
@@ -84,6 +86,7 @@ export function useNotifications(): NotificationsResult {
         tone: 'destructive',
         text: `${e.Description || 'Conta'} está vencida`,
         time: formatEffectiveDate(e),
+        link: '/analise',
       })
     })
 
@@ -99,6 +102,7 @@ export function useNotifications(): NotificationsResult {
       tone: 'success',
       text: 'Meta de faturamento atingida!',
       time: 'Este mês',
+      link: '/analise',
     })
   }
 

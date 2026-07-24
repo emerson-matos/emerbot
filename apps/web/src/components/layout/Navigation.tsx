@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
+  Activity,
   ArrowLeftRight,
   Bell,
   CreditCard,
@@ -23,8 +24,9 @@ interface NavItem {
 const nav: NavItem[] = [
   { label: "Painel", icon: LayoutDashboard, to: "/" },
   { label: "Transações", icon: Receipt, to: "/transacoes" },
-  { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
   { label: "Adquirentes", icon: CreditCard, to: "/adquirentes" },
+  { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
+  { label: "Análise", icon: Activity, to: "/analise" },
   { label: "Metas", icon: Target, to: "/metas" },
   { label: "Notificações", icon: Bell, to: "/notificacoes" },
   { label: "Estoque", icon: ArrowLeftRight, soon: true },

@@ -82,7 +82,7 @@ func newNotifier(s stores, wa *fakeWA) *Notifier {
 }
 
 func newNotifierWithGen(s stores, wa *fakeWA, gen orchestrator.TextGenerator) *Notifier {
-	n := New(s.fin, s.sessions, wa, "PHONE_ID", time.UTC, gen)
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, gen)
 	n.SetClock(func() time.Time { return runDay })
 	return n
 }
