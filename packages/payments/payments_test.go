@@ -58,7 +58,8 @@ func sampleResult(t *testing.T, receivables ...ExpectedReceivable) ImportResult 
 		}},
 		Receivables: receivables,
 		Payments: []Payment{{
-			Provider: ProviderPagBank, SaleID: saleID, PaymentDate: mustDate(t, "2026-07-23"), Amount: 9800,
+			Provider: ProviderPagBank, SaleID: saleID, PaymentDate: mustDate(t, "2026-07-23"),
+			Amount: 9800, InstallmentNumber: 1,
 		}},
 	}
 }

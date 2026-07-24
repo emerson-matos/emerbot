@@ -1,6 +1,6 @@
-import { format } from 'date-fns'
 import { usePaymentsSales } from '../api/queries'
 import { SalesCard, ReceivablesCard, ForecastCard } from '../components/PaymentsCards'
+import { currentMonthRange } from '@/lib/period'
 import { Card, CardContent } from '@/components/ui/card'
 import { formatBRL } from '@/lib/format'
 
@@ -13,10 +13,7 @@ const methodLabels: Record<string, string> = {
 }
 
 export default function Adquirentes() {
-  const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
-
+  const { firstDay, lastDay } = currentMonthRange()
   const salesQuery = usePaymentsSales(firstDay, lastDay)
   const byMethod = salesQuery.data?.by_method ?? {}
   const methods = Object.entries(byMethod).sort((a, b) => b[1] - a[1])

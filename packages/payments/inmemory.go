@@ -131,4 +131,4 @@ func saleKey(s Sale) string { return saleSK(s.SaleDate, s.ID) }
 func recvKey(r ExpectedReceivable) string {
 	return recvSK(r.ExpectedDate, r.SaleID, r.InstallmentNumber)
 }
-func payKey(p Payment) string { return paySK(p.PaymentDate, p.SaleID) }
+func payKey(p Payment) string { return paySK(p.PaymentDate, p.SaleID, p.InstallmentNumber) }

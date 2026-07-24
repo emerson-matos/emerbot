@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.29
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.51
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.60.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.0
@@ -32,7 +33,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.12.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.31 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.32 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.4.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.32.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.37.0 // indirect

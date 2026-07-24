@@ -150,6 +150,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "logs:*",
       "acm:*",
       "cognito-idp:*",
+      "sqs:*", # payment-importer dead-letter queue
     ]
     resources = ["*"]
   }
@@ -209,15 +210,48 @@ data "aws_iam_policy_document" "deploy_permissions" {
   }
 
   # App-data buckets the stack creates (e.g. the payment-imports bucket the
-  # payment-importer reads). CI needs to create/configure/refresh these — bucket
-  # creation, public-access-block and the S3→Lambda notification — so grant the
-  # bucket-management actions on the project's bucket namespace. Scoped to
-  # emerbot-* buckets, which the state bucket already covers via StateBucket.
+  # payment-importer reads). CI needs to create and configure these — bucket
+  # creation, public-access-block, versioning, lifecycle, bucket policy and the
+  # S3→Lambda notification — plus read them back on refresh.
+  #
+  # These are bucket-level management actions only. Deploying the stack never
+  # requires reading or deleting the envelopes themselves, and those objects are
+  # financial records, so s3:GetObject/DeleteObject are deliberately absent: a
+  # compromised CI role can reconfigure the bucket but cannot exfiltrate a
+  # single import. The importer Lambda's own role holds the GetObject grant.
   statement {
-    sid       = "AppBuckets"
-    effect    = "Allow"
-    actions   = ["s3:*"]
-    resources = ["arn:aws:s3:::emerbot-*-payment-imports", "arn:aws:s3:::emerbot-*-payment-imports/*"]
+    sid    = "AppBuckets"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:ListBucket",
+      "s3:GetBucketLocation",
+      "s3:GetBucketTagging",
+      "s3:PutBucketTagging",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:PutBucketPublicAccessBlock",
+      "s3:GetBucketVersioning",
+      "s3:PutBucketVersioning",
+      "s3:GetLifecycleConfiguration",
+      "s3:PutLifecycleConfiguration",
+      "s3:GetBucketPolicy",
+      "s3:PutBucketPolicy",
+      "s3:DeleteBucketPolicy",
+      "s3:GetBucketNotification",
+      "s3:PutBucketNotification",
+      "s3:GetBucketAcl",
+      "s3:GetBucketCORS",
+      "s3:GetBucketWebsite",
+      "s3:GetBucketLogging",
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketRequestPayment",
+      "s3:GetReplicationConfiguration",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetEncryptionConfiguration",
+      "s3:PutEncryptionConfiguration",
+    ]
+    resources = ["arn:aws:s3:::emerbot-*-payment-imports"]
   }
 }
 

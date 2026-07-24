@@ -2,6 +2,9 @@ locals {
   prefix = "${var.project_name}-${var.environment}"
 }
 
+# Used to pin cross-service invoke permissions to this account.
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role" "lambda_exec" {
   name = "${local.prefix}-webhook-role"
 
@@ -591,6 +594,67 @@ resource "aws_s3_bucket_public_access_block" "payment_imports" {
   restrict_public_buckets = true
 }
 
+# Versioning is what actually makes the envelopes an immutable record: without
+# it, re-uploading the same key to trigger a reprocess overwrites the evidence of
+# what was imported the first time.
+resource "aws_s3_bucket_versioning" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Envelopes are a replayable audit trail, not permanent storage, and the project
+# runs under a hard monthly cost cap — so they expire rather than accumulating
+# forever. A year is far longer than any realistic reprocessing window.
+resource "aws_s3_bucket_lifecycle_configuration" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+
+  rule {
+    id     = "expire-imports"
+    status = "Enabled"
+
+    filter {
+      prefix = "imports/"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# The bucket carries financial records; deny any non-TLS access outright rather
+# than relying on every client remembering to use HTTPS.
+resource "aws_s3_bucket_policy" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.payment_imports.arn,
+        "${aws_s3_bucket.payment_imports.arn}/*",
+      ]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.payment_imports]
+}
+
 resource "aws_iam_role" "importer_exec" {
   name = "${local.prefix}-importer-role"
 
@@ -657,12 +721,49 @@ resource "aws_lambda_function" "payment_importer" {
   timeout          = 60
   memory_size      = 128
 
+  # The bucket is not passed in: the Lambda reads whatever bucket/key the S3
+  # event names, so a second env var would only be able to disagree with it.
   environment {
     variables = {
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
-      PAYMENT_IMPORTS_BUCKET  = aws_s3_bucket.payment_imports.id
     }
   }
+}
+
+# S3 invokes the importer asynchronously, so a returned error is retried twice
+# and then the event is dropped — a failed import would vanish with nothing but a
+# log line. Failures land in this queue instead, keeping the S3 key that needs
+# re-dropping. 14 days of retention is the maximum and costs nothing at this
+# volume (SQS's perpetual free tier covers it).
+resource "aws_sqs_queue" "importer_dlq" {
+  name                      = "${local.prefix}-payment-importer-dlq"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_lambda_function_event_invoke_config" "payment_importer" {
+  function_name          = aws_lambda_function.payment_importer.function_name
+  maximum_retry_attempts = 2
+
+  destination_config {
+    on_failure {
+      destination = aws_sqs_queue.importer_dlq.arn
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "importer_dlq" {
+  name = "${local.prefix}-importer-dlq"
+  role = aws_iam_role.importer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["sqs:SendMessage"]
+      Resource = [aws_sqs_queue.importer_dlq.arn]
+    }]
+  })
 }
 
 resource "aws_lambda_permission" "allow_s3_importer" {
@@ -671,6 +772,9 @@ resource "aws_lambda_permission" "allow_s3_importer" {
   function_name = aws_lambda_function.payment_importer.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = aws_s3_bucket.payment_imports.arn
+  # Bucket names are global, so source_arn alone would still match a bucket of
+  # the same name recreated in another account; source_account pins it to ours.
+  source_account = data.aws_caller_identity.current.account_id
 }
 
 # Only a .json object under imports/ triggers the importer, so unrelated uploads

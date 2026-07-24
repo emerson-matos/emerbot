@@ -3,7 +3,9 @@ package payments
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -19,15 +21,25 @@ import (
 // their SK prefix. Each item stores its originating SourceDate so Save can
 // replace exactly one (Provider, SourceDate) import even though receivables
 // carry future, varied ExpectedDates.
+//
+// The item date in an SK is the *business* date (sale day, expected day, payment
+// day), because that is what the dashboard range-queries. A day's import is
+// therefore scattered across many SKs, so each import also writes an index item
+// (importSK) listing exactly the SKs it wrote: that is what lets Save find the
+// previous version of an import with a single GetItem instead of re-reading the
+// partition's whole history on every run.
 const (
 	pkPrefix   = "USER#"
 	salePrefix = "SALE#"
 	recvPrefix = "RECV#"
 	payPrefix  = "PAYMT#"
+	importPfx  = "IMPORT#"
 
 	// skHigh is appended to an upper date bound so a BETWEEN on the SK includes
-	// every item on the "to" day regardless of the trailing id/parcela.
-	skHigh = "#\xff"
+	// every item on the "to" day regardless of the trailing id/parcela. U+FFFF
+	// sorts above every character the SKs actually use and, unlike a bare 0xFF
+	// byte, is valid UTF-8 — DynamoDB compares strings by their UTF-8 bytes.
+	skHigh = "#\uffff"
 )
 
 func saleSK(date domain.CalendarDate, id SaleID) string {
@@ -38,8 +50,17 @@ func recvSK(date domain.CalendarDate, id SaleID, parcela int) string {
 	return recvPrefix + date.String() + "#" + string(id) + "#" + strconv.Itoa(parcela)
 }
 
-func paySK(date domain.CalendarDate, id SaleID) string {
-	return payPrefix + date.String() + "#" + string(id)
+// paySK includes the parcela for the same reason recvSK does: one sale can
+// liquidate several installments on a single day (anticipation), and without it
+// those payments collapse onto one key — losing every liquidation but the last,
+// and failing the write outright when they land in the same batch.
+func paySK(date domain.CalendarDate, id SaleID, parcela int) string {
+	return payPrefix + date.String() + "#" + string(id) + "#" + strconv.Itoa(parcela)
+}
+
+// importSK identifies the index item for one logical import.
+func importSK(provider Provider, sourceDate domain.CalendarDate) string {
+	return importPfx + string(provider) + "#" + sourceDate.String()
 }
 
 // --- DynamoDB item shapes ---
@@ -73,13 +94,24 @@ type recvItem struct {
 }
 
 type payItem struct {
-	PK          string `dynamodbav:"PK"`
-	SK          string `dynamodbav:"SK"`
-	Provider    string `dynamodbav:"Provider"`
-	SourceDate  string `dynamodbav:"SourceDate"`
-	SaleID      string `dynamodbav:"SaleID"`
-	PaymentDate string `dynamodbav:"PaymentDate"`
-	Amount      int64  `dynamodbav:"Amount"`
+	PK                string `dynamodbav:"PK"`
+	SK                string `dynamodbav:"SK"`
+	Provider          string `dynamodbav:"Provider"`
+	SourceDate        string `dynamodbav:"SourceDate"`
+	SaleID            string `dynamodbav:"SaleID"`
+	PaymentDate       string `dynamodbav:"PaymentDate"`
+	Amount            int64  `dynamodbav:"Amount"`
+	InstallmentNumber int    `dynamodbav:"InstallmentNumber"`
+}
+
+// importItem is the index of one logical import: the SKs it wrote. Save reads it
+// to know what the previous version of this (Provider, SourceDate) covered.
+type importItem struct {
+	PK         string   `dynamodbav:"PK"`
+	SK         string   `dynamodbav:"SK"`
+	Provider   string   `dynamodbav:"Provider"`
+	SourceDate string   `dynamodbav:"SourceDate"`
+	Keys       []string `dynamodbav:"Keys"`
 }
 
 // DynamoDBRepository implements Repository against the shared finance table.
@@ -110,10 +142,17 @@ func NewDynamoDBRepository(ctx context.Context, tableName, endpoint, ledgerID st
 
 func (r *DynamoDBRepository) pk() string { return pkPrefix + r.ledgerID }
 
-// Save replaces exactly the prior (Provider, SourceDate) set with result. It
-// deletes previously-imported items for that import that are absent from the new
-// set, then puts every new item (a put overwrites a same-key item), so re-import
-// is idempotent. Writes go out in atomic chunks of at most maxTransactWriteItems.
+// Save replaces exactly the prior (Provider, SourceDate) set with result: it
+// deletes the previous version's items that are absent from the new set, then
+// puts every new item (a put overwrites a same-key item), and finally records
+// the new key set in the import's index item.
+//
+// The replace is NOT atomic — a day's import can exceed one batch, and a failure
+// partway leaves the day half-replaced. It is instead *idempotent and
+// self-healing*: re-running the same envelope converges on the same state, and
+// the index item is written last, so a crash before it leaves the index still
+// describing the previous version and the next run re-derives the full delete
+// set. Recovery is therefore always "re-drop the object" (see docs/deploy.md).
 func (r *DynamoDBRepository) Save(ctx context.Context, result ImportResult) error {
 	if err := ValidateImportResult(result); err != nil {
 		return err
@@ -129,13 +168,12 @@ func (r *DynamoDBRepository) Save(ctx context.Context, result ImportResult) erro
 		return err
 	}
 
-	var writes []types.TransactWriteItem
+	var writes []types.WriteRequest
 	for _, sk := range oldKeys {
 		if newKeys[sk] {
-			continue // will be overwritten by a Put — avoid a same-item conflict
+			continue // will be overwritten by a Put — avoid a same-key conflict
 		}
-		writes = append(writes, types.TransactWriteItem{Delete: &types.Delete{
-			TableName: aws.String(r.tableName),
+		writes = append(writes, types.WriteRequest{DeleteRequest: &types.DeleteRequest{
 			Key: map[string]types.AttributeValue{
 				"PK": &types.AttributeValueMemberS{Value: r.pk()},
 				"SK": &types.AttributeValueMemberS{Value: sk},
@@ -143,25 +181,75 @@ func (r *DynamoDBRepository) Save(ctx context.Context, result ImportResult) erro
 		}})
 	}
 	for _, it := range newItems {
-		writes = append(writes, types.TransactWriteItem{Put: &types.Put{
-			TableName: aws.String(r.tableName),
-			Item:      it,
-		}})
+		writes = append(writes, types.WriteRequest{PutRequest: &types.PutRequest{Item: it}})
 	}
-	return r.transactWrite(ctx, writes)
+	if err := r.batchWrite(ctx, writes); err != nil {
+		return err
+	}
+	return r.putImportIndex(ctx, result, newKeys)
 }
 
-// maxTransactWriteItems is DynamoDB's hard per-call limit for TransactWriteItems.
-const maxTransactWriteItems = 100
+// maxBatchWriteItems is DynamoDB's hard per-call limit for BatchWriteItem.
+// BatchWriteItem is used rather than TransactWriteItems because the replace
+// spans more items than one transaction allows anyway, so the transaction bought
+// no real atomicity while costing twice the write capacity.
+const maxBatchWriteItems = 25
 
-func (r *DynamoDBRepository) transactWrite(ctx context.Context, writes []types.TransactWriteItem) error {
-	for start := 0; start < len(writes); start += maxTransactWriteItems {
-		end := min(start+maxTransactWriteItems, len(writes))
-		if _, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
-			TransactItems: writes[start:end],
-		}); err != nil {
-			return fmt.Errorf("transact write payments %d-%d: %w", start, end, err)
+// maxBatchWriteRetries bounds the retry loop for UnprocessedItems (throttling).
+const maxBatchWriteRetries = 8
+
+// batchWrite writes every request, re-submitting UnprocessedItems — which
+// BatchWriteItem returns instead of failing when a batch is throttled.
+func (r *DynamoDBRepository) batchWrite(ctx context.Context, writes []types.WriteRequest) error {
+	for start := 0; start < len(writes); start += maxBatchWriteItems {
+		end := min(start+maxBatchWriteItems, len(writes))
+		pending := map[string][]types.WriteRequest{r.tableName: writes[start:end]}
+
+		for attempt := 0; len(pending[r.tableName]) > 0; attempt++ {
+			if attempt >= maxBatchWriteRetries {
+				return fmt.Errorf("batch write payments %d-%d: %d items still unprocessed after %d attempts",
+					start, end, len(pending[r.tableName]), attempt)
+			}
+			out, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{RequestItems: pending})
+			if err != nil {
+				return fmt.Errorf("batch write payments %d-%d: %w", start, end, err)
+			}
+			pending = out.UnprocessedItems
+			if len(pending[r.tableName]) == 0 {
+				break
+			}
+			// Exponential backoff before retrying the throttled remainder.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(1<<attempt) * 50 * time.Millisecond):
+			}
 		}
+	}
+	return nil
+}
+
+// putImportIndex records the SKs this import wrote, so the next run of the same
+// (Provider, SourceDate) can find them with one GetItem.
+func (r *DynamoDBRepository) putImportIndex(ctx context.Context, result ImportResult, keys map[string]bool) error {
+	sks := make([]string, 0, len(keys))
+	for sk := range keys {
+		sks = append(sks, sk)
+	}
+	sort.Strings(sks) // deterministic item content, so a re-import is a no-op write
+
+	sk := importSK(result.Provider, result.SourceDate)
+	av, err := attributevalue.MarshalMap(importItem{
+		PK: r.pk(), SK: sk, Provider: string(result.Provider),
+		SourceDate: result.SourceDate.String(), Keys: sks,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal import index %s: %w", sk, err)
+	}
+	if _, err := r.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(r.tableName), Item: av,
+	}); err != nil {
+		return fmt.Errorf("put import index %s: %w", sk, err)
 	}
 	return nil
 }
@@ -173,6 +261,9 @@ func (r *DynamoDBRepository) marshalResult(result ImportResult) ([]map[string]ty
 	keys := make(map[string]bool)
 	sd := result.SourceDate.String()
 
+	// Duplicate SKs are rejected upstream by ValidateImportResult, which Save
+	// runs first — BatchWriteItem would otherwise fail the whole batch with
+	// "Provided list of item keys contains duplicates".
 	add := func(sk string, v any) error {
 		av, err := attributevalue.MarshalMap(v)
 		if err != nil {
@@ -205,10 +296,11 @@ func (r *DynamoDBRepository) marshalResult(result ImportResult) ([]map[string]ty
 		}
 	}
 	for _, p := range result.Payments {
-		sk := paySK(p.PaymentDate, p.SaleID)
+		sk := paySK(p.PaymentDate, p.SaleID, p.InstallmentNumber)
 		if err := add(sk, payItem{
 			PK: r.pk(), SK: sk, Provider: string(p.Provider), SourceDate: sd,
 			SaleID: string(p.SaleID), PaymentDate: p.PaymentDate.String(), Amount: p.Amount,
+			InstallmentNumber: p.InstallmentNumber,
 		}); err != nil {
 			return nil, nil, err
 		}
@@ -216,36 +308,34 @@ func (r *DynamoDBRepository) marshalResult(result ImportResult) ([]map[string]ty
 	return items, keys, nil
 }
 
-// existingKeys returns the SKs of items already stored for this (provider,
-// sourceDate) import, across all three prefixes.
+// existingKeys returns the SKs written by the previous run of this (provider,
+// sourceDate) import, read from the import's index item.
+//
+// This is a single GetItem. The obvious alternative — querying each prefix and
+// filtering on Provider/SourceDate — is charged for every item read *before* the
+// filter applies, so it would re-read the ledger's entire payment history on
+// every import, at a cost that grows without bound as history accumulates.
 func (r *DynamoDBRepository) existingKeys(ctx context.Context, provider Provider, sourceDate domain.CalendarDate) ([]string, error) {
-	var keys []string
-	for _, prefix := range []string{salePrefix, recvPrefix, payPrefix} {
-		paginator := dynamodb.NewQueryPaginator(r.client, &dynamodb.QueryInput{
-			TableName:              aws.String(r.tableName),
-			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-			FilterExpression:       aws.String("Provider = :prov AND SourceDate = :sd"),
-			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":pk":     &types.AttributeValueMemberS{Value: r.pk()},
-				":prefix": &types.AttributeValueMemberS{Value: prefix},
-				":prov":   &types.AttributeValueMemberS{Value: string(provider)},
-				":sd":     &types.AttributeValueMemberS{Value: sourceDate.String()},
-			},
-			ProjectionExpression: aws.String("SK"),
-		})
-		for paginator.HasMorePages() {
-			page, err := paginator.NextPage(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("query existing %s: %w", prefix, err)
-			}
-			for _, raw := range page.Items {
-				if sk, ok := raw["SK"].(*types.AttributeValueMemberS); ok {
-					keys = append(keys, sk.Value)
-				}
-			}
-		}
+	sk := importSK(provider, sourceDate)
+	out, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: r.pk()},
+			"SK": &types.AttributeValueMemberS{Value: sk},
+		},
+		ConsistentRead: aws.Bool(true), // a re-import must not read a stale key set
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get import index %s: %w", sk, err)
 	}
-	return keys, nil
+	if out.Item == nil {
+		return nil, nil // first import of this day
+	}
+	var it importItem
+	if err := attributevalue.UnmarshalMap(out.Item, &it); err != nil {
+		return nil, fmt.Errorf("unmarshal import index %s: %w", sk, err)
+	}
+	return it.Keys, nil
 }
 
 // queryRange returns raw items for a prefix whose SK date falls in [from, to].

@@ -6,7 +6,8 @@ package payments
 
 import (
 	"encoding/json"
-	"log"
+	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -36,10 +37,14 @@ func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	from, to := monthRange(r)
+	from, to, err := monthRange(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	sales, err := h.repo.ListSales(r.Context(), from, to)
 	if err != nil {
-		log.Printf("list sales error: %v", err)
+		slog.Error("list sales", "error", err)
 		jsonError(w, "failed to list sales", http.StatusInternalServerError)
 		return
 	}
@@ -53,7 +58,7 @@ func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 		byMethod[s.Method] += s.GrossAmount
 	}
 	jsonOK(w, map[string]any{
-		"sales":     sales,
+		"sales":     responseSales(sales),
 		"totals":    map[string]int64{"gross": gross, "net": net, "fee": fee},
 		"by_method": byMethod,
 		"from":      from.String(), "to": to.String(),
@@ -67,10 +72,14 @@ func (h *Handler) Receivables(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	from, to := monthRange(r)
+	from, to, err := monthRange(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	recv, err := h.repo.ListReceivables(r.Context(), from, to)
 	if err != nil {
-		log.Printf("list receivables error: %v", err)
+		slog.Error("list receivables", "error", err)
 		jsonError(w, "failed to list receivables", http.StatusInternalServerError)
 		return
 	}
@@ -78,7 +87,10 @@ func (h *Handler) Receivables(w http.ResponseWriter, r *http.Request) {
 	for _, rc := range recv {
 		total += rc.Amount
 	}
-	jsonOK(w, map[string]any{"receivables": recv, "total": total, "from": from.String(), "to": to.String()})
+	jsonOK(w, map[string]any{
+		"receivables": responseReceivables(recv), "total": total,
+		"from": from.String(), "to": to.String(),
+	})
 }
 
 // Forecast handles GET /payments/forecast?month=YYYY-MM (defaults to the current
@@ -102,36 +114,54 @@ func (h *Handler) Forecast(w http.ResponseWriter, r *http.Request) {
 
 	base, err := h.finStore.CashFlowForecast(r.Context(), claims.UserID, month)
 	if err != nil {
-		log.Printf("cashflow forecast error: %v", err)
+		slog.Error("cashflow forecast", "error", err)
 		jsonError(w, "failed to build forecast", http.StatusInternalServerError)
 		return
 	}
 	recv, err := h.repo.ListReceivables(r.Context(), domain.NewCalendarDate(monthStart), domain.NewCalendarDate(monthEnd))
 	if err != nil {
-		log.Printf("list receivables error: %v", err)
+		slog.Error("list receivables", "error", err)
 		jsonError(w, "failed to build forecast", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"points": combineForecast(base, recv), "month": month})
+	jsonOK(w, map[string]any{"points": responsePoints(combineForecast(base, recv)), "month": month})
 }
 
+// maxRangeDays bounds a from/to window. Each request is a DynamoDB range query
+// charged per item read, so an unbounded window ("from=1900-01-01") would read
+// the ledger's whole payment history on one unauthenticated-cost path. Two years
+// is well beyond any dashboard view while keeping the worst case finite.
+const maxRangeDays = 731
+
 // monthRange reads from/to query params (YYYY-MM-DD), defaulting to the current
-// calendar month.
-func monthRange(r *http.Request) (domain.CalendarDate, domain.CalendarDate) {
+// calendar month. Malformed or inverted input is an error rather than a silent
+// fallback: a typo'd date returning last month's numbers looks like real data.
+func monthRange(r *http.Request) (domain.CalendarDate, domain.CalendarDate, error) {
 	now := time.Now().UTC()
 	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	to := from.AddDate(0, 1, -1)
+
 	if f := r.URL.Query().Get("from"); f != "" {
-		if t, err := time.Parse("2006-01-02", f); err == nil {
-			from = t
+		parsed, err := time.Parse("2006-01-02", f)
+		if err != nil {
+			return domain.CalendarDate{}, domain.CalendarDate{}, errors.New("invalid from date, expected YYYY-MM-DD")
 		}
+		from = parsed
 	}
 	if t := r.URL.Query().Get("to"); t != "" {
-		if parsed, err := time.Parse("2006-01-02", t); err == nil {
-			to = parsed
+		parsed, err := time.Parse("2006-01-02", t)
+		if err != nil {
+			return domain.CalendarDate{}, domain.CalendarDate{}, errors.New("invalid to date, expected YYYY-MM-DD")
 		}
+		to = parsed
 	}
-	return domain.NewCalendarDate(from), domain.NewCalendarDate(to)
+	if to.Before(from) {
+		return domain.CalendarDate{}, domain.CalendarDate{}, errors.New("to must not be before from")
+	}
+	if to.Sub(from) > maxRangeDays*24*time.Hour {
+		return domain.CalendarDate{}, domain.CalendarDate{}, errors.New("date range too large, max 731 days")
+	}
+	return domain.NewCalendarDate(from), domain.NewCalendarDate(to), nil
 }
 
 func jsonOK(w http.ResponseWriter, v any) {

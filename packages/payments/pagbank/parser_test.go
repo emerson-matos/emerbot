@@ -151,6 +151,58 @@ func TestParseMultiploDedupAndEventFilter(t *testing.T) {
 	}
 }
 
+// An anticipated multi-installment sale settles every parcela on one day, so the
+// financial extract carries several lines sharing codigo_transacao and
+// data_movimentacao. The parcela is what keeps those payments distinct all the
+// way down to storage — without it they are one item and the import fails.
+func TestParseKeepsSameDayLiquidationsDistinct(t *testing.T) {
+	env := `{"provider":"pagbank","date":"2026-07-23",
+	  "transactional":{"detalhes":[]},
+	  "financial":{"detalhes":[
+	    {"tipo_evento":"1","codigo_transacao":"ABC","data_movimentacao":"2026-07-23","valor_parcela":35.00,"parcela":"1"},
+	    {"tipo_evento":"1","codigo_transacao":"ABC","data_movimentacao":"2026-07-23","valor_parcela":35.00,"parcela":"2"},
+	    {"tipo_evento":"1","codigo_transacao":"ABC","data_movimentacao":"2026-07-23","valor_parcela":35.00,"parcela":"3"}
+	  ]}}`
+
+	got, err := New().Parse([]byte(env))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got.Payments) != 3 {
+		t.Fatalf("payments = %d, want 3", len(got.Payments))
+	}
+	for i, p := range got.Payments {
+		if p.InstallmentNumber != i+1 {
+			t.Errorf("payment %d installment = %d, want %d", i, p.InstallmentNumber, i+1)
+		}
+	}
+	// The whole point: this result must be storable.
+	if err := payments.ValidateImportResult(got); err != nil {
+		t.Errorf("same-day liquidations rejected as an import: %v", err)
+	}
+}
+
+// A financial line with no parcela field (the debit case) still has to produce a
+// valid payment, so the default must be a real installment number, not zero.
+func TestParseDefaultsMissingParcelaToOne(t *testing.T) {
+	env := `{"provider":"pagbank","date":"2026-07-23",
+	  "transactional":{"detalhes":[]},
+	  "financial":{"detalhes":[
+	    {"tipo_evento":"1","codigo_transacao":"DEB","data_movimentacao":"2026-07-23","valor_parcela":50.00}
+	  ]}}`
+
+	got, err := New().Parse([]byte(env))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got.Payments) != 1 || got.Payments[0].InstallmentNumber != 1 {
+		t.Fatalf("payments = %+v, want one payment with installment 1", got.Payments)
+	}
+	if err := payments.ValidateImportResult(got); err != nil {
+		t.Errorf("ValidateImportResult: %v", err)
+	}
+}
+
 func TestMapMeioPagamentoAcceptsPaddedAndUnpadded(t *testing.T) {
 	cases := map[string]payments.PaymentMethod{
 		"3": payments.MethodCredito, "03": payments.MethodCredito,

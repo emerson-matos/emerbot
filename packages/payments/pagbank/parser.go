@@ -64,11 +64,14 @@ type transactionalRecord struct {
 }
 
 // financialRecord is one "detalhe" line of the financial extract (a liquidation).
+// There is one line per liquidated parcela, so parcela is read here too: it is
+// what keeps two same-day liquidations of one sale distinct downstream.
 type financialRecord struct {
 	TipoEvento       ediStr `json:"tipo_evento"`
 	CodigoTransacao  ediStr `json:"codigo_transacao"`
 	DataMovimentacao ediStr `json:"data_movimentacao"`
 	ValorParcela     ediStr `json:"valor_parcela"`
+	Parcela          ediStr `json:"parcela"`
 }
 
 // Parse decodes the envelope and maps both extracts into canonical items.
@@ -201,7 +204,7 @@ func parseFinancial(raw json.RawMessage) ([]payments.Payment, error) {
 		}
 		pays = append(pays, payments.Payment{
 			Provider: payments.ProviderPagBank, SaleID: payments.NewSaleID(payments.ProviderPagBank, externalID),
-			PaymentDate: payDate, Amount: amount,
+			PaymentDate: payDate, Amount: amount, InstallmentNumber: parseParcela(string(rec.Parcela)),
 		})
 	}
 	return pays, nil
