@@ -30,6 +30,7 @@ type Notifier struct {
 	sessions      wasession.Store
 	wa            whatsapp.Client
 	phoneNumberID string
+	dashboardURL  string
 	loc           *time.Location
 	now           func() time.Time
 	gen           orchestrator.TextGenerator
@@ -41,7 +42,7 @@ type Notifier struct {
 // generator used to personalize the daily digest (pass StaticClient{} or
 // NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
+func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -50,6 +51,7 @@ func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, p
 		sessions:      sessions,
 		wa:            wa,
 		phoneNumberID: phoneNumberID,
+		dashboardURL:  dashboardURL,
 		loc:           loc,
 		now:           time.Now,
 		gen:           gen,
@@ -191,7 +193,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 }
 
 func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
-	fallback := buildStaticDigest(alerts)
+	fallback := buildStaticDigest(alerts, n.dashboardURL)
 
 	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -206,7 +208,8 @@ func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
 		SystemPrompt: "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
 			"Transforme os alertas abaixo em uma mensagem amigável e objetiva em português. " +
 			"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
-			"Não invente informações. Se não houver alertas, diga que está tudo em ordem.",
+			"Não invente informações. Se não houver alertas, diga que está tudo em ordem. " +
+			"IMPORTANTE: Preserve o link para o dashboard que aparece no final da mensagem — ele é importante para o usuário.",
 	})
 	if err != nil || strings.TrimSpace(output.Text) == "" {
 		return fallback
@@ -214,12 +217,15 @@ func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
 	return strings.TrimSpace(output.Text)
 }
 
-func buildStaticDigest(alerts []notifications.Alert) string {
+func buildStaticDigest(alerts []notifications.Alert, dashboardURL string) string {
 	var b strings.Builder
 	b.WriteString("🔔 *Farmácia Financeira* — resumo de hoje:\n")
 	for _, a := range alerts {
 		b.WriteString("\n• ")
 		b.WriteString(a.Text)
+	}
+	if dashboardURL != "" {
+		fmt.Fprintf(&b, "\n\n📊 Acesse a análise completa: %s/analise", dashboardURL)
 	}
 	return b.String()
 }
