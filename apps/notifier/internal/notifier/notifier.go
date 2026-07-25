@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type Notifier struct {
 	sessions      wasession.Store
 	wa            whatsapp.Client
 	phoneNumberID string
+	dashboardURL  string
 	loc           *time.Location
 	now           func() time.Time
 	gen           orchestrator.TextGenerator
@@ -41,7 +43,7 @@ type Notifier struct {
 // generator used to personalize the daily digest (pass StaticClient{} or
 // NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
+func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -50,6 +52,7 @@ func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, p
 		sessions:      sessions,
 		wa:            wa,
 		phoneNumberID: phoneNumberID,
+		dashboardURL:  dashboardURL,
 		loc:           loc,
 		now:           time.Now,
 		gen:           gen,
@@ -128,14 +131,9 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		log.Printf("notifier: level=error msg=%q", err)
 		return res, err
 	}
-	summary, err := n.store.MonthlySummary(ctx, shared.FinanceLedgerID, month)
-	if err != nil {
-		err = fmt.Errorf("monthly summary: %w", err)
-		log.Printf("notifier: level=error msg=%q", err)
-		return res, err
-	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
+	vbIncome := pkgfinance.VendaBalcaoIncome(entries)
 
 	for _, prefs := range candidates {
 		res.Evaluated++
@@ -154,7 +152,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, summary.TotalIncome, goal, today)
+		alerts := notifications.Evaluate(prefs, entries, vbIncome, goal, today)
 		if len(alerts) == 0 {
 			res.Skipped++
 			continue
@@ -190,31 +188,100 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	return res, errors.Join(errs...)
 }
 
+// buildDigest renders the daily message. Only the alert body is handed to the
+// model to rewrite; the dashboard call-to-action is appended afterwards, so the
+// link that actually ships is always the configured URL and never something the
+// model paraphrased, dropped or invented.
 func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
-	fallback := buildStaticDigest(alerts)
+	body := buildAlertsBody(alerts)
+	if humanized, ok := n.humanize(body); ok {
+		body = humanized
+	}
+	return withDashboardLink(body, n.dashboardURL)
+}
 
+// humanize asks the model to rewrite the alert body into friendlier prose. It
+// reports false on any failure (or empty output) so the caller keeps the static
+// draft — a broken generator must never swallow the alert.
+func (n *Notifier) humanize(body string) (string, bool) {
 	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	output, err := n.gen.Generate(genCtx, orchestrator.Input{
 		UserMessage: domain.Message{
 			UserID:    "system",
-			Text:      fallback,
+			Text:      body,
 			Timestamp: time.Now().UTC(),
 			MessageID: "notifier-digest",
 		},
 		SystemPrompt: "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
 			"Transforme os alertas abaixo em uma mensagem amigável e objetiva em português. " +
 			"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
-			"Não invente informações. Se não houver alertas, diga que está tudo em ordem.",
+			"Não invente informações. Se não houver alertas, diga que está tudo em ordem. " +
+			"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
+			"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
+			"depois da sua resposta.",
 	})
-	if err != nil || strings.TrimSpace(output.Text) == "" {
-		return fallback
+	if err != nil {
+		log.Printf("notifier: level=warn msg=%q", fmt.Errorf("humanize digest: %w", err))
+		return "", false
 	}
-	return strings.TrimSpace(output.Text)
+	text := stripInventedLinks(output.Text)
+	if text == "" {
+		return "", false
+	}
+	return text, true
 }
 
-func buildStaticDigest(alerts []notifications.Alert) string {
+// linkPlaceholderRE matches the fill-in-the-blank links models emit when asked
+// to include a URL they were never given — "[Link para o dashboard]",
+// "[inserir link aqui]", "[URL do painel]".
+var linkPlaceholderRE = regexp.MustCompile(`(?i)\[[^\]\n]*(link|url|dashboard|painel)[^\]\n]*\]`)
+
+// markdownLinkRE matches "[rótulo](https://…)". WhatsApp has no markdown, so a
+// real URL wrapped this way would ship with its brackets showing.
+var markdownLinkRE = regexp.MustCompile(`\[[^\]\n]*\]\((https?://[^)\s]+)\)`)
+
+// stripInventedLinks removes link artifacts from generated copy. Markdown links
+// keep their URL and lose the brackets; a line carrying a bare placeholder is
+// dropped whole, since it is by construction the call-to-action sentence that
+// withDashboardLink re-adds with the real URL.
+func stripInventedLinks(s string) string {
+	s = markdownLinkRE.ReplaceAllString(s, "$1")
+
+	lines := strings.Split(s, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if linkPlaceholderRE.MatchString(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// withDashboardLink appends the dashboard call-to-action. A body that already
+// carries the URL (the static draft path) is returned untouched, and an
+// unconfigured DASHBOARD_URL simply yields no call-to-action rather than a
+// dangling "acesse aqui:".
+func withDashboardLink(body, dashboardURL string) string {
+	link := dashboardLink(dashboardURL)
+	if link == "" || strings.Contains(body, link) {
+		return body
+	}
+	return body + "\n\n" + link
+}
+
+func dashboardLink(dashboardURL string) string {
+	if dashboardURL == "" {
+		return ""
+	}
+	return "📊 Acesse a análise completa: " + strings.TrimRight(dashboardURL, "/") + "/analise"
+}
+
+// buildAlertsBody is the static draft: the message we send verbatim when there
+// is no model to rewrite it, and the input the model rewrites when there is.
+func buildAlertsBody(alerts []notifications.Alert) string {
 	var b strings.Builder
 	b.WriteString("🔔 *Farmácia Financeira* — resumo de hoje:\n")
 	for _, a := range alerts {
