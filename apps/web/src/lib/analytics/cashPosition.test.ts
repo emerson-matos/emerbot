@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { makeCashFlowPoint } from "@/test/factories";
 import { getCashPosition } from "./cashPosition";
 
-// getCashPosition keys off now.toISOString(), so `now` is pinned to a UTC
-// instant to keep the "today" lookup independent of the runner's timezone.
-const now = new Date("2026-02-05T12:00:00Z");
+// "Today" is the user's local calendar day, so `now` is built from local
+// fields — 5 Feb 2026, midday.
+const now = new Date(2026, 1, 5, 12, 0, 0);
 
 describe("getCashPosition", () => {
   it("returns a zeroed position when there are no projections", () => {
@@ -72,6 +72,34 @@ describe("getCashPosition", () => {
     );
 
     expect(position.daysUntilNegative).toBeNull();
+  });
+
+  // Late evening in a UTC- timezone is already tomorrow in UTC, so keying
+  // "today" off toISOString() used to drop the current balance to zero for
+  // anyone checking the dashboard after dinner.
+  it("still finds today's balance late in the evening", () => {
+    const position = getCashPosition(
+      [
+        makeCashFlowPoint({ Date: "2026-02-05", RunningBalance: 5000 }),
+        makeCashFlowPoint({ Date: "2026-02-06", RunningBalance: 4000 }),
+      ],
+      new Date(2026, 1, 5, 23, 30, 0),
+    );
+
+    expect(position.currentBalance).toBe(5000);
+  });
+
+  it("counts calendar days regardless of the time of day", () => {
+    const points = [
+      makeCashFlowPoint({ Date: "2026-02-05", RunningBalance: 5000 }),
+      makeCashFlowPoint({ Date: "2026-02-08", RunningBalance: -200 }),
+    ];
+
+    const morning = getCashPosition(points, new Date(2026, 1, 5, 8, 0, 0));
+    const evening = getCashPosition(points, new Date(2026, 1, 5, 22, 0, 0));
+
+    expect(morning.daysUntilNegative).toBe(3);
+    expect(evening.daysUntilNegative).toBe(3);
   });
 
   it("falls back to zero when no point matches today", () => {
