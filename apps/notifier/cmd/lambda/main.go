@@ -18,6 +18,10 @@ import (
 
 func main() {
 	ctx := context.Background()
+	// Without this the notifier's slog output goes through the default handler,
+	// which ignores LOG_LEVEL — so LOG_LEVEL=debug on the Lambda would silently
+	// do nothing when someone is trying to work out why a digest never arrived.
+	shared.InitSlog()
 
 	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
 	finStore, err := pkgfinance.NewDynamoDBStore(ctx, finTable, "")

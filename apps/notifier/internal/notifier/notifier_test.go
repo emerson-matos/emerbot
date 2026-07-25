@@ -195,6 +195,59 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 	if res.Evaluated != 0 || len(wa.sent) != 0 {
 		t.Fatalf("nothing should be sent, got res=%+v sent=%d", res, len(wa.sent))
 	}
+	// Both users must be accounted for. A run that reports two prefs rows and
+	// zero of everything else gives no clue that opt-in was the blocker.
+	if res.Prefs != 2 || res.NotOptedIn != 2 {
+		t.Errorf("res=%+v, want Prefs=2 NotOptedIn=2", res)
+	}
+}
+
+// The point of separating these counters is that each one has a different fix.
+// A run summary that cannot tell them apart is what made a silent day
+// undiagnosable in the first place.
+func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+
+	// Opted out entirely.
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511900000001", NotifyDueToday: true})
+	// Enabled and has alerts, but the WhatsApp window closed days ago.
+	seedUser(t, s, outWindow,
+		domain.NotificationPrefs{UserID: "stale", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000))
+	// Enabled and in-window, but subscribed to no alert kind, so nothing fires.
+	// (Withholding entries would not work: every user reads the same shared
+	// ledger, so "stale"'s overdue bill is visible to this user too.)
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "quiet", WAEnabled: true, Phone: "5511900000003"})
+
+	res, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.Prefs != 3 {
+		t.Errorf("Prefs = %d, want 3", res.Prefs)
+	}
+	if res.NotOptedIn != 1 {
+		t.Errorf("NotOptedIn = %d, want 1 (the disabled user)", res.NotOptedIn)
+	}
+	if res.OutsideWindow != 1 {
+		t.Errorf("OutsideWindow = %d, want 1 (the stale session)", res.OutsideWindow)
+	}
+	if res.SkippedNoAlerts != 1 {
+		t.Errorf("SkippedNoAlerts = %d, want 1 (the quiet user)", res.SkippedNoAlerts)
+	}
+	if res.SkippedAlreadySent != 0 {
+		t.Errorf("SkippedAlreadySent = %d, want 0 — nothing was sent today yet", res.SkippedAlreadySent)
+	}
+	if res.Sent != 0 || len(wa.sent) != 0 {
+		t.Errorf("nothing should have been sent, res=%+v sent=%d", res, len(wa.sent))
+	}
+	if got := res.Skipped(); got != 1 {
+		t.Errorf("Skipped() = %d, want 1 — outside-window is not a skip", got)
+	}
 }
 
 func TestRunDedupesWithinDay(t *testing.T) {
@@ -217,8 +270,10 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	if len(wa.sent) != 1 {
 		t.Fatalf("second run should not resend, total sent=%d", len(wa.sent))
 	}
-	if res.Sent != 0 || res.Skipped != 1 {
-		t.Fatalf("second run res=%+v", res)
+	// Specifically the dedupe counter: a run that skipped for any other reason
+	// would mean the resend guard is not what stopped it.
+	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNoAlerts != 0 {
+		t.Fatalf("second run res=%+v, want SkippedAlreadySent=1", res)
 	}
 }
 
@@ -236,8 +291,8 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 0 || res.Sent != 0 || res.Skipped != 1 {
-		t.Fatalf("want no send, res=%+v sent=%d", res, len(wa.sent))
+	if len(wa.sent) != 0 || res.Sent != 0 || res.SkippedNoAlerts != 1 || res.SkippedAlreadySent != 0 {
+		t.Fatalf("want no send for lack of alerts, res=%+v sent=%d", res, len(wa.sent))
 	}
 }
 
