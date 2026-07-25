@@ -82,6 +82,23 @@ type Result struct {
 // outcome. Kept as a derived value so the summary can still be read at a glance.
 func (r Result) Skipped() int { return r.SkippedNoAlerts + r.SkippedAlreadySent }
 
+// LogAttrs renders the counters as flat log fields. It lives next to the struct
+// so a new counter is named for the log in the same place it is declared —
+// otherwise a field gets added and quietly never shows up in the summary anyone
+// actually reads. Flat rather than grouped because the runbook greps these keys.
+func (r Result) LogAttrs() []any {
+	return []any{
+		"prefs", r.Prefs,
+		"not_opted_in", r.NotOptedIn,
+		"evaluated", r.Evaluated,
+		"sent", r.Sent,
+		"skipped_no_alerts", r.SkippedNoAlerts,
+		"skipped_already_sent", r.SkippedAlreadySent,
+		"outside_window", r.OutsideWindow,
+		"errors", r.Errors,
+	}
+}
+
 // Run evaluates every enabled user and sends at most one digest each. It keeps
 // going past a per-user failure and returns the joined errors, so one bad user
 // never blocks the rest.
@@ -104,21 +121,30 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	windowStart := time.Date(y, m-OverdueLookbackMonths, 1, 0, 0, 0, 0, time.UTC)
 	dedupeKey := today.Format("2006-01-02")
 
-	slog.Info("notifier run started", "date", dedupeKey, "timezone", n.loc.String())
+	// Every line this run emits carries the date, and every per-user line also
+	// carries who it is about. Binding those once with With beats repeating them
+	// at each call site: they cannot drift apart, and a new log line gets them
+	// for free instead of by remembering to.
+	runLog := slog.With("date", dedupeKey)
+	runLog.Info("notifier run started", "timezone", n.loc.String())
 
 	prefsList, err := n.store.ListNotificationPrefs(ctx)
 	if err != nil {
 		err = fmt.Errorf("list notification prefs: %w", err)
-		slog.Error("notifier run aborted", "date", dedupeKey, "error", err)
+		runLog.Error("notifier run aborted", "error", err)
 		return res, err
 	}
 	res.Prefs = len(prefsList)
 
+	// userLog is the run logger plus this recipient's identity.
+	userLog := func(prefs domain.NotificationPrefs) *slog.Logger {
+		return runLog.With("user", prefs.UserID, "phone", maskPhone(prefs.Phone))
+	}
+
 	var errs []error
-	fail := func(prefs domain.NotificationPrefs, err error) {
+	fail := func(log *slog.Logger, err error) {
 		res.Errors++
-		slog.Error("notifier digest failed",
-			"date", dedupeKey, "user", prefs.UserID, "phone", maskPhone(prefs.Phone), "error", err)
+		log.Error("notifier digest failed", "error", err)
 		errs = append(errs, err)
 	}
 
@@ -137,15 +163,14 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			if prefs.Phone == "" {
 				reason = "no_phone"
 			}
-			slog.Info("notifier digest not sent",
-				"date", dedupeKey, "user", prefs.UserID, "reason", reason)
+			userLog(prefs).Info("notifier digest not sent", "reason", reason)
 			continue
 		}
 		candidates = append(candidates, prefs)
 	}
 	if len(candidates) == 0 {
-		slog.Warn("notifier run finished with no eligible recipients",
-			"date", dedupeKey, "prefs", res.Prefs, "not_opted_in", res.NotOptedIn)
+		runLog.Warn("notifier run finished with no eligible recipients",
+			"prefs", res.Prefs, "not_opted_in", res.NotOptedIn)
 		return res, nil
 	}
 
@@ -157,7 +182,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	})
 	if err != nil {
 		err = fmt.Errorf("list entries: %w", err)
-		slog.Error("notifier run aborted", "date", dedupeKey, "error", err)
+		runLog.Error("notifier run aborted", "error", err)
 		return res, err
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
@@ -166,7 +191,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 
 	for _, prefs := range candidates {
 		res.Evaluated++
-		who := []any{"date", dedupeKey, "user", prefs.UserID, "phone", maskPhone(prefs.Phone)}
+		log := userLog(prefs)
 
 		// WhatsApp only lets us send free-form messages within its
 		// customer-service window (see packages/wasession). Outside it we'd need
@@ -174,7 +199,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		// work so out-of-window users cost just one GetItem.
 		expiry, err := n.sessions.ActiveUntil(ctx, prefs.Phone)
 		if err != nil {
-			fail(prefs, fmt.Errorf("user %s: session check: %w", prefs.UserID, err))
+			fail(log, fmt.Errorf("user %s: session check: %w", prefs.UserID, err))
 			continue
 		}
 		if expiry.IsZero() || !expiry.After(nowInstant) {
@@ -183,76 +208,65 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			// the first needs any message at all, the second needs one before
 			// tomorrow's run. Both are fixed by the user texting the bot, so the
 			// log says exactly how stale the session is.
-			fields := append(who, "reason", "outside_whatsapp_window")
 			if expiry.IsZero() {
-				fields = append(fields, "detail", "no session record — this phone has not messaged the bot recently")
+				log.Info("notifier digest not sent",
+					"reason", "outside_whatsapp_window",
+					"detail", "no session record — this phone has not messaged the bot recently")
 			} else {
-				fields = append(fields,
+				log.Info("notifier digest not sent",
+					"reason", "outside_whatsapp_window",
 					"window_closed_at", expiry.In(n.loc).Format(time.RFC3339),
 					"closed_for", nowInstant.Sub(expiry).Round(time.Minute).String())
 			}
-			slog.Info("notifier digest not sent", fields...)
 			continue
 		}
 
 		alerts := notifications.Evaluate(prefs, entries, vbIncome, goal, today)
 		if len(alerts) == 0 {
 			res.SkippedNoAlerts++
-			slog.Info("notifier digest not sent",
-				append(who, "reason", "no_alerts",
-					"detail", "nothing met an alert rule today",
-					"window_closes_at", expiry.In(n.loc).Format(time.RFC3339))...)
+			log.Info("notifier digest not sent",
+				"reason", "no_alerts",
+				"detail", "nothing met an alert rule today",
+				"window_closes_at", expiry.In(n.loc).Format(time.RFC3339))
 			continue
 		}
 
 		already, err := n.store.NotificationSent(ctx, prefs.UserID, dedupeKey)
 		if err != nil {
-			fail(prefs, fmt.Errorf("user %s: check log: %w", prefs.UserID, err))
+			fail(log, fmt.Errorf("user %s: check log: %w", prefs.UserID, err))
 			continue
 		}
 		if already {
 			res.SkippedAlreadySent++
-			slog.Info("notifier digest not sent",
-				append(who, "reason", "already_sent_today", "alerts", len(alerts))...)
+			log.Info("notifier digest not sent", "reason", "already_sent_today", "alerts", len(alerts))
 			continue
 		}
 
 		msg := n.buildDigest(alerts)
 		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
-			fail(prefs, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
+			fail(log, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
 		}
 		res.Sent++
-		slog.Info("notifier digest sent",
-			append(who, "alerts", len(alerts), "kinds", alertKinds(alerts), "chars", len(msg))...)
+		log.Info("notifier digest sent",
+			"alerts", len(alerts), "kinds", alertKinds(alerts), "chars", len(msg))
 
 		// Record only after a successful send. A failure here risks a resend
 		// tomorrow, which is far better than dropping the alert entirely.
 		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, dedupeKey, n.now()); err != nil {
-			fail(prefs, fmt.Errorf("user %s: record log: %w", prefs.UserID, err))
+			fail(log, fmt.Errorf("user %s: record log: %w", prefs.UserID, err))
 		}
 	}
 
 	// One line carrying every outcome, so a silent day is explained by the
 	// summary alone and the per-user lines are only needed to name names.
-	summary := []any{
-		"date", dedupeKey,
-		"prefs", res.Prefs,
-		"not_opted_in", res.NotOptedIn,
-		"evaluated", res.Evaluated,
-		"sent", res.Sent,
-		"skipped_no_alerts", res.SkippedNoAlerts,
-		"skipped_already_sent", res.SkippedAlreadySent,
-		"outside_window", res.OutsideWindow,
-		"errors", res.Errors,
-	}
 	if res.Sent == 0 {
 		// Nobody heard from us today. That is sometimes correct (nothing to
 		// report) and sometimes a bug, and either way it is the run worth
 		// finding in the logs.
-		slog.Warn("notifier run finished without sending anything", summary...)
+		runLog.Warn("notifier run finished without sending anything", res.LogAttrs()...)
 	} else {
-		slog.Info("notifier run finished", summary...)
+		runLog.Info("notifier run finished", res.LogAttrs()...)
 	}
 	return res, errors.Join(errs...)
 }
