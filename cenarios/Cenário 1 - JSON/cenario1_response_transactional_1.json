@@ -1,0 +1,44 @@
+{
+    "detalhes": [
+        {
+            "movimento_api_codigo": "B205A93E177B855E3407D628DBBDB172",
+            "tipo_registro": "1",
+            "estabelecimento": "126984538",
+            "data_inicial_transacao": "2024-07-30",
+            "hora_inicial_transacao": "14:35:04",
+            "data_venda_ajuste": "2024-07-30",
+            "hora_venda_ajuste": "14:36:53",
+            "tipo_evento": "1",
+            "tipo_transacao": "1",
+            "codigo_transacao": "795D7A8F4D4649EF90A8DAA0311316F1",
+            "codigo_venda": "666667",
+            "valor_total_transacao": 108.96,
+            "valor_parcela": 107.88,
+            "pagamento_prazo": "U",
+            "plano": "0 ",
+            "parcela": "1",
+            "quantidade_parcelas": "0",
+            "data_prevista_pagamento": "2024-07-30",
+            "valor_original_transacao": 108.96,
+            "taxa_intermediacao": 1.08,
+            "tarifa_intermediacao": 0.0,
+            "valor_liquido_transacao": 107.88,
+            "status_pagamento": "1",
+            "meio_pagamento": "11",
+            "instituicao_financeira": "BACEN",
+            "canal_entrada": "ME",
+            "leitor": "12",
+            "meio_captura": "5",
+            "numero_serie_leitor": "6G074610",
+            "tx_id": "20220505123456789009876543212233",
+            "codigo_ur": "DD9DF90D162644A9B75C12CEF6371BC3",
+            "arranjo_ur": "PIX"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

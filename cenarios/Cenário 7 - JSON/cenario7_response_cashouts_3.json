@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "795314394",
+            "data_cashout": "2024-08-05",
+            "codigo_ur": "C968166DC8004C6E9EBCF31320A5BF57",
+            "codigo_cashout": "75F74E3D11BF4042B6C4655001918456",
+            "arranjo_pagamento": "CREDIT_VISA",
+            "valor_cashout": 94.41,
+            "tipo_cashout": "PagBank"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 100
+    }
+}

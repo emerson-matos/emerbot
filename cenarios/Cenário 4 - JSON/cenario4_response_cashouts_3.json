@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "126984538",
+            "data_cashout": "2024-07-29",
+            "codigo_ur": "955D78CCACD44770A64F4F7D2D71396E",
+            "codigo_cashout": "F1497149081E4F87A8ED1A8146B0DFCE",
+            "arranjo_pagamento": "PIX",
+            "valor_cashout": 107.88,
+            "tipo_cashout": "Saldo Carteira"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

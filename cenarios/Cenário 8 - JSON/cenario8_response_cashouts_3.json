@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "124854758",
+            "data_cashout": "2024-08-01",
+            "codigo_ur": "9A2EC81815094CAFB3BB833477744609",
+            "codigo_cashout": "5C02CD285B844D49AD7678E0DBC2F1E0",
+            "arranjo_pagamento": "CREDIT_MASTERCARD",
+            "valor_cashout": 233.53,
+            "tipo_cashout": "PagBank"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

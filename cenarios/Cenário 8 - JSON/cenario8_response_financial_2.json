@@ -1,0 +1,53 @@
+{
+    "detalhes": [
+        {
+            "movimento_api_codigo": "39B2F7D9B0E619111B3ADE2B980E93CE",
+            "tipo_registro": "1",
+            "estabelecimento": "124854758",
+            "data_inicial_transacao": "2024-07-31",
+            "hora_inicial_transacao": "20:17:10",
+            "data_venda_ajuste": "2024-08-01",
+            "hora_venda_ajuste": "00:01:17",
+            "tipo_evento": "1",
+            "tipo_transacao": "1",
+            "codigo_transacao": "0EB7A9CA9F224479A094B38E86C62341",
+            "codigo_venda": "666667",
+            "valor_total_transacao": 256.00,
+            "valor_parcela": 243.23,
+            "pagamento_prazo": "A",
+            "plano": "1",
+            "parcela": "1",
+            "quantidade_parcelas": "1",
+            "data_movimentacao": "2024-08-01",
+            "taxa_parcela_comprador": 0.0,
+            "valor_original_transacao": 256.00,
+            "taxa_intermediacao": 12.77,
+            "tarifa_intermediacao": 0.0,
+            "valor_liquido_transacao": 243.23,
+            "taxa_antecipacao": 9.7,
+            "valor_liquido_antecipacao": 233.53,
+            "status_pagamento": "4",
+            "meio_pagamento": "3",
+            "instituicao_financeira": "MASTERCARD",
+            "canal_entrada": "ME",
+            "leitor": "",
+            "meio_captura": "1",
+            "nsu": "976431",
+            "cartao_bin": "471672",
+            "cartao_holder": "0637",
+            "codigo_autorizacao": "123456",
+            "codigo_cv": "123654",
+            "numero_serie_leitor": "SERIALNUMBER",
+            "data_prevista_pagamento": "2024-08-31",
+            "tid": "INTEGRATOR CODE",
+            "codigo_ur": "9A2EC81815094CAFB3BB833477744609",
+            "arranjo_ur": "CREDIT_MASTERCARD"
+        }
+    ],
+    "pagination": {
+        "elements": 6,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 6
+    }
+}

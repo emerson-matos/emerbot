@@ -1,0 +1,51 @@
+{
+    "detalhes": [
+        {
+            "movimento_api_codigo": "795A1152FEA98CCC9448B10D892EB152",
+            "tipo_registro": "1",
+            "estabelecimento": "126984538",
+            "data_inicial_transacao": "2024-07-29",
+            "hora_inicial_transacao": "11:54:02",
+            "data_venda_ajuste": "2024-07-29",
+            "hora_venda_ajuste": "11:54:29",
+            "tipo_evento": "1",
+            "tipo_transacao": "1",
+            "codigo_transacao": "7C75E047BA3840EA99E96564EBC44A6B",
+            "codigo_venda": "666667",
+            "valor_total_transacao": 100.00,
+            "valor_parcela": 98.45,
+            "pagamento_prazo": "U",
+            "plano": "0 ",
+            "parcela": "1",
+            "quantidade_parcelas": "0",
+            "data_movimentacao": "2024-07-29",
+            "valor_original_transacao": 100.00,
+            "taxa_intermediacao": 1.55,
+            "tarifa_intermediacao": 0.0,
+            "valor_liquido_transacao": 98.45,
+            "taxa_antecipacao": 0.0,
+            "valor_liquido_antecipacao": 0.00,
+            "status_pagamento": "3",
+            "meio_pagamento": "8",
+            "instituicao_financeira": "BANRICOMPRAS",
+            "canal_entrada": "MP",
+            "leitor": "12",
+            "meio_captura": "3",
+            "nsu": "000004",
+            "cartao_bin": "606071",
+            "cartao_holder": "8000",
+            "codigo_autorizacao": "166667",
+            "codigo_cv": "333334",
+            "numero_serie_leitor": "SERIALNUMBER",
+            "data_prevista_pagamento": "2024-07-29",
+            "codigo_ur": "F29696B234444C09BF46444A5A4736A3",
+            "arranjo_ur": "DEBIT_BANRICOMPRAS"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}
