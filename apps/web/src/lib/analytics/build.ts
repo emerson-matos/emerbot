@@ -1,3 +1,4 @@
+import { format } from 'date-fns'
 import type { Analysis, AnalysisInput, WeekComparison } from './types'
 import { getHealth } from './health'
 import { getRecommendations } from './recommendations'
@@ -12,9 +13,14 @@ const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 export function buildMonthlyAnalysis(input: AnalysisInput): Analysis {
   const { entries, previousEntries, summaries, goals, cashFlowPoints, month, now } = input
-  const currentSummary = summaries[0]
-  const previousSummary = summaries[1] ?? null
-  const currentGoal = goals[0] ?? null
+
+  // `summaries` and `goals` run oldest-first over the trailing three-month
+  // window, so the month being analysed is the last slot — not the first.
+  const monthRange = getMonthRange(month)
+  const currentIndex = monthRange.length - 1
+  const currentSummary = summaries[currentIndex]
+  const previousSummary = summaries[currentIndex - 1] ?? null
+  const currentGoal = goals[currentIndex] ?? null
 
   const currentDay = now.getDate()
   const previousMonthIncomeUpToDay = previousEntries
@@ -67,7 +73,7 @@ export function buildMonthlyAnalysis(input: AnalysisInput): Analysis {
   const highlights = getHighlights(entries)
   const cashOutDays = getCashOutDays(entries)
   const expenseComposition = getExpenseComposition(entries)
-  const history = getHistory(summaries, goals, getMonthRange(month))
+  const history = getHistory(summaries, goals, monthRange)
   const cashPosition = getCashPosition(cashFlowPoints, now)
   const recommendations = getRecommendations({ weekComparison, goals: goals_, trends, cashPosition })
 
@@ -98,15 +104,20 @@ function getWeekComparison(
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
   const thisMonday = new Date(today)
   thisMonday.setDate(today.getDate() + mondayOffset)
-  const thisMondayStr = thisMonday.toISOString().slice(0, 10)
+  // These boundaries are built from local calendar fields, so they have to be
+  // rendered as local dates too. toISOString() would re-interpret them in UTC
+  // and slide the whole week a day earlier east of Greenwich.
+  const thisMondayStr = format(thisMonday, 'yyyy-MM-dd')
 
   const lastMonday = new Date(thisMonday)
   lastMonday.setDate(thisMonday.getDate() - 7)
-  const lastMondayStr = lastMonday.toISOString().slice(0, 10)
+  const lastMondayStr = format(lastMonday, 'yyyy-MM-dd')
 
   const lastSunday = new Date(thisMonday)
   lastSunday.setDate(thisMonday.getDate() - 1)
-  const lastSundayStr = lastSunday.toISOString().slice(0, 10)
+  const lastSundayStr = format(lastSunday, 'yyyy-MM-dd')
+
+  const todayStr = format(now, 'yyyy-MM-dd')
 
   let current = 0
   let previous = 0
@@ -115,7 +126,7 @@ function getWeekComparison(
   for (const e of entries) {
     if (e.Type !== 'income' || e.Category !== 'venda_balcao') continue
     const date = e.TransactionDate.slice(0, 10)
-    if (date >= thisMondayStr && date <= now.toISOString().slice(0, 10)) {
+    if (date >= thisMondayStr && date <= todayStr) {
       current += e.Amount
     } else if (date >= lastMondayStr && date <= lastSundayStr) {
       previous += e.Amount
@@ -125,7 +136,7 @@ function getWeekComparison(
   // Previous week up to same day of week
   const lastSameDay = new Date(lastMonday)
   lastSameDay.setDate(lastMonday.getDate() + (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
-  const lastSameDayStr = lastSameDay.toISOString().slice(0, 10)
+  const lastSameDayStr = format(lastSameDay, 'yyyy-MM-dd')
   for (const e of entries) {
     if (e.Type !== 'income' || e.Category !== 'venda_balcao') continue
     const date = e.TransactionDate.slice(0, 10)
