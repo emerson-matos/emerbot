@@ -31,6 +31,15 @@ type Store interface {
 	RecordInbound(ctx context.Context, phone string, at time.Time) error
 	// Active reports whether phone's session is still open as of `now`.
 	Active(ctx context.Context, phone string, now time.Time) (bool, error)
+	// ActiveUntil reports when phone's window closes, which is what a caller
+	// needs to explain a non-delivery: "the window shut at 14:20" and "this
+	// phone never messaged us" are different problems with different fixes, and
+	// a bare Active cannot tell them apart.
+	//
+	// A zero time means no session record exists. Because records self-expire
+	// via TTL, that covers both "never messaged us" and "messaged us long
+	// enough ago that the record is gone" — indistinguishable by design.
+	ActiveUntil(ctx context.Context, phone string) (time.Time, error)
 	// MarkProcessed records that messageID has been handled and reports whether
 	// this is the first time it was seen (true = process it; false = a retry to
 	// ignore). An empty messageID always returns true (nothing to dedup on).

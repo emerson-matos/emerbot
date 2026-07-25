@@ -55,9 +55,16 @@ func (s *InMemoryStore) Unmark(_ context.Context, messageID string) error {
 	return nil
 }
 
-func (s *InMemoryStore) Active(_ context.Context, phone string, now time.Time) (bool, error) {
+func (s *InMemoryStore) ActiveUntil(_ context.Context, phone string) (time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	exp, ok := s.expires[phone]
-	return ok && exp.After(now), nil
+	return s.expires[phone], nil
+}
+
+func (s *InMemoryStore) Active(ctx context.Context, phone string, now time.Time) (bool, error) {
+	exp, err := s.ActiveUntil(ctx, phone)
+	if err != nil {
+		return false, err
+	}
+	return !exp.IsZero() && exp.After(now), nil
 }

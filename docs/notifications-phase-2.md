@@ -58,6 +58,44 @@ janela e voltar a receber os alertas. Templates pagos ficam como decisão futura
   dashboard]` (`stripInventedLinks` remove qualquer tentativa).
 - Rodar `make build-lambdas && make tofu-apply` (constrói também `notifier.zip`).
 
+## "Não recebi o resumo hoje"
+
+Toda execução do notifier registra **uma linha por usuário** com o desfecho e,
+quando nada foi enviado, o motivo. Comece pela linha de resumo:
+
+```sh
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/emerbot-dev-notifier \
+  --filter-pattern '"notifier run finished"'
+```
+
+Um dia em que ninguém recebeu nada sai como **WARN**
+(`notifier run finished without sending anything`), com o rateio completo:
+
+```
+prefs=3 not_opted_in=1 evaluated=2 sent=0
+skipped_no_alerts=1 skipped_already_sent=0 outside_window=1 errors=0
+```
+
+Para saber *quem*, filtre por `"notifier digest not sent"`. Cada linha traz
+`user`, telefone mascarado e um `reason`:
+
+| `reason` | O que aconteceu | Como resolver |
+|---|---|---|
+| `whatsapp_disabled` | o usuário desligou o alerta por WhatsApp | ligar em Ajustes → Notificações |
+| `no_phone` | não há telefone no perfil Cognito | preencher o `phone_number` do usuário |
+| `outside_whatsapp_window` | a janela de 24h do WhatsApp está fechada | o usuário precisa mandar **qualquer** mensagem ao bot antes da execução do dia seguinte |
+| `no_alerts` | nada bateu numa regra de alerta hoje | nada a fazer — é o caso saudável |
+| `already_sent_today` | o resumo do dia já tinha saído | nada a fazer (proteção contra reenvio) |
+
+`outside_whatsapp_window` é de longe a causa mais comum, e a linha diz qual dos
+dois casos é: sem `window_closed_at` significa que aquele telefone não tem
+registro de sessão nenhum; com `window_closed_at` e `closed_for`, a janela
+existiu e expirou há aquele tempo.
+
+`LOG_LEVEL=debug` na Lambda aumenta o detalhe (a Lambda chama `shared.InitSlog`,
+que lê essa variável).
+
 ## Histórico de referência (plano original)
 
 O texto abaixo é o plano que guiou a implementação, mantido para contexto.

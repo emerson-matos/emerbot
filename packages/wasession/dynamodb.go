@@ -106,7 +106,7 @@ func (s *DynamoDBStore) Unmark(ctx context.Context, messageID string) error {
 	return nil
 }
 
-func (s *DynamoDBStore) Active(ctx context.Context, phone string, now time.Time) (bool, error) {
+func (s *DynamoDBStore) ActiveUntil(ctx context.Context, phone string) (time.Time, error) {
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
@@ -114,19 +114,27 @@ func (s *DynamoDBStore) Active(ctx context.Context, phone string, now time.Time)
 		},
 	})
 	if err != nil {
-		return false, fmt.Errorf("get session: %w", err)
+		return time.Time{}, fmt.Errorf("get session: %w", err)
 	}
 	if out.Item == nil {
-		return false, nil
+		return time.Time{}, nil
 	}
 	raw, ok := out.Item["ExpiresAt"].(*types.AttributeValueMemberN)
 	if !ok {
-		return false, nil
+		return time.Time{}, nil
 	}
 	exp, err := strconv.ParseInt(raw.Value, 10, 64)
 	if err != nil {
-		return false, nil
+		return time.Time{}, nil
+	}
+	return time.Unix(exp, 0).UTC(), nil
+}
+
+func (s *DynamoDBStore) Active(ctx context.Context, phone string, now time.Time) (bool, error) {
+	exp, err := s.ActiveUntil(ctx, phone)
+	if err != nil {
+		return false, err
 	}
 	// Read-time guard against TTL deletion lag: trust ExpiresAt, not presence.
-	return time.Unix(exp, 0).After(now), nil
+	return !exp.IsZero() && exp.After(now), nil
 }
