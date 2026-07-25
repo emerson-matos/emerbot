@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "126984538",
+            "data_cashout": "2024-07-29",
+            "codigo_ur": "F29696B234444C09BF46444A5A4736A3",
+            "codigo_cashout": "9618C018CD554E9A920099CDCF504F7E",
+            "arranjo_pagamento": "DEBIT_BANRICOMPRAS",
+            "valor_cashout": 98.45,
+            "tipo_cashout": "Saldo Carteira"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

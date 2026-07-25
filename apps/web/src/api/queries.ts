@@ -23,6 +23,12 @@ export const queryKeys = {
   goal: (month: string) => ["goal", month] as const,
   notificationPrefs: () => ["notifications", "preferences"] as const,
   categories: () => ["categories"] as const,
+  paymentsSales: (from: string, to: string) =>
+    ["payments", "sales", from, to] as const,
+  paymentsReceivables: (from: string, to: string) =>
+    ["payments", "receivables", from, to] as const,
+  paymentsForecast: (month: string) =>
+    ["payments", "forecast", month] as const,
 };
 
 export function useCategories() {
@@ -111,6 +117,27 @@ export function useEntriesByMonth() {
       if (monthDiff(currentMonth, firstPage.month) <= -MAX_MONTHS_BACK) return undefined;
       return monthKeyOffset(firstPage.month, -1);
     },
+  });
+}
+
+export function usePaymentsSales(from: string, to: string) {
+  return useQuery({
+    queryKey: queryKeys.paymentsSales(from, to),
+    queryFn: () => api.payments.sales(from, to),
+  });
+}
+
+export function usePaymentsReceivables(from: string, to: string) {
+  return useQuery({
+    queryKey: queryKeys.paymentsReceivables(from, to),
+    queryFn: () => api.payments.receivables(from, to),
+  });
+}
+
+export function usePaymentsForecast(month: string) {
+  return useQuery({
+    queryKey: queryKeys.paymentsForecast(month),
+    queryFn: () => api.payments.forecast(month),
   });
 }
 

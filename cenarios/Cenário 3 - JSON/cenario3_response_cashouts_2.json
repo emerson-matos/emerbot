@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "128523125",
+            "data_cashout": "2024-06-09",
+            "codigo_ur": "AF03989503534DE68AF8392C801DF91F",
+            "codigo_cashout": "F7F3279967F847379AC9B00167BF1977",
+            "arranjo_pagamento": "CREDIT_VISA",
+            "valor_cashout": 96.34,
+            "tipo_cashout": "Saldo Carteira"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

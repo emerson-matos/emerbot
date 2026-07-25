@@ -1,0 +1,47 @@
+{
+    "detalhes": [
+        {
+            "movimento_api_codigo": "C1D90F7377175052124DE42E9841849D",
+            "tipo_registro": "1",
+            "estabelecimento": "128523125",
+            "data_inicial_transacao": "2024-04-09",
+            "hora_inicial_transacao": "18:04:42",
+            "data_venda_ajuste": "2024-04-09",
+            "hora_venda_ajuste": "18:17:08",
+            "tipo_evento": "1",
+            "tipo_transacao": "1",
+            "codigo_transacao": "B140EE618E6E4428852EE4B474D05DB0",
+            "codigo_venda": "ValidacaoSplitCreditCard_c1fe5ede-be37-4682-b4de-e15f9996ae80",
+            "valor_total_transacao": 300.00,
+            "valor_parcela": 96.34,
+            "pagamento_prazo": "M",
+            "plano": "3",
+            "parcela": "1",
+            "quantidade_parcelas": "3",
+            "data_prevista_pagamento": "2024-05-09",
+            "valor_original_transacao": 300.00,
+            "taxa_intermediacao": 8.97,
+            "tarifa_intermediacao": 2.0,
+            "valor_liquido_transacao": 289.03,
+            "status_pagamento": "1",
+            "meio_pagamento": "3",
+            "instituicao_financeira": "VISA",
+            "canal_entrada": "W",
+            "leitor": "",
+            "meio_captura": "3",
+            "nsu": "410021514006",
+            "cartao_bin": "411111",
+            "cartao_holder": "1111",
+            "codigo_autorizacao": "180442",
+            "tid": "7F7937DD531D4D91B776BBD64C9749C9",
+            "codigo_ur": "48271FA9A1F14C36A401AE7688627FD6",
+            "arranjo_ur": "CREDIT_VISA"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 3
+    }
+}

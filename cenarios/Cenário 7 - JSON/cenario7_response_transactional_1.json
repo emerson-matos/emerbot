@@ -1,0 +1,50 @@
+{
+    "detalhes": [
+        {
+            "movimento_api_codigo": "07A00EF9A1AAB86EC8AE6D8D57513E4F",
+            "tipo_registro": "1",
+            "estabelecimento": "795314394",
+            "data_inicial_transacao": "2024-08-05",
+            "hora_inicial_transacao": "17:38:08",
+            "data_venda_ajuste": "2024-08-05",
+            "hora_venda_ajuste": "17:39:31",
+            "tipo_evento": "1",
+            "tipo_transacao": "1",
+            "codigo_transacao": "873642B4BFD94C56A968116BA9E2249B",
+            "codigo_venda": "666667",
+            "valor_total_transacao": 134.87,
+            "valor_parcela": 94.41,
+            "pagamento_prazo": "U",
+            "plano": "0 ",
+            "parcela": "1",
+            "quantidade_parcelas": "10",
+            "data_prevista_pagamento": "2024-08-05",
+            "taxa_parcela_comprador": 34.87,
+            "valor_original_transacao": 100.00,
+            "taxa_intermediacao": 5.59,
+            "tarifa_intermediacao": 0.0,
+            "valor_liquido_transacao": 94.41,
+            "status_pagamento": "1",
+            "meio_pagamento": "3",
+            "instituicao_financeira": "VISA",
+            "canal_entrada": "ME",
+            "leitor": "",
+            "meio_captura": "1",
+            "nsu": "976431",
+            "cartao_bin": "471672",
+            "cartao_holder": "0637",
+            "codigo_autorizacao": "123456",
+            "codigo_cv": "123654",
+            "numero_serie_leitor": "68135918",
+            "tid": "873642B4BFD94C56A968116BA9E2249B",
+            "codigo_ur": "C968166DC8004C6E9EBCF31320A5BF57",
+            "arranjo_ur": "CREDIT_VISA"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

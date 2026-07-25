@@ -37,6 +37,7 @@ module "assistant" {
   lambda_zip_path            = var.lambda_zip_path
   dashboard_api_zip_path     = var.dashboard_api_zip_path
   notifier_zip_path          = var.notifier_zip_path
+  importer_zip_path          = var.importer_zip_path
   webhook_secret             = var.webhook_secret
   webhook_secret_value       = var.webhook_secret_value
   cognito_user_pool_issuer   = module.cognito_dashboard.issuer

@@ -1,0 +1,35 @@
+{
+  "provider": "pagbank",
+  "importedAt": "2026-07-24T03:00:00Z",
+  "date": "2024-07-29",
+  "transactional": {
+    "detalhes": [
+      {
+        "tipo_evento": "1",
+        "codigo_transacao": "7C75E047BA3840EA99E96564EBC44A6B",
+        "data_venda_ajuste": "2024-07-29",
+        "valor_total_transacao": 100.00,
+        "valor_liquido_transacao": 98.45,
+        "valor_parcela": 98.45,
+        "pagamento_prazo": "U",
+        "parcela": "1",
+        "quantidade_parcelas": "0",
+        "data_prevista_pagamento": "2024-07-29",
+        "meio_pagamento": "8",
+        "instituicao_financeira": "BANRICOMPRAS"
+      }
+    ],
+    "pagination": { "elements": 1000, "totalPages": 1, "page": 1, "totalElements": 1 }
+  },
+  "financial": {
+    "detalhes": [
+      {
+        "tipo_evento": "1",
+        "codigo_transacao": "7C75E047BA3840EA99E96564EBC44A6B",
+        "data_movimentacao": "2024-07-29",
+        "valor_parcela": 98.45
+      }
+    ],
+    "pagination": { "elements": 1000, "totalPages": 1, "page": 1, "totalElements": 1 }
+  }
+}

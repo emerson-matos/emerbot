@@ -1,0 +1,20 @@
+{
+    "detalhes": [
+        {
+            "tipo_registro": "4",
+            "estabelecimento": "126984538",
+            "data_cashout": "2024-07-30",
+            "codigo_ur": "DD9DF90D162644A9B75C12CEF6371BC3",
+            "codigo_cashout": "0E34CDC765574AEA84B4E1D91CBEEFF9",
+            "arranjo_pagamento": "PIX",
+            "valor_cashout": 107.88,
+            "tipo_cashout": "PagBank"
+        }
+    ],
+    "pagination": {
+        "elements": 1000,
+        "totalPages": 1,
+        "page": 1,
+        "totalElements": 1
+    }
+}

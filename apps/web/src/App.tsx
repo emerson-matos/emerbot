@@ -5,6 +5,7 @@ import AppLayout from './components/layout/AppLayout';
 import Transactions from './pages/Transactions';
 import NovaTransacao from './pages/NovaTransacao';
 import Goals from './pages/Goals';
+import Adquirentes from './pages/Adquirentes';
 import Analysis from './pages/Analysis';
 import Notificacoes from './pages/Notificacoes';
 import Settings from './pages/Settings';
@@ -28,18 +29,19 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route index element={<Dashboard />} />
-              <Route path="transacoes" element={<Transactions />} />
-              <Route path="nova-transacao" element={<NovaTransacao />} />
+              <Route path="adquirentes" element={<Adquirentes />} />
+              <Route path="ajustes" element={<Settings />} />
               <Route path="analise" element={<Analysis />} />
               <Route path="metas" element={<Goals />} />
               <Route path="notificacoes" element={<Notificacoes />} />
-              <Route path="ajustes" element={<Settings />} />
+              <Route path="nova-transacao" element={<NovaTransacao />} />
+              <Route path="transacoes" element={<Transactions />} />
             </Route>
-          </Route>
+          </Route >
 
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+        </Routes >
+      </BrowserRouter >
+    </AuthProvider >
   )
 }

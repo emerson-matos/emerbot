@@ -20,6 +20,7 @@ import (
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	pkgpayments "github.com/emerson/emerbot/packages/payments"
 )
 
 const (
@@ -96,7 +97,7 @@ func newTestApp(t *testing.T) (*App, *rsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("build local cognito middleware: %v", err)
 	}
-	return NewLocal(pkgfinance.NewInMemoryStore(), authMw), key
+	return NewLocal(pkgfinance.NewInMemoryStore(), pkgpayments.NewInMemoryRepository(), authMw), key
 }
 
 func do(t *testing.T, app *App, method, path, token string, body any) *httptest.ResponseRecorder {
@@ -329,7 +330,7 @@ func TestCORSPreflight(t *testing.T) {
 
 func TestGatewayClaimsBridgeProtectsFinanceRoutes(t *testing.T) {
 	t.Parallel()
-	app := NewGateway(pkgfinance.NewInMemoryStore())
+	app := NewGateway(pkgfinance.NewInMemoryStore(), pkgpayments.NewInMemoryRepository())
 	event := events.APIGatewayV2HTTPRequest{
 		Version: "2.0",
 		RawPath: "/entries",

@@ -18,12 +18,15 @@ Assistente IA via WhatsApp + painel financeiro para farmácia, construído para 
 ├── apps
 │   ├── cli
 │   ├── dashboard-api      # API REST do painel financeiro
+│   ├── payment-importer   # Lambda de import de adquirentes (S3 → DynamoDB)
 │   ├── web                # Frontend React + shadcn/ui
 │   ├── webhook            # Handler Lambda do WhatsApp
 │   └── worker
+├── cenarios               # Extratos EDI do PagBank gravados (fixtures)
 ├── docs
 │   ├── adr
-│   └── cloudflare-dns.md
+│   ├── cloudflare-dns.md
+│   └── payments-import.md
 ├── infra
 │   ├── modules
 │   └── opentofu
@@ -31,6 +34,7 @@ Assistente IA via WhatsApp + painel financeiro para farmácia, construído para 
 │   ├── auth               # JWT, login, refresh tokens
 │   ├── domain
 │   ├── finance            # Entries, goals, summaries, categories
+│   ├── payments           # Domínio de adquirentes + parser PagBank + importer
 │   ├── llm
 │   ├── memory
 │   ├── orchestrator
@@ -62,6 +66,20 @@ Stack local para controle financeiro da farmácia via WhatsApp + dashboard web.
 | WA Simulator | `:9000` | Interface web simulando WhatsApp |
 | DynamoDB | `:8000` | Banco local |
 | DynamoDB Admin | `:8001` | UI do banco |
+
+### Adquirentes (PagBank)
+
+As vendas no cartão entram por import dos extratos EDI, sem digitação. `make demo`
+já popula a página **Adquirentes** com os cenários gravados em `cenarios/`; para
+importar de novo ou usar dados reais:
+
+```sh
+make seed-payments                       # cenários gravados → dynamodb-local
+make import-pagbank DIR=~/extratos/hoje  # extratos reais → S3 → Lambda
+```
+
+É o mesmo script nos dois casos — só o transporte muda.
+Detalhes em [`docs/payments-import.md`](docs/payments-import.md).
 
 ### Comandos do WhatsApp
 

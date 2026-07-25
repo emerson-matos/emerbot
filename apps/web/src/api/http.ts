@@ -15,6 +15,9 @@ import type {
   Goal,
   NotificationPrefs,
   Category,
+  SalesResponse,
+  ReceivablesResponse,
+  ForecastResponse,
 } from "./types";
 
 export { CognitoAuthError } from "./cognito";
@@ -28,6 +31,12 @@ export type {
   Goal,
   NotificationPrefs,
   Category,
+  Sale,
+  ExpectedReceivable,
+  SalesResponse,
+  ReceivablesResponse,
+  ForecastResponse,
+  PaymentForecastPoint,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8081";
@@ -158,6 +167,26 @@ export const api = {
           body: JSON.stringify(data),
         },
       ),
+  },
+
+  // Imported payment-processor data (read-only; ingestion is out-of-band via S3).
+  payments: {
+    sales: (from?: string, to?: string) => {
+      const qs = new URLSearchParams();
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      return httpClient<SalesResponse>(`/payments/sales?${qs}`);
+    },
+    receivables: (from?: string, to?: string) => {
+      const qs = new URLSearchParams();
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      return httpClient<ReceivablesResponse>(`/payments/receivables?${qs}`);
+    },
+    forecast: (month?: string) => {
+      const qs = month ? `?month=${month}` : "";
+      return httpClient<ForecastResponse>(`/payments/forecast${qs}`);
+    },
   },
 };
 

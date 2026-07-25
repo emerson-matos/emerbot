@@ -2,6 +2,9 @@ locals {
   prefix = "${var.project_name}-${var.environment}"
 }
 
+# Used to pin cross-service invoke permissions to this account.
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role" "lambda_exec" {
   name = "${local.prefix}-webhook-role"
 
@@ -386,6 +389,7 @@ locals {
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     "GET /notifications/preferences", "PUT /notifications/preferences",
+    "GET /payments/sales", "GET /payments/receivables", "GET /payments/forecast",
   ])
   # An explicit OPTIONS route is still required: API Gateway's automatic CORS
   # preflight handling only kicks in for a path with *no* route at all. Every
@@ -568,5 +572,192 @@ resource "aws_lambda_permission" "allow_scheduler_notifier" {
   function_name = aws_lambda_function.notifier.function_name
   principal     = "scheduler.amazonaws.com"
   source_arn    = aws_scheduler_schedule.notifier_daily.arn
+}
+
+# ---------------------------------------------------------------------------
+# Payment importer — imports PagBank (Stone later) data. The ingestion script
+# uploads one combined JSON envelope to S3; the ObjectCreated event triggers
+# this Lambda, which parses it and writes the canonical Sale/ExpectedReceivable/
+# Payment items into the shared finance table. No API Gateway route: it is only
+# ever invoked by the S3 notification below. Raw envelopes are kept in S3 as the
+# immutable import record (reprocessing = re-drop the object), which is cheap.
+# ---------------------------------------------------------------------------
+resource "aws_s3_bucket" "payment_imports" {
+  bucket = "${local.prefix}-payment-imports"
+}
+
+resource "aws_s3_bucket_public_access_block" "payment_imports" {
+  bucket                  = aws_s3_bucket.payment_imports.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Versioning is what actually makes the envelopes an immutable record: without
+# it, re-uploading the same key to trigger a reprocess overwrites the evidence of
+# what was imported the first time.
+resource "aws_s3_bucket_versioning" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Envelopes are a replayable audit trail, not permanent storage, and the project
+# runs under a hard monthly cost cap — so they expire rather than accumulating
+# forever. A year is far longer than any realistic reprocessing window.
+resource "aws_s3_bucket_lifecycle_configuration" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+
+  rule {
+    id     = "expire-imports"
+    status = "Enabled"
+
+    filter {
+      prefix = "imports/"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# The bucket carries financial records; deny any non-TLS access outright rather
+# than relying on every client remembering to use HTTPS.
+resource "aws_s3_bucket_policy" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.payment_imports.arn,
+        "${aws_s3_bucket.payment_imports.arn}/*",
+      ]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.payment_imports]
+}
+
+resource "aws_iam_role" "importer_exec" {
+  name = "${local.prefix}-importer-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "importer_basic" {
+  role       = aws_iam_role.importer_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "importer_permissions" {
+  name = "${local.prefix}-importer-permissions"
+  role = aws_iam_role.importer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Read the uploaded envelope.
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["${aws_s3_bucket.payment_imports.arn}/*"]
+      },
+      {
+        # Canonical payment items share the finance table; the replace strategy
+        # (see packages/payments) needs Delete alongside Put/Get/Query.
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+        ]
+        Resource = [
+          aws_dynamodb_table.financial_entries.arn,
+          "${aws_dynamodb_table.financial_entries.arn}/index/*",
+        ]
+      },
+    ]
+  })
+}
+
+resource "aws_cloudwatch_log_group" "importer" {
+  name              = "/aws/lambda/${local.prefix}-payment-importer"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "payment_importer" {
+  function_name    = "${local.prefix}-payment-importer"
+  role             = aws_iam_role.importer_exec.arn
+  filename         = var.importer_zip_path
+  source_code_hash = filebase64sha256(var.importer_zip_path)
+  handler          = var.lambda_handler
+  runtime          = var.lambda_runtime
+  architectures    = ["arm64"]
+  timeout          = 60
+  memory_size      = 128
+
+  # The bucket is not passed in: the Lambda reads whatever bucket/key the S3
+  # event names, so a second env var would only be able to disagree with it.
+  environment {
+    variables = {
+      FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
+    }
+  }
+}
+
+# S3 invokes the importer asynchronously: a returned error is retried twice and
+# then the event is dropped. There is deliberately no dead-letter queue — this is
+# a POC, the envelope itself is still sitting in the bucket, and recovery is
+# re-dropping that object. The Lambda logs the bucket and key of anything it
+# fails to import, so the log group is the record of what to replay.
+resource "aws_lambda_permission" "allow_s3_importer" {
+  statement_id  = "AllowExecutionFromS3"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.payment_importer.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = aws_s3_bucket.payment_imports.arn
+  # Bucket names are global, so source_arn alone would still match a bucket of
+  # the same name recreated in another account; source_account pins it to ours.
+  source_account = data.aws_caller_identity.current.account_id
+}
+
+# Only a .json object under imports/ triggers the importer, so unrelated uploads
+# never fire the Lambda.
+resource "aws_s3_bucket_notification" "payment_imports" {
+  bucket = aws_s3_bucket.payment_imports.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.payment_importer.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "imports/"
+    filter_suffix       = ".json"
+  }
+
+  depends_on = [aws_lambda_permission.allow_s3_importer]
 }
 
