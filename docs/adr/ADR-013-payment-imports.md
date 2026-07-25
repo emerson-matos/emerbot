@@ -18,10 +18,16 @@ de serviço rodando 24/7.
 
 ## Decisão
 
-- **Ingestão desacoplada do processamento.** Um script monta um envelope JSON
-  combinado e o envia ao S3; o evento `ObjectCreated` dispara a Lambda
-  `payment-importer`. O envelope no S3 é o registro do import (versionado), e
-  reprocessar é re-subir o objeto.
+- **Ingestão desacoplada do processamento.** `scripts/pagbank-import` monta um
+  envelope JSON combinado a partir dos extratos EDI e o envia ao S3; o evento
+  `ObjectCreated` dispara a Lambda `payment-importer`. O envelope no S3 é o
+  registro do import (versionado), e reprocessar é re-subir o objeto.
+- **Um script só, local e remoto.** O mesmo `pagbank-import` importa direto no
+  dynamodb-local (`-target dynamodb`) ou pelo S3 (`-target s3://…`). Os dois
+  caminhos constroem o mesmo `packages/payments/importer` — por isso ele mora em
+  `packages/` e não sob o `internal/` de um app: se o caminho local fosse código
+  próprio, "funciona local" deixaria de dizer alguma coisa sobre produção.
+  Detalhes de uso em [`docs/payments-import.md`](../payments-import.md).
 - **Domínio canônico agnóstico de provider** (`packages/payments`):
   `Sale` / `ExpectedReceivable` / `Payment`. Os parsers são tradutores puros e
   determinísticos; o `ImportService` só orquestra; o `Repository` é dono do

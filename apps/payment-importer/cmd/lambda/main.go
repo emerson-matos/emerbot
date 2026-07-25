@@ -14,8 +14,8 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/emerson/emerbot/apps/payment-importer/internal/app"
 	"github.com/emerson/emerbot/packages/payments"
+	"github.com/emerson/emerbot/packages/payments/importer"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("payments repo: %v", err)
 	}
-	application := app.New(repo)
+	application := importer.New(repo)
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {

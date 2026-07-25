@@ -62,7 +62,10 @@ export default function Adquirentes() {
   const range = { firstDay, lastDay, monthLabel }
 
   const salesQuery = usePaymentsSales(firstDay, lastDay)
-  const sales = salesQuery.data?.sales ?? []
+  // Memoized on the query data rather than written as `?? []` inline: the
+  // fallback would be a new array on every render, which defeats the memo below
+  // and rebuilds the lookup map each time.
+  const sales = useMemo(() => salesQuery.data?.sales ?? [], [salesQuery.data])
   const byMethod = salesQuery.data?.by_method ?? {}
   const methods = Object.entries(byMethod).sort((a, b) => b[1] - a[1])
 

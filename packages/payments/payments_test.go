@@ -30,6 +30,10 @@ func TestParseCentavos(t *testing.T) {
 		{"1.005", 101}, // third digit rounds half-up
 		{"1.004", 100},
 		{"-5.00", -500},
+		// Negatives round away from zero, so a refund is never understated by a
+		// centavo. Pinned here because it is a choice, not an accident.
+		{"-1.005", -101},
+		{"-1.004", -100},
 	}
 	for _, c := range cases {
 		got, err := ParseCentavos(c.in)
@@ -39,6 +43,16 @@ func TestParseCentavos(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("ParseCentavos(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// A value the EDI never sends in this form must fail loudly rather than parse to
+// something plausible — silently reading an amount as 0 would move money.
+func TestParseCentavosRejectsNonDecimalInput(t *testing.T) {
+	for _, in := range []string{"1e+06", "R$ 10,00", "10,50", "abc"} {
+		if _, err := ParseCentavos(in); err == nil {
+			t.Errorf("ParseCentavos(%q) should have failed", in)
 		}
 	}
 }

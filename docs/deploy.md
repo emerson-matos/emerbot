@@ -73,6 +73,17 @@ Pipeline: `.github/workflows/deploy.yml`.
 2. Merge.
 3. Go to **Actions → deploy → Run workflow** and run it on `main`. That applies.
 
+## Importing acquirer data
+
+Uploading an envelope to the imports bucket is what runs the importer:
+
+```sh
+make import-pagbank DIR=~/extracts/2026-07-23
+```
+
+See [payments-import.md](payments-import.md) for the full flow, including the
+local path (which uses the same script).
+
 ## Recovering a failed payment import
 
 The `payment-importer` Lambda is invoked asynchronously by S3, so a failure is

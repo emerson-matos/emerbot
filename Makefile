@@ -31,7 +31,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         run-webhook run-api run-cli run-lambda \
         up down up-infra \
         logs-webhook logs-api \
-        seed demo demo-ollama \
+        seed seed-payments import-pagbank demo demo-ollama \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
@@ -145,10 +145,44 @@ seed:
 		--table emerbot-local-financial-entries \
 		--months 3
 
+# Imports the recorded PagBank scenarios into dynamodb-local so the Adquirentes
+# page has data. -rebase moves the (2024-dated) scenarios into the current month,
+# since the page opens on the current month and would otherwise look broken.
+#
+# Each scenario gets its own -date: an import replaces exactly its own
+# (provider, source day), and two scenarios happen to share a newest business
+# date, so without distinct source days one would silently replace the other.
+CENARIOS_DIR ?= cenarios
+seed-payments:
+	@i=1; for dir in "$(CENARIOS_DIR)"/*/; do \
+	  [ -d "$$dir" ] || continue; \
+	  AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 \
+	  DYNAMODB_ENDPOINT=http://localhost:8000 \
+	  FINANCIAL_ENTRIES_TABLE=emerbot-local-financial-entries \
+	  $(GO) run ./scripts/pagbank-import \
+	    -dir "$$dir" \
+	    -target dynamodb \
+	    -rebase "$$(date +%Y-%m)" \
+	    -date "$$(date +%Y-%m)-0$$i" || exit 1; \
+	  i=$$((i+1)); \
+	done
+
+# Imports a directory of real PagBank EDI responses into the deployed stack by
+# uploading the assembled envelope to S3, where the ObjectCreated event runs the
+# payment-importer Lambda. Same script and same import code as seed-payments —
+# only the transport differs.
+#
+#   make import-pagbank DIR=~/extracts/2026-07-23
+IMPORT_BUCKET ?= emerbot-dev-payment-imports
+import-pagbank:
+	@test -n "$(DIR)" || { echo "usage: make import-pagbank DIR=<dir with EDI responses>"; exit 1; }
+	$(GO) run ./scripts/pagbank-import -dir "$(DIR)" -target "s3://$(IMPORT_BUCKET)"
+
 demo: up
 	@echo "Waiting for dashboard-api to be healthy..."
 	@until wget -qO-  http://localhost:8081/health > /dev/null 2>&1; do sleep 2; done
 	$(MAKE) seed
+	$(MAKE) seed-payments
 	@echo ""
 	@echo "Demo ready!"
 	@echo "   Dashboard:       http://localhost:5173"

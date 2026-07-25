@@ -1,8 +1,9 @@
-// Package envelope reads only the routing header of an import envelope. It
-// deliberately does not parse the body — that is the provider parser's job, so
-// the object is interpreted in exactly one place. The same peek works whether
-// the envelope arrives from S3, HTTP, EventBridge or SQS.
-package envelope
+package importer
+
+// This file reads only the routing header of an import envelope. It deliberately
+// does not parse the body — that is the provider parser's job, so the object is
+// interpreted in exactly one place. The same peek works whether the envelope
+// arrives from S3, a local run, HTTP, EventBridge or SQS.
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-package envelope
+package importer
 
 import (
 	"testing"
