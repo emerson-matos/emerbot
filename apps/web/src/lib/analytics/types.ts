@@ -171,8 +171,13 @@ export type AnalysisInput = {
   month: YearMonth
   entries: Entry[]
   previousEntries: Entry[]
-  summaries: MonthlySummary[]
-  goals: GoalInput[]
+  // `summaries` and `goals` are ordered oldest-first and stay positionally
+  // aligned with the trailing three-month window ending at `month`, so the
+  // month being analysed is the last slot. A month with no data is a hole
+  // rather than a shorter array — collapsing it would silently shift every
+  // other month.
+  summaries: (MonthlySummary | undefined)[]
+  goals: (GoalInput | undefined)[]
   cashFlowPoints: CashFlowPoint[]
   now: Date
 }

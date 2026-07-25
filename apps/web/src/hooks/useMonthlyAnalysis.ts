@@ -56,21 +56,22 @@ export function useMonthlyAnalysis(month: YearMonth): Analysis | undefined {
     [previousEntriesQuery.data?.entries],
   );
 
+  // Both arrays stay positionally aligned with months3 (oldest-first): a month
+  // the API has no row for becomes an undefined hole, never a missing slot,
+  // because dropping it would shift every later month onto the wrong label.
   const summaries = useMemo(
-    () =>
-      summariesQueries
-        .map((q) => q.data)
-        .filter(Boolean) as import("../api/types").MonthlySummary[],
+    () => summariesQueries.map((q) => q.data),
     [summariesQueries],
   );
 
   const goals = useMemo(() => {
-    return [goal0Query.data?.goal, goal1Query.data?.goal, goal2Query.data?.goal]
-      .filter((g): g is NonNullable<typeof g> => g != null)
-      .map((g) => ({
-        revenueTarget: g.RevenueTarget,
-        expenseTarget: g.ExpenseTarget,
-      }));
+    return [
+      goal0Query.data?.goal,
+      goal1Query.data?.goal,
+      goal2Query.data?.goal,
+    ].map((g) =>
+      g ? { revenueTarget: g.RevenueTarget, expenseTarget: g.ExpenseTarget } : undefined,
+    );
   }, [goal0Query.data?.goal, goal1Query.data?.goal, goal2Query.data?.goal]);
 
   const cashFlowPoints = useMemo(

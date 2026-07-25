@@ -1,3 +1,4 @@
+import { differenceInCalendarDays, format, parseISO } from 'date-fns'
 import type { CashFlowPoint } from '../../api/types'
 import type { CashPosition } from './types'
 
@@ -5,17 +6,20 @@ export function getCashPosition(
   cashFlowPoints: CashFlowPoint[],
   now: Date,
 ): CashPosition {
+  // CashFlowPoint.Date is a plain calendar day, so "today" has to be the
+  // user's local day. toISOString() would roll over to tomorrow during the
+  // evening in any UTC- timezone and lose the current balance entirely.
+  const todayStr = format(now, 'yyyy-MM-dd')
+
   if (cashFlowPoints.length === 0) {
     return {
       currentBalance: 0,
       endOfMonthProjection: 0,
       daysUntilNegative: null,
       lowestProjected: 0,
-      lowestProjectedDate: now.toISOString().slice(0, 10),
+      lowestProjectedDate: todayStr,
     }
   }
-
-  const todayStr = now.toISOString().slice(0, 10)
 
   const todayPoint = cashFlowPoints.find(p => p.Date === todayStr)
   const currentBalance = todayPoint?.RunningBalance ?? 0
@@ -33,9 +37,9 @@ export function getCashPosition(
       lowestProjectedDate = point.Date
     }
     if (point.RunningBalance < 0 && daysUntilNegative === null && point.Date > todayStr) {
-      daysUntilNegative = Math.ceil(
-        (new Date(point.Date).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-      )
+      // Calendar days apart, not elapsed milliseconds — otherwise the answer
+      // depends on the time of day the dashboard happens to be open.
+      daysUntilNegative = differenceInCalendarDays(parseISO(point.Date), now)
     }
   }
 

@@ -48,8 +48,8 @@ export function getGoalProgress(
 }
 
 export function getHistory(
-  summaries: MonthlySummary[],
-  goals: GoalInput[],
+  summaries: (MonthlySummary | undefined)[],
+  goals: (GoalInput | undefined)[],
   monthRange: string[],
 ): MonthlySnapshot[] {
   return monthRange.map((month, i) => {
