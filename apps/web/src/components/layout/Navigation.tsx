@@ -28,7 +28,6 @@ const nav: NavItem[] = [
   { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
   { label: "Análise", icon: Activity, to: "/analise" },
   { label: "Metas", icon: Target, to: "/metas" },
-  { label: "Adquirentes", icon: CreditCard, to: "/adquirentes" },
   { label: "Notificações", icon: Bell, to: "/notificacoes" },
   { label: "Estoque", icon: ArrowLeftRight, soon: true },
   { label: "Contas", icon: Landmark, soon: true },
