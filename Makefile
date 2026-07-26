@@ -252,18 +252,17 @@ export TF_VAR_cloudflare_zone_id
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
 
-# Creates the S3 state bucket + GitHub OIDC deploy role, and — every time after
-# the first — re-applies the deploy role's permissions. Uses your local admin
-# AWS creds. Not a one-time target: CI's role only gains a permission once this
-# runs, so re-run it whenever infra/opentofu/bootstrap/main.tf changes.
+# Creates the S3 state bucket, the GitHub OIDC provider and the deploy role
+# itself, with your local admin AWS creds. Genuinely one-time per account:
+# what CI is ALLOWED to do lives in environments/dev/deploy_role.tf and ships
+# with the normal deploy, so day-to-day permission changes never come back here.
 # See docs/deploy.md.
 tofu-bootstrap:
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) apply
 
-# Read-only: is the live deploy role still what this repo says it should be?
-# An empty plan means CI has every permission the committed policy grants.
+# Read-only: does the live account still match what this module says?
 tofu-bootstrap-plan:
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
@@ -271,10 +270,12 @@ tofu-bootstrap-plan:
 
 # Recovery for the case tofu-bootstrap-plan exposes as "9 to add, 0 to destroy":
 # this module keeps LOCAL state and .gitignore's it, so any machine that did not
-# personally run tofu-bootstrap sees an empty state and plans to create four
+# personally run tofu-bootstrap sees an empty state and plans to create
 # resources that already exist in the account. Applying that plan collides
 # (EntityAlreadyExists) instead of converging. Adopt the live resources into the
-# local state first, then tofu-bootstrap-plan should show only the role policy.
+# local state first, then plan again.
+#
+# The role's permission policy is NOT in the list: environments/dev owns it now.
 #
 # Only writes infra/opentofu/bootstrap/terraform.tfstate — it changes nothing in
 # AWS. Re-runnable: anything already in state just reports and is skipped.
@@ -293,7 +294,6 @@ tofu-bootstrap-adopt:
 	  "aws_s3_bucket_policy.state=$(BOOTSTRAP_BUCKET)" \
 	  "aws_iam_openid_connect_provider.github[0]=arn:aws:iam::$$acct:oidc-provider/token.actions.githubusercontent.com" \
 	  "aws_iam_role.deploy=$(BOOTSTRAP_ROLE)" \
-	  "aws_iam_role_policy.deploy=$(BOOTSTRAP_ROLE):$(BOOTSTRAP_ROLE)-permissions" \
 	; do \
 	  addr=$${pair%%=*}; id=$${pair#*=}; \
 	  $(TOFU) -chdir=$(BOOTSTRAP_DIR) import "$$addr" "$$id" || \

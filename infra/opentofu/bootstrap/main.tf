@@ -151,68 +151,20 @@ resource "aws_iam_role" "deploy" {
   }
 }
 
-# Service-scoped rather than per-resource: this is a single-purpose dev account,
-# not a shared prod one. Broaden/tighten as the stack grows.
+# The permission policy proper is NOT here — it lives in environments/dev, in
+# the module CI itself applies, so that a resource and the permission it needs
+# ship in one PR (see that config's deploy_role.tf for the whole rationale).
 #
-# Editing this document is only half the change: no pipeline applies this config
-# (CI runs environments/dev only), so the live role keeps its old permissions
-# until someone runs `make tofu-bootstrap` with admin creds. Until then CI plans
-# clean and then fails mid-apply with AccessDenied on the new action. See
-# docs/deploy.md, "Granting CI a new permission".
-data "aws_iam_policy_document" "deploy_permissions" {
-  statement {
-    sid    = "AppServices"
-    effect = "Allow"
-    actions = [
-      "lambda:*",
-      "apigateway:*",
-      "dynamodb:*",
-      "scheduler:*",
-      "logs:*",
-      "acm:*",
-      "cognito-idp:*",
-    ]
-    resources = ["*"]
-  }
-
-  # Manage only the IAM roles/policies this project creates.
-  statement {
-    sid    = "ProjectIAM"
-    effect = "Allow"
-    actions = [
-      "iam:CreateRole",
-      "iam:DeleteRole",
-      "iam:GetRole",
-      "iam:UpdateRole",
-      "iam:UpdateAssumeRolePolicy",
-      "iam:TagRole",
-      "iam:UntagRole",
-      "iam:ListRoleTags",
-      "iam:ListRolePolicies",
-      "iam:ListAttachedRolePolicies",
-      "iam:ListInstanceProfilesForRole",
-      "iam:PutRolePolicy",
-      "iam:DeleteRolePolicy",
-      "iam:GetRolePolicy",
-      "iam:AttachRolePolicy",
-      "iam:DetachRolePolicy",
-      "iam:PassRole",
-    ]
-    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/emerbot-*"]
-  }
-
-  # Read AWS-managed policies (e.g. AWSLambdaBasicExecutionRole) during refresh.
-  statement {
-    sid    = "IAMReadManaged"
-    effect = "Allow"
-    actions = [
-      "iam:GetPolicy",
-      "iam:GetPolicyVersion",
-    ]
-    resources = ["*"]
-  }
-
-  # Remote state bucket (state object + the .tflock lock object).
+# What stays is a floor: the minimum that lets CI reach the state and rewrite
+# its own permissions. It exists for exactly one failure mode, the one that
+# self-management introduces — a merge that drops ProjectIAM or StateBucket
+# from the stack-managed policy would otherwise lock CI out of the account for
+# good. IAM unions inline policies, so this floor holds regardless of what the
+# other one says, and CI can always apply its way back out.
+#
+# Deliberately minimal, and expected never to change: everything that tracks
+# the stack belongs in the policy the stack manages, not in here.
+data "aws_iam_policy_document" "deploy_floor" {
   statement {
     sid    = "StateBucket"
     effect = "Allow"
@@ -229,54 +181,34 @@ data "aws_iam_policy_document" "deploy_permissions" {
     ]
   }
 
-  # App-data buckets the stack creates (e.g. the payment-imports bucket the
-  # payment-importer reads). CI needs to create and configure these — bucket
-  # creation, public-access-block, versioning, lifecycle, bucket policy and the
-  # S3→Lambda notification — plus read them back on refresh.
-  #
-  # These are bucket-level management actions only. Deploying the stack never
-  # requires reading or deleting the envelopes themselves, and those objects are
-  # financial records, so s3:GetObject/DeleteObject are deliberately absent: a
-  # compromised CI role can reconfigure the bucket but cannot exfiltrate a
-  # single import. The importer Lambda's own role holds the GetObject grant.
+  # Scoped to this role alone — the floor is a way back in, not a second set of
+  # deploy permissions.
   statement {
-    sid    = "AppBuckets"
+    sid    = "SelfHeal"
     effect = "Allow"
     actions = [
-      "s3:CreateBucket",
-      "s3:DeleteBucket",
-      "s3:ListBucket",
-      "s3:GetBucketLocation",
-      "s3:GetBucketTagging",
-      "s3:PutBucketTagging",
-      "s3:GetBucketPublicAccessBlock",
-      "s3:PutBucketPublicAccessBlock",
-      "s3:GetBucketVersioning",
-      "s3:PutBucketVersioning",
-      "s3:GetLifecycleConfiguration",
-      "s3:PutLifecycleConfiguration",
-      "s3:GetBucketPolicy",
-      "s3:PutBucketPolicy",
-      "s3:DeleteBucketPolicy",
-      "s3:GetBucketNotification",
-      "s3:PutBucketNotification",
-      "s3:GetBucketAcl",
-      "s3:GetBucketCORS",
-      "s3:GetBucketWebsite",
-      "s3:GetBucketLogging",
-      "s3:GetBucketObjectLockConfiguration",
-      "s3:GetBucketRequestPayment",
-      "s3:GetReplicationConfiguration",
-      "s3:GetAccelerateConfiguration",
-      "s3:GetEncryptionConfiguration",
-      "s3:PutEncryptionConfiguration",
+      "iam:GetRolePolicy",
+      "iam:PutRolePolicy",
     ]
-    resources = ["arn:aws:s3:::emerbot-*-payment-imports"]
+    resources = [aws_iam_role.deploy.arn]
   }
 }
 
-resource "aws_iam_role_policy" "deploy" {
-  name   = "${var.deploy_role_name}-permissions"
+resource "aws_iam_role_policy" "floor" {
+  name   = "${var.deploy_role_name}-floor"
   role   = aws_iam_role.deploy.id
-  policy = data.aws_iam_policy_document.deploy_permissions.json
+  policy = data.aws_iam_policy_document.deploy_floor.json
+}
+
+# `-permissions` moved to environments/dev. On a machine that still holds this
+# module's old state, simply deleting the resource would plan a DeleteRolePolicy
+# against the policy the dev stack now manages — stripping CI's permissions on
+# the next bootstrap apply. Forget it from state instead and leave the live
+# policy alone. Inert where the state is already empty.
+removed {
+  from = aws_iam_role_policy.deploy
+
+  lifecycle {
+    destroy = false
+  }
 }

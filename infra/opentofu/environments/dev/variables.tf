@@ -121,3 +121,13 @@ variable "pages_production_branch" {
   default     = "main"
   description = "Branch de produção do Cloudflare Pages."
 }
+
+variable "state_bucket_name" {
+  type        = string
+  default     = "emerbot-dev-tofu-state"
+  description = <<-EOT
+    Bucket do state remoto, usado para dar ao papel de deploy acesso a ele em
+    deploy_role.tf. Precisa bater com o 'bucket' em backend.tf (que não aceita
+    variável) e com state_bucket_name no bootstrap. Se mudar, mude nos três.
+  EOT
+}
