@@ -8,7 +8,7 @@ import (
 )
 
 // EntryFilter constrains ListEntries queries. Zero-value fields are ignored.
-// From/To bound an entry's effectiveDate (see below), not necessarily its
+// From/To bound an entry's EffectiveDate (see below), not necessarily its
 // registration Date.
 type EntryFilter struct {
 	From     *time.Time
@@ -24,24 +24,27 @@ type EntryFilter struct {
 	// matching the GSI2SK format. When set, ListEntries returns only entries
 	// with GSI2SK < Cursor, most-recent first. This avoids the page-boundary
 	// data loss that happens when cursor-based pagination subtracts a day
-	// from effectiveDate (entries sharing the same effectiveDate across a
+	// from EffectiveDate (entries sharing the same EffectiveDate across a
 	// page boundary would be silently skipped).
 	Cursor string
 	// Limit caps the number of entries returned, most-recent (by
-	// effectiveDate) first. Zero means "no cap" — callers that page through
+	// EffectiveDate) first. Zero means "no cap" — callers that page through
 	// results (see apps/dashboard-api/internal/finance/entries.go's List
 	// handler) should always set this rather than relying on From/To alone,
 	// to bound DynamoDB read cost and response size.
 	Limit int
 }
 
-// effectiveDate is the date an entry counts toward for monthly/period views
+// EffectiveDate is the date an entry counts toward for monthly/period views
 // (ListEntries date range, MonthlySummary, CategorySummary, CashFlowForecast):
 // DueDate when set, since a pending bill or receivable belongs to the month
 // it's due — whether or not that day has passed — not the month it happened
 // to be registered in. Falls back to Date for already-settled entries, which
 // have no DueDate.
-func effectiveDate(e domain.FinancialEntry) time.Time {
+// It is exported because packages/finance/analytics has to bucket entries by
+// the same date the summaries do — comparing two months by any other date
+// would put an entry in one bucket here and another there.
+func EffectiveDate(e domain.FinancialEntry) time.Time {
 	if e.DueDate != nil {
 		return e.DueDate.Time()
 	}
@@ -88,6 +91,12 @@ type Store interface {
 
 	// Summaries
 	MonthlySummary(ctx context.Context, userID, yearMonth string) (MonthlySummary, error)
+	// MultiMonthlySummary returns one summary per requested month, keyed by
+	// "YYYY-MM". Months with no entries are present with zero totals rather
+	// than absent, so callers can index the result directly. It exists so the
+	// analysis's trailing-month window costs one query instead of one per
+	// month.
+	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error)
 	CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]CashFlowPoint, error)
 

@@ -28,7 +28,7 @@ const (
 
 	// gsi2IndexName is the GSI (hash: GSI2PK, range: GSI2SK, declared in
 	// infra/modules/api_gateway_lambda/main.tf) that ListEntries queries by
-	// effectiveDate. Only entryItem sets GSI2PK/GSI2SK, so this index never
+	// EffectiveDate. Only entryItem sets GSI2PK/GSI2SK, so this index never
 	// contains goal or category items.
 	gsi2IndexName = "GSI2-Status"
 )
@@ -125,11 +125,11 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		GSI1PK: pkPrefix + e.UserID,
 		GSI1SK: e.Category + "#" + dateStr,
 		GSI2PK: pkPrefix + e.UserID,
-		// GSI2SK orders entries by effectiveDate (DueDate when set, else
-		// Date) — see effectiveDate's doc comment in store.go for why this,
+		// GSI2SK orders entries by EffectiveDate (DueDate when set, else
+		// Date) — see EffectiveDate's doc comment in store.go for why this,
 		// not registration Date, is the field callers actually want to
 		// query and bucket by.
-		GSI2SK:           effectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID),
+		GSI2SK:           EffectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID),
 		EntryID:          string(e.EntryID),
 		UserID:           e.UserID,
 		Date:             dateStr,
@@ -283,7 +283,7 @@ func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (d
 }
 
 // ListEntries queries the GSI2-Status index (hash: GSI2PK, range: GSI2SK —
-// see gsi2IndexName), which orders entries by effectiveDate rather than
+// see gsi2IndexName), which orders entries by EffectiveDate rather than
 // registration Date. filter.From/To push down directly into a GSI2SK range
 // condition: a /recorrente installment registered in July but due in
 // December is stored with GSI2SK="2026-12-.../..." and so is only returned
@@ -362,7 +362,7 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	if filter.Limit > 0 {
 		// Most-recent-first, so we can stop reading pages as soon as we have
 		// enough matches instead of scanning the whole partition — GSI2SK is
-		// date-prefixed, so descending key order is effectiveDate descending.
+		// date-prefixed, so descending key order is EffectiveDate descending.
 		input.ScanIndexForward = aws.Bool(false)
 	}
 
@@ -390,7 +390,7 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return effectiveDate(entries[i]).After(effectiveDate(entries[j]))
+		return EffectiveDate(entries[i]).After(EffectiveDate(entries[j]))
 	})
 	if filter.Limit > 0 && len(entries) > filter.Limit {
 		entries = entries[:filter.Limit]
@@ -465,6 +465,29 @@ func (s *DynamoDBStore) MonthlySummary(ctx context.Context, userID, yearMonth st
 	return summary, nil
 }
 
+// MultiMonthlySummary aggregates several months in a single query over the
+// span they cover, rather than one query per month. The analysis needs a
+// trailing three-month window on every request, and three sequential queries
+// against the same partition is three times the latency and read cost for the
+// same rows.
+//
+// Months need not be contiguous or sorted; entries outside the requested
+// months are read but discarded, which is still cheaper than separate queries
+// for any realistic window.
+func (s *DynamoDBStore) MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error) {
+	summaries, from, to, err := emptySummaries(yearMonths)
+	if err != nil || len(summaries) == 0 {
+		return summaries, err
+	}
+
+	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
+	if err != nil {
+		return nil, err
+	}
+	accumulateSummaries(summaries, entries)
+	return summaries, nil
+}
+
 func (s *DynamoDBStore) CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error) {
 	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
 	if err != nil {
@@ -527,7 +550,7 @@ func (s *DynamoDBStore) CashFlowForecast(ctx context.Context, userID, yearMonth 
 	type dayTotals struct{ income, expense int64 }
 	byDay := make(map[string]*dayTotals)
 	for _, e := range entries {
-		day := effectiveDate(e).Format("2006-01-02")
+		day := EffectiveDate(e).Format("2006-01-02")
 		if _, ok := byDay[day]; !ok {
 			byDay[day] = &dayTotals{}
 		}

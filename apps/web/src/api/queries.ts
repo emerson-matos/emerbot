@@ -18,6 +18,7 @@ export const queryKeys = {
   summaryCategories: (from?: string, to?: string) =>
     ["summary", "categories", from, to] as const,
   cashflow: (month: string) => ["summary", "cashflow", month] as const,
+  analysis: (month: string) => ["analysis", "monthly", month] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesByMonth: () => ["entries", "byMonth"] as const,
   goal: (month: string) => ["goal", month] as const,
@@ -162,6 +163,7 @@ export function useSaveGoalMutation(month: string) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.goal(month) });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }
@@ -238,6 +240,7 @@ export function useMarkPaidMutation() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
       queryClient.invalidateQueries(entriesKey);
     },
   });
@@ -257,6 +260,7 @@ export function useCreateEntryMutation() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }
@@ -275,6 +279,7 @@ export function useDeleteEntryMutation() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }

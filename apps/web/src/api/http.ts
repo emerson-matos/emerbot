@@ -7,6 +7,7 @@ import {
 } from "./api-error";
 import { cognitoInitiateAuth } from "./cognito";
 import type {
+  Analysis,
   Entry,
   CreateEntryInput,
   MonthlySummary,
@@ -133,6 +134,15 @@ export const api = {
       httpClient<{ points: CashFlowPoint[] }>(
         `/summary/cashflow?month=${month}`,
       ),
+  },
+
+  analysis: {
+    // The backend assembles the whole analysis, so this is one call where the
+    // page used to make five and build it in the browser.
+    monthly: (month?: string) => {
+      const qs = month ? `?month=${month}` : "";
+      return httpClient<Analysis>(`/analysis/monthly${qs}`);
+    },
   },
 
   categories: {

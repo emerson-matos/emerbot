@@ -11,6 +11,7 @@ import (
 	apipayments "github.com/emerson/emerbot/apps/dashboard-api/internal/payments"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	pkgpayments "github.com/emerson/emerbot/packages/payments"
+	"github.com/emerson/emerbot/packages/shared"
 )
 
 // App wires all handlers and exposes both a local HTTP server
@@ -51,6 +52,9 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
 	paymentsHandler := apipayments.NewHandler(payRepo, finStore)
+	// "Hoje", "esta semana" and "dias restantes" are the pharmacy's calendar
+	// day, not the Lambda's UTC one.
+	analysisHandler := apifinance.NewAnalysisHandler(finStore, shared.PharmacyLocation())
 
 	mux := http.NewServeMux()
 
@@ -68,6 +72,10 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	mux.Handle("GET /summary/monthly", authMw(http.HandlerFunc(summaryHandler.Monthly)))
 	mux.Handle("GET /summary/categories", authMw(http.HandlerFunc(summaryHandler.Categories)))
 	mux.Handle("GET /summary/cashflow", authMw(http.HandlerFunc(summaryHandler.CashFlow)))
+
+	// The whole analysis in one call — health, trends, weekday averages, week
+	// comparison, goal pace, cash position and recommendations.
+	mux.Handle("GET /analysis/monthly", authMw(http.HandlerFunc(analysisHandler.Monthly)))
 
 	goalHandler := apifinance.NewGoalsHandler(finStore)
 

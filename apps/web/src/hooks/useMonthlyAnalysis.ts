@@ -1,88 +1,23 @@
-import { useMemo, useRef } from "react";
-import { format } from "date-fns";
-import {
-  useMonthlyTrend,
-  useGoal,
-  useEntries,
-  useCashFlow,
-} from "../api/queries";
-import { buildMonthlyAnalysis } from "@/lib/analytics/build";
-import type { YearMonth, Analysis } from "@/lib/analytics/types";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../api/http";
+import { queryKeys } from "../api/queries";
+import type { YearMonth } from "@/api/types";
 
-function getMonthOffset(month: string, offset: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const date = new Date(y, m - 1 + offset, 1);
-  return format(date, "yyyy-MM");
-}
-
-function useMonthlyEntries(month: string) {
-  const [y, m] = month.split("-").map(Number);
-  const from = format(new Date(y, m - 1, 1), "yyyy-MM-dd");
-  const to = format(new Date(y, m, 0), "yyyy-MM-dd");
-  return useEntries(from, to);
-}
-
-export function useMonthlyAnalysis(month: YearMonth): Analysis | undefined {
-  const nowRef = useRef(new Date());
-  const now = nowRef.current;
-
-  const entriesQuery = useMonthlyEntries(month);
-  const prevMonth = getMonthOffset(month, -1);
-  const previousEntriesQuery = useMonthlyEntries(prevMonth);
-
-  const months3 = [getMonthOffset(month, -2), getMonthOffset(month, -1), month];
-  const summariesQueries = useMonthlyTrend(months3);
-  const goal0Query = useGoal(months3[0]);
-  const goal1Query = useGoal(months3[1]);
-  const goal2Query = useGoal(months3[2]);
-  const cashFlowQuery = useCashFlow(month);
-
-  const isLoading =
-    entriesQuery.isLoading ||
-    previousEntriesQuery.isLoading ||
-    summariesQueries.some((q) => q.isLoading) ||
-    goal0Query.isLoading ||
-    goal1Query.isLoading ||
-    goal2Query.isLoading ||
-    cashFlowQuery.isLoading;
-
-  const entries = useMemo(
-    () => entriesQuery.data?.entries ?? [],
-    [entriesQuery.data?.entries],
-  );
-
-  const previousEntries = useMemo(
-    () => previousEntriesQuery.data?.entries ?? [],
-    [previousEntriesQuery.data?.entries],
-  );
-
-  // Both arrays stay positionally aligned with months3 (oldest-first): a month
-  // the API has no row for becomes an undefined hole, never a missing slot,
-  // because dropping it would shift every later month onto the wrong label.
-  const summaries = useMemo(
-    () => summariesQueries.map((q) => q.data),
-    [summariesQueries],
-  );
-
-  const goals = useMemo(() => {
-    return [
-      goal0Query.data?.goal,
-      goal1Query.data?.goal,
-      goal2Query.data?.goal,
-    ].map((g) =>
-      g ? { revenueTarget: g.RevenueTarget, expenseTarget: g.ExpenseTarget } : undefined,
-    );
-  }, [goal0Query.data?.goal, goal1Query.data?.goal, goal2Query.data?.goal]);
-
-  const cashFlowPoints = useMemo(
-    () => cashFlowQuery.data?.points ?? [],
-    [cashFlowQuery.data?.points],
-  );
-
-  const analysis = useMemo(() => {
-    if (isLoading) return undefined;
-    return buildMonthlyAnalysis({ month, entries, previousEntries, summaries, goals, cashFlowPoints, now });
-  }, [isLoading, month, entries, previousEntries, summaries, goals, cashFlowPoints, now]);
-
-  return analysis;
+/**
+ * The month's analysis, assembled by the backend.
+ *
+ * This used to fan out to five endpoints and build the analysis in the browser,
+ * which meant the WhatsApp digest and the AI bot — neither of which runs a
+ * browser — could not say any of it. The logic now lives in Go
+ * (packages/finance/analytics) and every consumer reads the same numbers.
+ *
+ * Returns the query rather than just its data so the page can tell "still
+ * loading" from "the request failed" — collapsing the two leaves a failed load
+ * showing a skeleton that never resolves.
+ */
+export function useMonthlyAnalysis(month: YearMonth) {
+  return useQuery({
+    queryKey: queryKeys.analysis(month),
+    queryFn: () => api.analysis.monthly(month),
+  });
 }

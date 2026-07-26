@@ -145,6 +145,7 @@ resource "aws_lambda_function" "webhook" {
     variables = {
       WEBHOOK_SECRET          = var.webhook_secret
       WEBHOOK_VERIFY_TOKEN    = var.webhook_secret_value
+      APP_TIMEZONE            = var.app_timezone
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
       WHATSAPP_SESSIONS_TABLE = aws_dynamodb_table.whatsapp_sessions.name
       CONVERSATIONS_TABLE     = aws_dynamodb_table.conversations.name
@@ -356,6 +357,7 @@ resource "aws_lambda_function" "dashboard_api" {
 
   environment {
     variables = {
+      APP_TIMEZONE            = var.app_timezone
       FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
     }
   }
@@ -387,6 +389,7 @@ locals {
   dashboard_protected_routes = toset([
     "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
+    "GET /analysis/monthly",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     "GET /notifications/preferences", "PUT /notifications/preferences",
     "GET /payments/sales", "GET /payments/receivables", "GET /payments/forecast",
@@ -515,7 +518,7 @@ resource "aws_lambda_function" "notifier" {
       WHATSAPP_SESSIONS_TABLE  = aws_dynamodb_table.whatsapp_sessions.name
       META_GRAPH_API_TOKEN     = var.meta_graph_api_token_value
       WHATSAPP_PHONE_NUMBER_ID = var.whatsapp_phone_number_id
-      NOTIFIER_TIMEZONE        = var.notifier_timezone
+      APP_TIMEZONE             = var.app_timezone
       GEMINI_API_KEY           = var.gemini_api_key_value
       DASHBOARD_URL            = var.dashboard_origin
     }
@@ -553,7 +556,7 @@ resource "aws_scheduler_schedule" "notifier_daily" {
   }
 
   schedule_expression          = var.notifier_schedule
-  schedule_expression_timezone = var.notifier_timezone
+  schedule_expression_timezone = var.app_timezone
 
   target {
     arn      = aws_lambda_function.notifier.arn

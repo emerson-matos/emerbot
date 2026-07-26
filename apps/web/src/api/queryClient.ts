@@ -6,6 +6,7 @@ const resourceMessages: Record<string, string> = {
   summary: 'Não foi possível carregar o resumo financeiro.',
   entries: 'Não foi possível carregar as transações.',
   goal: 'Não foi possível carregar a meta do mês.',
+  analysis: 'Não foi possível carregar a análise do mês.',
 }
 
 export const queryClient = new QueryClient({

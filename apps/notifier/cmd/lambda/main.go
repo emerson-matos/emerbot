@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 	_ "time/tzdata" // embed zoneinfo so LoadLocation works on provided.al2
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -49,12 +48,10 @@ func main() {
 		log.Fatal("WHATSAPP_PHONE_NUMBER_ID is required")
 	}
 
-	// "Vence hoje" must use the pharmacy's local calendar day, not UTC.
-	loc, err := time.LoadLocation(shared.Getenv("NOTIFIER_TIMEZONE", "America/Sao_Paulo"))
-	if err != nil {
-		log.Printf("load timezone: %v — falling back to UTC", err)
-		loc = time.UTC
-	}
+	// "Vence hoje" must use the pharmacy's local calendar day, not UTC — and
+	// the same one the dashboard and the bot use, so the digest never talks
+	// about a different day than the analysis it now carries.
+	loc := shared.PharmacyLocation()
 
 	// The digest rewrites a static draft into friendlier prose — a one-shot text
 	// call with a system prompt, no tools and no history — so it uses the

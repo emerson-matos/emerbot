@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -44,6 +45,54 @@ func parseDate(s string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
+}
+
+// emptySummaries seeds one zero-valued summary per requested month and returns
+// the calendar span they cover, so a multi-month aggregation can be served by
+// a single date-range query. Duplicate months collapse into one entry.
+//
+// Requesting no months is not an error — it yields an empty map and a zero
+// span, which callers short-circuit on rather than querying for nothing.
+func emptySummaries(yearMonths []string) (map[string]MonthlySummary, time.Time, time.Time, error) {
+	summaries := make(map[string]MonthlySummary, len(yearMonths))
+	var from, to time.Time
+
+	for _, ym := range yearMonths {
+		start, err := time.Parse("2006-01", ym)
+		if err != nil {
+			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid yearMonth %q: %w", ym, err)
+		}
+		summaries[ym] = MonthlySummary{Month: ym}
+
+		end := start.AddDate(0, 1, -1)
+		if from.IsZero() || start.Before(from) {
+			from = start
+		}
+		if to.IsZero() || end.After(to) {
+			to = end
+		}
+	}
+	return summaries, from, to, nil
+}
+
+// accumulateSummaries folds entries into the summaries they belong to, keyed
+// by the month of their effective date. Entries outside the requested months
+// are ignored.
+func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.FinancialEntry) {
+	for _, e := range entries {
+		key := EffectiveDate(e).Format("2006-01")
+		summary, ok := summaries[key]
+		if !ok {
+			continue
+		}
+		if e.Type == domain.EntryTypeIncome {
+			summary.TotalIncome += e.Amount
+		} else {
+			summary.TotalExpense += e.Amount
+		}
+		summary.Balance = summary.TotalIncome - summary.TotalExpense
+		summaries[key] = summary
+	}
 }
 
 // VendaBalcaoIncome sums the Amount of entries where Type is income and

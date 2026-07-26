@@ -15,6 +15,7 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/finance/analytics"
 	"github.com/emerson/emerbot/packages/notifications"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
@@ -189,6 +190,18 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
 	vbIncome := pkgfinance.VendaBalcaoIncome(entries)
 
+	// The month's analysis, read once for the whole run like the ledger above.
+	// It is context for the alerts, not a reason to send: a failure here costs
+	// the digest its "how is the month going" section and nothing more, so it
+	// is logged and stepped over rather than aborting the run.
+	var digestInsights []string
+	analysis, err := analytics.Assemble(ctx, n.store, shared.FinanceLedgerID, month, nowT)
+	if err != nil {
+		runLog.Warn("notifier digest analysis unavailable, sending alerts alone", "error", err)
+	} else {
+		digestInsights = analysis.DigestLines()
+	}
+
 	for _, prefs := range candidates {
 		res.Evaluated++
 		log := userLog(prefs)
@@ -242,7 +255,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		msg := n.buildDigest(alerts)
+		msg := n.buildDigest(alerts, digestInsights)
 		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
 			fail(log, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
@@ -294,8 +307,8 @@ func alertKinds(alerts []notifications.Alert) string {
 // model to rewrite; the dashboard call-to-action is appended afterwards, so the
 // link that actually ships is always the configured URL and never something the
 // model paraphrased, dropped or invented.
-func (n *Notifier) buildDigest(alerts []notifications.Alert) string {
-	body := buildAlertsBody(alerts)
+func (n *Notifier) buildDigest(alerts []notifications.Alert, insights []string) string {
+	body := buildAlertsBody(alerts, insights)
 	if humanized, ok := n.humanize(body); ok {
 		body = humanized
 	}
@@ -386,12 +399,23 @@ func dashboardLink(dashboardURL string) string {
 
 // buildAlertsBody is the static draft: the message we send verbatim when there
 // is no model to rewrite it, and the input the model rewrites when there is.
-func buildAlertsBody(alerts []notifications.Alert) string {
+//
+// The alerts come first because they are the things with a deadline; the
+// month's insights follow as the context that answers "and how are we doing
+// overall?" without the user having to open the dashboard.
+func buildAlertsBody(alerts []notifications.Alert, insights []string) string {
 	var b strings.Builder
 	b.WriteString("🔔 *Farmácia Financeira* — resumo de hoje:\n")
 	for _, a := range alerts {
 		b.WriteString("\n• ")
 		b.WriteString(a.Text)
+	}
+	if len(insights) > 0 {
+		b.WriteString("\n\n📊 *Como está o mês:*\n")
+		for _, line := range insights {
+			b.WriteString("\n• ")
+			b.WriteString(line)
+		}
 	}
 	return b.String()
 }
