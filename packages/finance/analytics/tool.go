@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/emerson/emerbot/packages/domain"
+
 	"google.golang.org/genai"
 
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -56,7 +58,7 @@ func analysisTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 
 			now := time.Now().In(loc)
 			if args.Month == "" {
-				args.Month = now.Format("2006-01")
+				args.Month = domain.MonthOf(now)
 			}
 
 			analysis, err := Assemble(ctx, store, userID, args.Month, now)

@@ -45,7 +45,7 @@ func buildHistory(months []string, summaries []*pkgfinance.MonthlySummary, goals
 	out := make([]MonthlySnapshot, 0, len(months))
 	for i, month := range months {
 		snapshot := MonthlySnapshot{Month: month, Label: month}
-		if t, err := time.Parse("2006-01", month); err == nil {
+		if t, _, err := domain.ParseMonth(month); err == nil {
 			snapshot.Label = monthYearLabel(t)
 		}
 		if i < len(summaries) && summaries[i] != nil {

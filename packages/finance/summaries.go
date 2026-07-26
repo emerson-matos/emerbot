@@ -8,7 +8,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-// The three summaries are derived views over entries, not storage concerns:
+// The summaries are derived views over entries, not storage concerns:
 // every one of them is "list the entries in a period, then fold them". They
 // live here, once, over the EntryLister below, so both Store implementations
 // share a single definition.
@@ -20,7 +20,7 @@ import (
 // makes that class of divergence unrepresentable.
 
 // EntryLister is the only capability the summaries need. Declaring it
-// separately keeps them independent of the 17-method Store.
+// separately keeps them independent of the 18-method Store.
 type EntryLister interface {
 	ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error)
 }

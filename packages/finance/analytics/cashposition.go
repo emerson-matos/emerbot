@@ -3,6 +3,8 @@ package analytics
 import (
 	"time"
 
+	"github.com/emerson/emerbot/packages/domain"
+
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
@@ -56,11 +58,11 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, now time.Time) CashPos
 // `to`, both "YYYY-MM-DD". Unparseable input yields 0 rather than a panic; the
 // dates come from the store, so that only happens if the store is broken.
 func calendarDaysBetween(from, to string) int {
-	start, err := time.Parse("2006-01-02", from)
+	start, err := domain.ParseDay(from)
 	if err != nil {
 		return 0
 	}
-	end, err := time.Parse("2006-01-02", to)
+	end, err := domain.ParseDay(to)
 	if err != nil {
 		return 0
 	}

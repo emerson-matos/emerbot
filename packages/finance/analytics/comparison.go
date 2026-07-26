@@ -46,7 +46,7 @@ type comparison struct {
 // would be arbitrary.
 func buildComparison(month string, current, previous []domain.FinancialEntry, now time.Time) comparison {
 	throughDay := 0
-	if now.Format("2006-01") == month {
+	if domain.MonthOf(now) == month {
 		throughDay = now.Day()
 	}
 	return comparison{
