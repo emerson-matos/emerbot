@@ -29,6 +29,11 @@ Pipeline: `.github/workflows/deploy.yml`.
    > `infra/opentofu/bootstrap/variables.tf` **and** `bucket` in
    > `infra/opentofu/environments/dev/backend.tf` to match.
 
+   > **The bucket and the OIDC provider are one-time; the role's permissions are
+   > not.** The deploy role's policy lives in the bootstrap config, which no
+   > pipeline ever re-applies — see
+   > [granting CI a new permission](#granting-ci-a-new-permission) below.
+
 2. **Migrate existing local state to S3** (only if you were applying locally
    before — a fresh account can skip this):
 
@@ -72,6 +77,35 @@ Pipeline: `.github/workflows/deploy.yml`.
 1. Open a PR. Review the **Tofu plan** comment the pipeline posts.
 2. Merge.
 3. Go to **Actions → deploy → Run workflow** and run it on `main`. That applies.
+
+## Granting CI a new permission
+
+The deploy role is allowed a fixed set of AWS actions
+(`infra/opentofu/bootstrap/main.tf`, `deploy_permissions`). Adding a new kind of
+resource to `environments/dev` is therefore **two** applies, in two different
+root modules, and only the first one happens on merge:
+
+1. commit the resource *and* the matching actions in the bootstrap policy;
+2. run `make tofu-bootstrap` with admin creds so the live role gains them;
+3. then ship — **Actions → deploy → Run workflow**.
+
+Do (3) without (2) and the plan looks perfect but the apply dies partway
+through, naming the action it lacks:
+
+```
+Error: creating S3 Bucket (emerbot-dev-payment-imports): api error AccessDenied:
+User: …assumed-role/emerbot-dev-deploy/GitHubActions is not authorized to
+perform: s3:CreateBucket … because no identity-based policy allows the
+s3:CreateBucket action
+```
+
+The fix is always the same: check the action is in the bootstrap policy, run
+`make tofu-bootstrap`, re-run the deploy workflow. Apply is idempotent, so
+re-running it after a partial failure just continues from where it stopped.
+
+`make tofu-bootstrap-plan` answers "is the live role still in sync?" without
+changing anything — an empty plan means it is. Worth running whenever a deploy
+fails on `AccessDenied`, and before shipping a PR that touched `bootstrap/`.
 
 ## Importing acquirer data
 

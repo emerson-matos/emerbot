@@ -138,6 +138,12 @@ resource "aws_iam_role" "deploy" {
 
 # Service-scoped rather than per-resource: this is a single-purpose dev account,
 # not a shared prod one. Broaden/tighten as the stack grows.
+#
+# Editing this document is only half the change: no pipeline applies this config
+# (CI runs environments/dev only), so the live role keeps its old permissions
+# until someone runs `make tofu-bootstrap` with admin creds. Until then CI plans
+# clean and then fails mid-apply with AccessDenied on the new action. See
+# docs/deploy.md, "Granting CI a new permission".
 data "aws_iam_policy_document" "deploy_permissions" {
   statement {
     sid    = "AppServices"
