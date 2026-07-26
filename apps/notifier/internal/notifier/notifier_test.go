@@ -510,3 +510,72 @@ func TestRunDedupeIsPerRecipientNotPerLedger(t *testing.T) {
 		t.Fatalf("want only u2 sent (u1 already deduped), got res=%+v sent=%v", res, wa.sent)
 	}
 }
+
+func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	// A month running well behind its goal, so the analysis has something to
+	// say beyond the bill that is due today.
+	sale := domain.FinancialEntry{
+		UserID: shared.FinanceLedgerID, EntryID: "venda", Description: "venda",
+		Amount: 100000, TransactionDate: domain.NewCalendarDate(day("2026-07-02")),
+		Type: domain.EntryTypeIncome, Category: "venda_balcao",
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(day("2026-07-02")),
+		Source: domain.SourceManual,
+	}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000), sale,
+	)
+	if err := s.fin.SaveGoal(ctx, domain.Goal{
+		UserID: shared.FinanceLedgerID, Month: "2026-07", RevenueTarget: 5000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+
+	body := wa.sent[0].body
+	// The alerts still lead — the analysis is context, not a replacement.
+	if !strings.Contains(body, "vence hoje") {
+		t.Errorf("digest lost its alert:\n%s", body)
+	}
+	if !strings.Contains(body, "Como está o mês") {
+		t.Errorf("digest has no analysis section:\n%s", body)
+	}
+	if !strings.Contains(body, "Saúde do mês:") {
+		t.Errorf("digest has no health status:\n%s", body)
+	}
+	// R$1.000 of a R$50.000 target with most of the month gone.
+	if !strings.Contains(body, "/dia") {
+		t.Errorf("digest does not say what the goal still needs per day:\n%s", body)
+	}
+}
+
+func TestDigestStillSendsWhenTheAnalysisIsEmpty(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	if !strings.Contains(wa.sent[0].body, "vence hoje") {
+		t.Errorf("digest lost its alert:\n%s", wa.sent[0].body)
+	}
+}
