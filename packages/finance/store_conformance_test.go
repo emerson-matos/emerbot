@@ -92,6 +92,86 @@ func TestStoresAgreeOnAnUnparseableMonth(t *testing.T) {
 	}
 }
 
+func TestStoresAgreeOnMultiMonthlySummary(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		seedLedger(t, s)
+		ctx := context.Background()
+
+		// An entry before the window, and another user's entry inside it:
+		// neither may reach the totals.
+		outside := entry(t, "april", "2026-04-01", 99999)
+		theirs := entry(t, "other-user", "2026-07-05", 88888)
+		theirs.UserID = "u2"
+		for _, e := range []domain.FinancialEntry{outside, theirs} {
+			if err := s.SaveEntry(ctx, e); err != nil {
+				t.Fatalf("seed %s: %v", e.EntryID, err)
+			}
+		}
+
+		got, err := s.MultiMonthlySummary(context.Background(), "u1", []string{"2026-05", "2026-06", "2026-07"})
+		if err != nil {
+			t.Fatalf("multi monthly summary: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("got %d summaries, want one per requested month: %+v", len(got), got)
+		}
+		// A month with no entries is present with zero totals, not absent, so
+		// callers can index the result without a presence check.
+		if may, ok := got["2026-05"]; !ok || may.TotalIncome != 0 || may.TotalExpense != 0 {
+			t.Fatalf("May = %+v (present %v), want a zeroed summary", may, ok)
+		}
+		if june := got["2026-06"]; june.TotalIncome != 50000 || june.TotalExpense != 20000 {
+			t.Fatalf("June = %+v, want income 50000 and expense 20000", june)
+		}
+		if july := got["2026-07"]; july.TotalIncome != 10000 || july.TotalExpense != 35000 {
+			t.Fatalf("July = %+v, want income 10000 and expense 35000", july)
+		}
+		// Each summary must agree with what MonthlySummary reports alone,
+		// otherwise the analysis and the dashboard show different numbers for
+		// the same month.
+		for _, month := range []string{"2026-05", "2026-06", "2026-07"} {
+			single, err := s.MonthlySummary(context.Background(), "u1", month)
+			if err != nil {
+				t.Fatalf("monthly summary %s: %v", month, err)
+			}
+			if got[month] != single {
+				t.Fatalf("%s: multi = %+v, single = %+v — the two disagree", month, got[month], single)
+			}
+		}
+	})
+}
+
+func TestStoresAgreeOnMultiMonthlySummaryEdgeCases(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		seedLedger(t, s)
+		ctx := context.Background()
+
+		// No months requested is not an error: it yields nothing to query.
+		empty, err := s.MultiMonthlySummary(ctx, "u1", nil)
+		if err != nil {
+			t.Fatalf("no months: %v", err)
+		}
+		if len(empty) != 0 {
+			t.Fatalf("got %d summaries for no months, want none", len(empty))
+		}
+
+		// A month it cannot parse is an error everywhere, like every other
+		// month-taking method.
+		if _, err := s.MultiMonthlySummary(ctx, "u1", []string{"2026-07", "julho"}); err == nil {
+			t.Fatal("expected an error for an unparseable month")
+		}
+
+		// Duplicates collapse, and order does not matter.
+		got, err := s.MultiMonthlySummary(ctx, "u1", []string{"2026-07", "2026-06", "2026-07"})
+		if err != nil {
+			t.Fatalf("duplicate months: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d summaries, want duplicates collapsed to 2: %+v", len(got), got)
+		}
+	})
+}
+
 func TestStoresAgreeOnDueDateBucketing(t *testing.T) {
 	eachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

@@ -55,13 +55,16 @@ Alternativas consideradas:
   elas passa a ser teste vermelho, não bug que só aparece num ambiente.
 
 - **Regra derivada:** comportamento compartilhado por várias implementações de
-  uma interface é escrito **uma vez**. Os três sumários (`MonthlySummary`,
-  `CategorySummary`, `CashFlowForecast`) são views derivadas de `ListEntries` e
-  moram em `packages/finance/summaries.go`; as duas implementações delegam. Foi
-  a duplicação deles que produziu a divergência acima.
+  uma interface é escrito **uma vez**. Os sumários (`MonthlySummary`,
+  `MultiMonthlySummary`, `CategorySummary`, `CashFlowForecast`) são views
+  derivadas de `ListEntries` e moram em `packages/finance/summaries.go`; as duas
+  implementações delegam. Foi a duplicação deles que produziu a divergência
+  acima. Método novo no `Store` entra pelo mesmo caminho: uma implementação
+  compartilhada mais um caso na conformidade, nunca duas cópias.
 
-- **Interfaces por consumidor.** `finance.Store` tem 17 métodos; o notifier usa
-  5, o webhook 6, o handler de payments do dashboard usa 1. Cada consumidor
+- **Interfaces por consumidor.** `finance.Store` tem 18 métodos; o notifier usa
+  7, o webhook 6, o `analytics.Assemble` 4, o handler de payments do dashboard
+  usa 1. Cada consumidor
   declara a interface que consome, no seu próprio pacote (idioma Go). Isso
   isola cada um dos métodos adicionados para os outros, e três dos cinco
   handlers do dashboard deixaram de importar `packages/finance` por completo.
