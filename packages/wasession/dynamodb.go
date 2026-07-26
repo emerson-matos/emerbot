@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/emerson/emerbot/packages/dynamostore"
 )
 
 // DynamoDBStore implements Store on a dedicated table whose hash key is Phone
@@ -18,25 +19,24 @@ import (
 // removes expired items on its own schedule (which can lag hours), so Active
 // also checks ExpiresAt at read time rather than trusting mere presence.
 type DynamoDBStore struct {
-	client    *dynamodb.Client
+	client    dynamostore.API
 	tableName string
 }
 
+var _ Store = (*DynamoDBStore)(nil)
+
 func NewDynamoDBStore(ctx context.Context, tableName, endpoint string) (*DynamoDBStore, error) {
-	opts := []func(*awsconfig.LoadOptions) error{}
-	if endpoint != "" {
-		opts = append(opts, awsconfig.WithBaseEndpoint(endpoint))
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	client, err := dynamostore.NewClient(ctx, endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, err
 	}
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		if endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-		}
-	})
-	return &DynamoDBStore{client: client, tableName: tableName}, nil
+	return NewDynamoDBStoreWithClient(client, tableName), nil
+}
+
+// NewDynamoDBStoreWithClient builds a store over any dynamostore.API, which is
+// how tests exercise the conditional writes this store relies on.
+func NewDynamoDBStoreWithClient(client dynamostore.API, tableName string) *DynamoDBStore {
+	return &DynamoDBStore{client: client, tableName: tableName}
 }
 
 func (s *DynamoDBStore) RecordInbound(ctx context.Context, phone string, at time.Time) error {

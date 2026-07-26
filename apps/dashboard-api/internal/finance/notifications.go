@@ -1,21 +1,29 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type NotificationsHandler struct {
-	store pkgfinance.Store
+// NotificationPrefsStore is the slice of the finance store the notification
+// preference endpoints use.
+type NotificationPrefsStore interface {
+	GetNotificationPrefs(ctx context.Context, userID string) (domain.NotificationPrefs, error)
+	SaveNotificationPrefs(ctx context.Context, prefs domain.NotificationPrefs) error
 }
 
-func NewNotificationsHandler(store pkgfinance.Store) *NotificationsHandler {
+type NotificationsHandler struct {
+	store NotificationPrefsStore
+}
+
+func NewNotificationsHandler(store NotificationPrefsStore) *NotificationsHandler {
 	return &NotificationsHandler{store: store}
 }
 
@@ -43,7 +51,7 @@ func toResponse(p domain.NotificationPrefs) notifPrefsResponse {
 func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -54,14 +62,14 @@ func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		prefs = domain.DefaultNotificationPrefs(claims.Subject)
 	}
 	prefs.Phone = normalizePhone(claims.Phone)
-	jsonOK(w, map[string]any{"preferences": toResponse(prefs)})
+	httpx.OK(w, map[string]any{"preferences": toResponse(prefs)})
 }
 
 // Save handles PUT /notifications/preferences
 func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -72,7 +80,7 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		NotifyGoal     *bool `json:"notifyGoal"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -102,17 +110,17 @@ func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	// Can't enable WhatsApp delivery without a phone number to deliver to.
 	if prefs.WAEnabled && prefs.Phone == "" {
-		jsonError(w, "cadastre um número de telefone na sua conta para ativar os alertas", http.StatusBadRequest)
+		httpx.Error(w, "cadastre um número de telefone na sua conta para ativar os alertas", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.SaveNotificationPrefs(r.Context(), prefs); err != nil {
 		log.Printf("save notif prefs error: %v", err)
-		jsonError(w, "failed to save preferences", http.StatusInternalServerError)
+		httpx.Error(w, "failed to save preferences", http.StatusInternalServerError)
 		return
 	}
 
-	jsonOK(w, map[string]any{"preferences": toResponse(prefs)})
+	httpx.OK(w, map[string]any{"preferences": toResponse(prefs)})
 }
 
 // normalizePhone reduces a Cognito phone_number attribute (E.164, e.g.

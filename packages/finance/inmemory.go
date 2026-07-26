@@ -148,154 +148,26 @@ func (s *InMemoryStore) DeleteEntry(_ context.Context, userID, entryID string) e
 
 // --- Summaries ---
 
-func (s *InMemoryStore) MonthlySummary(_ context.Context, userID, yearMonth string) (MonthlySummary, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// The summaries are derived views over ListEntries, shared with DynamoDBStore
+// — see summaries.go. Deriving both from one implementation is what keeps the
+// two Stores from answering the same question differently.
 
-	summary := MonthlySummary{Month: yearMonth}
-	for _, e := range s.entries {
-		if e.UserID != userID {
-			continue
-		}
-		if !strings.HasPrefix(EffectiveDate(e).Format("2006-01"), yearMonth) {
-			continue
-		}
-		if e.Type == domain.EntryTypeIncome {
-			summary.TotalIncome += e.Amount
-		} else {
-			summary.TotalExpense += e.Amount
-		}
-	}
-	summary.Balance = summary.TotalIncome - summary.TotalExpense
-	return summary, nil
+func (s *InMemoryStore) MonthlySummary(ctx context.Context, userID, yearMonth string) (MonthlySummary, error) {
+	return monthlySummary(ctx, s, userID, yearMonth)
 }
 
 // MultiMonthlySummary returns one summary per requested month; months with no
 // entries come back with zero totals rather than missing.
-func (s *InMemoryStore) MultiMonthlySummary(_ context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error) {
-	summaries, _, _, err := emptySummaries(yearMonths)
-	if err != nil || len(summaries) == 0 {
-		return summaries, err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	owned := make([]domain.FinancialEntry, 0, len(s.entries))
-	for _, e := range s.entries {
-		if e.UserID == userID {
-			owned = append(owned, e)
-		}
-	}
-	accumulateSummaries(summaries, owned)
-	return summaries, nil
+func (s *InMemoryStore) MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error) {
+	return multiMonthlySummary(ctx, s, userID, yearMonths)
 }
 
-func (s *InMemoryStore) CategorySummary(_ context.Context, userID string, from, to time.Time) ([]CategorySummary, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	totals := make(map[string]*CategorySummary)
-	for _, e := range s.entries {
-		if e.UserID != userID {
-			continue
-		}
-		if EffectiveDate(e).Before(from) || EffectiveDate(e).After(to) {
-			continue
-		}
-		key := e.Category
-		if _, ok := totals[key]; !ok {
-			totals[key] = &CategorySummary{Category: e.Category, Type: e.Type}
-		}
-		totals[key].Total += e.Amount
-		totals[key].Count++
-	}
-
-	result := make([]CategorySummary, 0, len(totals))
-	for _, v := range totals {
-		result = append(result, *v)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Total > result[j].Total
-	})
-	return result, nil
+func (s *InMemoryStore) CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error) {
+	return categorySummary(ctx, s, userID, from, to)
 }
 
-// CashFlowForecast projects daily running balance across the given calendar
-// month (day 1 through the last day), not a rolling window centered on
-// today — the dashboard always shows the current month.
-func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID, yearMonth string) ([]CashFlowPoint, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	from, err := time.Parse("2006-01", yearMonth)
-	if err != nil {
-		return nil, fmt.Errorf("invalid yearMonth %q: %w", yearMonth, err)
-	}
-	to := from.AddDate(0, 1, -1) // last day of the month
-	days := int(to.Sub(from).Hours()/24) + 1
-
-	// Aggregate entries by effective date
-	type dayTotals struct {
-		income  int64
-		expense int64
-	}
-	byDay := make(map[string]*dayTotals)
-
-	for _, e := range s.entries {
-		if e.UserID != userID {
-			continue
-		}
-		d := EffectiveDate(e)
-		if d.Before(from) || d.After(to) {
-			continue
-		}
-		day := d.Format("2006-01-02")
-		if _, ok := byDay[day]; !ok {
-			byDay[day] = &dayTotals{}
-		}
-		if e.Type == domain.EntryTypeIncome {
-			byDay[day].income += e.Amount
-		} else {
-			byDay[day].expense += e.Amount
-		}
-	}
-
-	// Starting balance before "from"
-	var running int64
-	for _, e := range s.entries {
-		if e.UserID != userID {
-			continue
-		}
-		if !EffectiveDate(e).Before(from) {
-			continue
-		}
-		if e.Type == domain.EntryTypeIncome {
-			running += e.Amount
-		} else {
-			running -= e.Amount
-		}
-	}
-
-	points := make([]CashFlowPoint, 0, days)
-	for i := 0; i < days; i++ {
-		d := from.AddDate(0, 0, i)
-		day := d.Format("2006-01-02")
-		totals := byDay[day]
-		var inc, exp int64
-		if totals != nil {
-			inc = totals.income
-			exp = totals.expense
-		}
-		running += inc - exp
-		points = append(points, CashFlowPoint{
-			Date:             day,
-			ProjectedIncome:  inc,
-			ProjectedExpense: exp,
-			RunningBalance:   running,
-		})
-	}
-	return points, nil
+func (s *InMemoryStore) CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]CashFlowPoint, error) {
+	return cashFlowForecast(ctx, s, userID, yearMonth)
 }
 
 // --- Goals ---

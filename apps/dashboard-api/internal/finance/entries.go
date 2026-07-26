@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
@@ -21,8 +23,24 @@ const (
 	maxEntriesLimit     = 200
 )
 
+// EntryStore is the slice of the finance store the entries endpoints use.
+// Declaring it here, rather than depending on the 17-method pkgfinance.Store,
+// keeps these handlers unaffected by methods added for other consumers — and
+// lets a test double implement five methods instead of seventeen.
+type EntryStore interface {
+	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
+	GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
+	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
+	UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error
+	DeleteEntry(ctx context.Context, userID, entryID string) error
+}
+
 type EntriesHandler struct {
-	store pkgfinance.Store
+	store EntryStore
+	// loc is the calendar the pharmacy reasons about days in. Marking an entry
+	// paid records "today", and in UTC that is already tomorrow for part of
+	// every evening in Brazil.
+	loc *time.Location
 }
 
 // entryResponse is the transport shape; it intentionally has no JSON tags so
@@ -59,15 +77,20 @@ func responseEntry(e domain.FinancialEntry) entryResponse {
 	return r
 }
 
-func NewEntriesHandler(store pkgfinance.Store) *EntriesHandler {
-	return &EntriesHandler{store: store}
+// NewEntriesHandler builds the handler. loc is the timezone whose calendar day
+// defines "today" when an entry is marked paid; nil falls back to UTC.
+func NewEntriesHandler(store EntryStore, loc *time.Location) *EntriesHandler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &EntriesHandler{store: store, loc: loc}
 }
 
 // List handles GET /entries
 func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -75,16 +98,20 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	if from := q.Get("from"); from != "" {
-		t, err := time.Parse("2006-01-02", from)
-		if err == nil {
-			filter.From = &t
+		t, err := domain.ParseDay(from)
+		if err != nil {
+			httpx.Error(w, "invalid from date, expected YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		filter.From = &t
 	}
 	if to := q.Get("to"); to != "" {
-		t, err := time.Parse("2006-01-02", to)
-		if err == nil {
-			filter.To = &t
+		t, err := domain.ParseDay(to)
+		if err != nil {
+			httpx.Error(w, "invalid to date, expected YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		filter.To = &t
 	}
 	filter.Cursor = q.Get("cursor")
 	filter.Category = q.Get("category")
@@ -108,14 +135,14 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.store.ListEntries(r.Context(), claims.UserID, filter)
 	if err != nil {
-		jsonError(w, "failed to list entries", http.StatusInternalServerError)
+		httpx.Error(w, "failed to list entries", http.StatusInternalServerError)
 		return
 	}
 	response := make([]entryResponse, len(entries))
 	for i := range entries {
 		response[i] = responseEntry(entries[i])
 	}
-	jsonOK(w, map[string]any{"entries": response, "count": len(entries)})
+	httpx.OK(w, map[string]any{"entries": response, "count": len(entries)})
 }
 
 type createEntryRequest struct {
@@ -134,37 +161,37 @@ type createEntryRequest struct {
 func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var req createEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	date := domain.NewCalendarDate(time.Now().UTC())
 	if req.Date != "" {
-		t, err := time.Parse("2006-01-02", req.Date)
+		t, err := domain.ParseDay(req.Date)
 		if err != nil {
-			jsonError(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
+			httpx.Error(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
 			return
 		}
 		date = domain.NewCalendarDate(t)
 	}
 
 	if req.Amount <= 0 {
-		jsonError(w, "amount must be positive (in centavos)", http.StatusBadRequest)
+		httpx.Error(w, "amount must be positive (in centavos)", http.StatusBadRequest)
 		return
 	}
 	if req.Category == "" {
-		jsonError(w, "category is required", http.StatusBadRequest)
+		httpx.Error(w, "category is required", http.StatusBadRequest)
 		return
 	}
 	entryType := domain.EntryType(req.Type)
 	if entryType != domain.EntryTypeExpense && entryType != domain.EntryTypeIncome {
-		jsonError(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
+		httpx.Error(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
 		return
 	}
 
@@ -173,13 +200,18 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		status = domain.PaymentStatusPaid
 	}
 
+	// A malformed due date is rejected rather than dropped: silently saving the
+	// entry without the date the user typed loses a bill's deadline, and every
+	// due/overdue alert keys off that field.
 	var dueDate *domain.CalendarDate
 	if req.DueDate != "" {
-		t, err := time.Parse("2006-01-02", req.DueDate)
-		if err == nil {
-			d := domain.NewCalendarDate(t)
-			dueDate = &d
+		t, err := domain.ParseDay(req.DueDate)
+		if err != nil {
+			httpx.Error(w, "invalid due_date format, use YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		d := domain.NewCalendarDate(t)
+		dueDate = &d
 	}
 
 	source := domain.EntrySource(strings.TrimSpace(req.Source))
@@ -199,46 +231,44 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Source:          source,
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := entry.Validate(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.SaveEntry(r.Context(), entry); err != nil {
-		jsonError(w, "failed to save entry", http.StatusInternalServerError)
+		httpx.Error(w, "failed to save entry", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(responseEntry(entry)) //nolint:errcheck
+	httpx.JSON(w, http.StatusCreated, responseEntry(entry))
 }
 
 // Update handles PUT /entries/{id}
 func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	entryID := r.PathValue("id")
 	if entryID == "" {
-		jsonError(w, "entry id is required", http.StatusBadRequest)
+		httpx.Error(w, "entry id is required", http.StatusBadRequest)
 		return
 	}
 
 	existing, err := h.store.GetEntry(r.Context(), claims.UserID, entryID)
 	if err != nil {
-		jsonError(w, "entry not found", http.StatusNotFound)
+		httpx.Error(w, "entry not found", http.StatusNotFound)
 		return
 	}
 
 	var req createEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -258,7 +288,10 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.PaymentStatus != "" {
 		existing.PaymentStatus = domain.PaymentStatus(req.PaymentStatus)
 		if req.PaymentStatus == "paid" && existing.PaymentDate == nil {
-			d := existing.TransactionDate
+			// Settling an entry happens now, not on the day the expense was
+			// incurred. Using the transaction date made a bill registered on
+			// the 14th and paid on the 26th report "pago em 14/07".
+			d := domain.NewCalendarDate(time.Now().In(h.loc))
 			existing.PaymentDate = &d
 		}
 		if req.PaymentStatus == "pending" {
@@ -269,41 +302,46 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Supplier = req.Supplier
 	}
 	if req.DueDate != "" {
-		t, err := time.Parse("2006-01-02", req.DueDate)
-		if err == nil {
-			d := domain.NewCalendarDate(t)
-			existing.DueDate = &d
+		t, err := domain.ParseDay(req.DueDate)
+		if err != nil {
+			httpx.Error(w, "invalid due_date format, use YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		d := domain.NewCalendarDate(t)
+		existing.DueDate = &d
 	}
 	existing.UpdatedAt = time.Now().UTC()
 
-	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
-		jsonError(w, "failed to update entry", http.StatusInternalServerError)
-		return
-	}
+	// Validate before writing: the reverse order persisted the bad entry and
+	// only then answered 400, leaving the caller with a rejection and the
+	// ledger with the invalid row.
 	if err := existing.Validate(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	jsonOK(w, responseEntry(existing))
+	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
+		httpx.Error(w, "failed to update entry", http.StatusInternalServerError)
+		return
+	}
+	httpx.OK(w, responseEntry(existing))
 }
 
 // Delete handles DELETE /entries/{id}
 func (h *EntriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	entryID := r.PathValue("id")
 	if entryID == "" {
-		jsonError(w, "entry id is required", http.StatusBadRequest)
+		httpx.Error(w, "entry id is required", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.DeleteEntry(r.Context(), claims.UserID, entryID); err != nil {
-		jsonError(w, "entry not found", http.StatusNotFound)
+		httpx.Error(w, "entry not found", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

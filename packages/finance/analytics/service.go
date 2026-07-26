@@ -9,16 +9,26 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
+// LedgerReader is the slice of the finance store the analysis reads. The
+// assembly writes nothing, and saying so here keeps it independent of the
+// 18-method Store — and lets a test double implement four methods.
+type LedgerReader interface {
+	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
+	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
+}
+
 // Assemble fetches everything the analysis needs and builds it. This is the
 // single entry point the dashboard API, the notifier and the AI bot all go
 // through, so the three can never drift into telling the user different
 // things about the same month.
 //
 // now must already be in the user's timezone — see Input.Now.
-func Assemble(ctx context.Context, store pkgfinance.Store, userID, month string, now time.Time) (Analysis, error) {
+func Assemble(ctx context.Context, store LedgerReader, userID, month string, now time.Time) (Analysis, error) {
 	// Parsed up front so every lookup below can assume a well-formed month,
 	// including the trailing window MonthRange derives from it.
-	if _, _, err := MonthBounds(month); err != nil {
+	if _, _, err := domain.ParseMonth(month); err != nil {
 		return Analysis{}, err
 	}
 	months := MonthRange(month, HistoryMonths)
@@ -71,8 +81,8 @@ func Assemble(ctx context.Context, store pkgfinance.Store, userID, month string,
 	}), nil
 }
 
-func monthEntries(ctx context.Context, store pkgfinance.Store, userID, month string) ([]domain.FinancialEntry, error) {
-	from, to, err := MonthBounds(month)
+func monthEntries(ctx context.Context, store LedgerReader, userID, month string) ([]domain.FinancialEntry, error) {
+	from, to, err := domain.ParseMonth(month)
 	if err != nil {
 		return nil, err
 	}

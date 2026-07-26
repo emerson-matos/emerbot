@@ -46,8 +46,14 @@ type metaReadPayload struct {
 	MessageID        string `json:"message_id"`
 }
 
-func NewMetaClientWithClient(token string) *MetaClient {
-	return &MetaClient{token: token, client: http.DefaultClient}
+// NewMetaClientWithClient builds a MetaClient over a caller-supplied
+// *http.Client, which is how tests substitute a transport. A nil client falls
+// back to http.DefaultClient.
+func NewMetaClientWithClient(token string, client *http.Client) *MetaClient {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return &MetaClient{token: token, client: client}
 }
 
 func (c *MetaClient) MarkAsRead(ctx context.Context, phoneNumberID, messageID string) error {

@@ -20,12 +20,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/dynamostore"
 )
 
 // Retention is how long a turn is kept before DynamoDB's TTL removes it. It is
@@ -36,7 +36,7 @@ const Retention = 7 * 24 * time.Hour
 // DynamoDBStore implements orchestrator.ShortTermStore over a dedicated table
 // keyed by PK (user id) and SK (a chronological, unique sort key).
 type DynamoDBStore struct {
-	client    *dynamodb.Client
+	client    dynamostore.API
 	tableName string
 	now       func() time.Time
 }
@@ -54,20 +54,21 @@ type item struct {
 // NewDynamoDBStore creates a DynamoDBStore. If endpoint is non-empty it
 // overrides the endpoint (used for DynamoDB Local in docker-compose).
 func NewDynamoDBStore(ctx context.Context, tableName, endpoint string) (*DynamoDBStore, error) {
-	opts := []func(*awsconfig.LoadOptions) error{}
-	if endpoint != "" {
-		opts = append(opts, awsconfig.WithBaseEndpoint(endpoint))
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	client, err := dynamostore.NewClient(ctx, endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, err
 	}
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		if endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-		}
-	})
-	return &DynamoDBStore{client: client, tableName: tableName, now: time.Now}, nil
+	return NewDynamoDBStoreWithClient(client, tableName, time.Now), nil
+}
+
+// NewDynamoDBStoreWithClient builds a store over any dynamostore.API and clock.
+// Tests use it to run against an in-memory table with a fixed now, which is
+// what makes the derived sort keys assertable.
+func NewDynamoDBStoreWithClient(client dynamostore.API, tableName string, now func() time.Time) *DynamoDBStore {
+	if now == nil {
+		now = time.Now
+	}
+	return &DynamoDBStore{client: client, tableName: tableName, now: now}
 }
 
 // Append records one turn. The sort key is derived from the server-side append

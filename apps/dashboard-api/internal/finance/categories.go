@@ -1,20 +1,27 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type CategoriesHandler struct {
-	store pkgfinance.Store
+// CategoryStore is the slice of the finance store the category endpoints use.
+type CategoryStore interface {
+	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
+	SaveCategory(ctx context.Context, cat domain.Category) error
 }
 
-func NewCategoriesHandler(store pkgfinance.Store) *CategoriesHandler {
+type CategoriesHandler struct {
+	store CategoryStore
+}
+
+func NewCategoriesHandler(store CategoryStore) *CategoriesHandler {
 	return &CategoriesHandler{store: store}
 }
 
@@ -22,13 +29,13 @@ func NewCategoriesHandler(store pkgfinance.Store) *CategoriesHandler {
 func (h *CategoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	cats, err := h.store.ListCategories(r.Context(), claims.UserID)
 	if err != nil {
-		jsonError(w, "failed to list categories", http.StatusInternalServerError)
+		httpx.Error(w, "failed to list categories", http.StatusInternalServerError)
 		return
 	}
 
@@ -41,7 +48,7 @@ func (h *CategoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		cats = defaults
 	}
 
-	jsonOK(w, map[string]any{"categories": cats})
+	httpx.OK(w, map[string]any{"categories": cats})
 }
 
 type createCategoryRequest struct {
@@ -54,26 +61,26 @@ type createCategoryRequest struct {
 func (h *CategoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var req createCategoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.Label = strings.TrimSpace(req.Label)
 	if req.Slug == "" || req.Label == "" {
-		jsonError(w, "slug and label are required", http.StatusBadRequest)
+		httpx.Error(w, "slug and label are required", http.StatusBadRequest)
 		return
 	}
 
 	entryType := domain.EntryType(req.Type)
 	if entryType != domain.EntryTypeExpense && entryType != domain.EntryTypeIncome {
-		jsonError(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
+		httpx.Error(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
 		return
 	}
 
@@ -85,10 +92,8 @@ func (h *CategoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Default: false,
 	}
 	if err := h.store.SaveCategory(r.Context(), cat); err != nil {
-		jsonError(w, "failed to save category", http.StatusInternalServerError)
+		httpx.Error(w, "failed to save category", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(cat) //nolint:errcheck
+	httpx.JSON(w, http.StatusCreated, cat)
 }

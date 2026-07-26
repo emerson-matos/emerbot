@@ -157,7 +157,7 @@ func TestSchemaToJSONConvertsFinanceTool(t *testing.T) {
 	t.Parallel()
 
 	var createTool finance.Tool
-	for _, tl := range finance.FinanceTools(finance.NewInMemoryStore(), "") {
+	for _, tl := range finance.FinanceTools(finance.NewInMemoryStore(), "", time.UTC) {
 		if tl.Name == "create_financial_entry" {
 			createTool = tl
 		}
@@ -204,7 +204,7 @@ func TestSchemaToJSONLowercasesIntegerType(t *testing.T) {
 	t.Parallel()
 
 	var due finance.Tool
-	for _, tl := range finance.FinanceTools(finance.NewInMemoryStore(), "") {
+	for _, tl := range finance.FinanceTools(finance.NewInMemoryStore(), "", time.UTC) {
 		if tl.Name == "list_due_entries" {
 			due = tl
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/shared"
 )
 
@@ -25,7 +26,7 @@ func GatewayMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := ClaimsFromContext(r.Context())
 		if !ok || claims.Subject == "" {
-			jsonError(w, "missing authenticated identity", http.StatusUnauthorized)
+			httpx.Error(w, "missing authenticated identity", http.StatusUnauthorized)
 			return
 		}
 		// TODO(mock): all authenticated users share one finance ledger until

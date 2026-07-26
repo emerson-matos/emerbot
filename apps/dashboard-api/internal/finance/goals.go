@@ -1,22 +1,27 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
-	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type GoalsHandler struct {
-	store pkgfinance.Store
+// GoalStore is the slice of the finance store the goal endpoints use.
+type GoalStore interface {
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+	SaveGoal(ctx context.Context, goal domain.Goal) error
 }
 
-func NewGoalsHandler(store pkgfinance.Store) *GoalsHandler {
+type GoalsHandler struct {
+	store GoalStore
+}
+
+func NewGoalsHandler(store GoalStore) *GoalsHandler {
 	return &GoalsHandler{store: store}
 }
 
@@ -24,28 +29,29 @@ func NewGoalsHandler(store pkgfinance.Store) *GoalsHandler {
 func (h *GoalsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	month := r.URL.Query().Get("month")
-	if month == "" {
-		month = time.Now().Format("2006-01")
+	month, err := httpx.Month(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	goal, err := h.store.GetGoal(r.Context(), claims.UserID, month)
 	if err != nil {
-		jsonOK(w, map[string]any{"goal": nil, "month": month})
+		httpx.OK(w, map[string]any{"goal": nil, "month": month})
 		return
 	}
-	jsonOK(w, map[string]any{"goal": goal, "month": month})
+	httpx.OK(w, map[string]any{"goal": goal, "month": month})
 }
 
 // Save handles PUT /goals
 func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -55,17 +61,24 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		ExpenseTarget *int64 `json:"expense_target"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	month := body.Month
 	if month == "" {
-		month = time.Now().Format("2006-01")
+		month = domain.CurrentMonth()
+	}
+	// Validated up front, and for real: the previous check only looked at
+	// months starting with "20" that contained exactly one dash, so "julho"
+	// and "1999-7" were both stored verbatim as a goal's month.
+	if _, _, err := domain.ParseMonth(month); err != nil {
+		httpx.Error(w, "invalid month format, use YYYY-MM", http.StatusBadRequest)
+		return
 	}
 
 	if body.RevenueTarget == nil && body.ExpenseTarget == nil {
-		jsonError(w, "provide at least one of revenue_target or expense_target", http.StatusBadRequest)
+		httpx.Error(w, "provide at least one of revenue_target or expense_target", http.StatusBadRequest)
 		return
 	}
 
@@ -76,7 +89,7 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	if body.RevenueTarget != nil {
 		if *body.RevenueTarget < 0 {
-			jsonError(w, "revenue_target must be >= 0", http.StatusBadRequest)
+			httpx.Error(w, "revenue_target must be >= 0", http.StatusBadRequest)
 			return
 		}
 		goal.RevenueTarget = *body.RevenueTarget
@@ -84,27 +97,17 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	if body.ExpenseTarget != nil {
 		if *body.ExpenseTarget < 0 {
-			jsonError(w, "expense_target must be >= 0", http.StatusBadRequest)
+			httpx.Error(w, "expense_target must be >= 0", http.StatusBadRequest)
 			return
 		}
 		goal.ExpenseTarget = *body.ExpenseTarget
 	}
 
-	if strings.HasPrefix(month, "20") && strings.Count(month, "-") == 1 {
-		parts := strings.Split(month, "-")
-		if len(parts) == 2 && len(parts[0]) == 4 && len(parts[1]) == 2 {
-			// valid month format
-		} else {
-			jsonError(w, "invalid month format, use YYYY-MM", http.StatusBadRequest)
-			return
-		}
-	}
-
 	if err := h.store.SaveGoal(r.Context(), goal); err != nil {
 		log.Printf("save goal error: %v", err)
-		jsonError(w, "failed to save goal", http.StatusInternalServerError)
+		httpx.Error(w, "failed to save goal", http.StatusInternalServerError)
 		return
 	}
 
-	jsonOK(w, map[string]any{"goal": goal})
+	httpx.OK(w, map[string]any{"goal": goal})
 }

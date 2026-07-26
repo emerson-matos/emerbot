@@ -13,6 +13,7 @@ import (
 // package is built on top of packages/finance, and having finance reach back
 // into it would be an import cycle.
 func All(store finance.Store, dashboardURL string) []finance.Tool {
-	tools := finance.FinanceTools(store, dashboardURL)
-	return append(tools, analytics.Tools(store, shared.PharmacyLocation())...)
+	loc := shared.PharmacyLocation()
+	tools := finance.FinanceTools(store, dashboardURL, loc)
+	return append(tools, analytics.Tools(store, loc)...)
 }

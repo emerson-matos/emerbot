@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/dynamostore"
 )
 
 // Canonical payment items share the existing finance table (single-table
@@ -116,28 +116,37 @@ type importItem struct {
 
 // DynamoDBRepository implements Repository against the shared finance table.
 type DynamoDBRepository struct {
-	client    *dynamodb.Client
+	client    dynamostore.API
 	tableName string
 	ledgerID  string // partition all payment items belong to (the pharmacy ledger)
+
+	// backoffBase overrides defaultBackoffBase; zero means use the default.
+	backoffBase time.Duration
 }
+
+func (r *DynamoDBRepository) backoff() time.Duration {
+	if r.backoffBase > 0 {
+		return r.backoffBase
+	}
+	return defaultBackoffBase
+}
+
+var _ Repository = (*DynamoDBRepository)(nil)
 
 // NewDynamoDBRepository creates a repository bound to one table and ledger
 // partition. If endpoint is non-empty it overrides the endpoint (DynamoDB Local).
 func NewDynamoDBRepository(ctx context.Context, tableName, endpoint, ledgerID string) (*DynamoDBRepository, error) {
-	opts := []func(*awsconfig.LoadOptions) error{}
-	if endpoint != "" {
-		opts = append(opts, awsconfig.WithBaseEndpoint(endpoint))
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	client, err := dynamostore.NewClient(ctx, endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, err
 	}
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		if endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-		}
-	})
-	return &DynamoDBRepository{client: client, tableName: tableName, ledgerID: ledgerID}, nil
+	return NewDynamoDBRepositoryWithClient(client, tableName, ledgerID), nil
+}
+
+// NewDynamoDBRepositoryWithClient builds a repository over any dynamostore.API,
+// which is how tests exercise the replace-and-reindex logic in Save.
+func NewDynamoDBRepositoryWithClient(client dynamostore.API, tableName, ledgerID string) *DynamoDBRepository {
+	return &DynamoDBRepository{client: client, tableName: tableName, ledgerID: ledgerID}
 }
 
 func (r *DynamoDBRepository) pk() string { return pkPrefix + r.ledgerID }
@@ -198,6 +207,11 @@ const maxBatchWriteItems = 25
 // maxBatchWriteRetries bounds the retry loop for UnprocessedItems (throttling).
 const maxBatchWriteRetries = 8
 
+// defaultBackoffBase is the first retry delay; each further attempt doubles it.
+// Tests shrink it via the backoffBase field so exercising the full retry ladder
+// does not mean actually sleeping through it.
+const defaultBackoffBase = 50 * time.Millisecond
+
 // batchWrite writes every request, re-submitting UnprocessedItems — which
 // BatchWriteItem returns instead of failing when a batch is throttled.
 func (r *DynamoDBRepository) batchWrite(ctx context.Context, writes []types.WriteRequest) error {
@@ -222,7 +236,7 @@ func (r *DynamoDBRepository) batchWrite(ctx context.Context, writes []types.Writ
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Duration(1<<attempt) * 50 * time.Millisecond):
+			case <-time.After(time.Duration(1<<attempt) * r.backoff()):
 			}
 		}
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/emerson/emerbot/packages/domain"
+
 	"google.golang.org/genai"
 
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -18,13 +20,13 @@ import (
 //	tools := append(finance.FinanceTools(store, url), analytics.Tools(store, loc)...)
 //
 // loc is the timezone whose calendar day defines "today" (nil means UTC).
-func Tools(store pkgfinance.Store, loc *time.Location) []pkgfinance.Tool {
+func Tools(store LedgerReader, loc *time.Location) []pkgfinance.Tool {
 	return []pkgfinance.Tool{analysisTool(store, loc)}
 }
 
 // analysisTool answers the open-ended questions the per-month summary cannot:
 // "como estamos?", "vai bater a meta?", "o que devo fazer?".
-func analysisTool(store pkgfinance.Store, loc *time.Location) pkgfinance.Tool {
+func analysisTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -56,7 +58,7 @@ func analysisTool(store pkgfinance.Store, loc *time.Location) pkgfinance.Tool {
 
 			now := time.Now().In(loc)
 			if args.Month == "" {
-				args.Month = now.Format("2006-01")
+				args.Month = domain.MonthOf(now)
 			}
 
 			analysis, err := Assemble(ctx, store, userID, args.Month, now)
