@@ -62,8 +62,13 @@ func Build(in Input) Analysis {
 	if currentGoal != nil {
 		revenueTarget = currentGoal.RevenueTarget
 	}
-	week := buildWeekComparison(in.Entries, in.Now, counterSales, revenueTarget)
+	week := buildWeekComparison(in.Entries, in.Now, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, in.Now, counterSales)
+	weekdays := weekdayStats(in.Entries, in.Now)
+	// One projection of the month, and one per-day ask derived from it, shared
+	// by the health insight, the weekly recommendation, the dashboard card and
+	// the bot — they each used to work one out for themselves and disagreed.
+	projection := buildProjection(weekdays, goals, in.Now)
 	// One month-over-month comparison, measured at the same height of both
 	// months, shared by the trends and the health insights — they used to
 	// derive it separately from the full summaries and both inherited the
@@ -75,29 +80,31 @@ func Build(in Input) Analysis {
 	return Analysis{
 		Month:              in.Month,
 		KPIs:               kpis,
-		Health:             buildHealth(in.Entries, currentSummary, compared, week, goals),
+		Health:             buildHealth(in.Entries, currentSummary, compared, week, projection),
 		Trends:             trends,
-		Weekdays:           weekdayStats(in.Entries, in.Now),
+		Weekdays:           weekdays,
 		WeekComparison:     week,
 		Highlights:         buildHighlights(in.Entries),
 		CashOutDays:        buildCashOutDays(in.Entries),
 		ExpenseComposition: expenseComposition(in.Entries),
 		Goals:              goals,
+		Projection:         projection,
 		History:            buildHistory(months, in.Summaries, in.Goals),
 		CashPosition:       cashPosition,
-		Recommendations:    buildRecommendations(week, goals, trends, cashPosition),
+		Recommendations:    buildRecommendations(week, projection, trends, cashPosition),
 	}
 }
 
 // buildWeekComparison measures counter sales from this Monday through today
-// against the whole of last week, and projects the rest of the month from the
-// resulting daily rate.
+// against the whole of last week, and projects the rest of *this week* from
+// the resulting daily rate. Projecting the month is buildProjection's job, off
+// the weekday averages — this used to do both and the two disagreed.
 //
 // Comparisons are done on "YYYY-MM-DD" strings rather than instants: the week
 // boundaries come from now's calendar fields, and an entry's date is a
 // calendar day with no time or zone of its own, so string ordering is the only
 // comparison that cannot slide a day.
-func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, currentIncome, monthlyTarget int64) WeekComparison {
+func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthlyTarget int64) WeekComparison {
 	dayOfWeek := int(now.Weekday()) // 0 = Sunday
 	// Weeks run Monday-to-Sunday here, so Sunday belongs to the week that
 	// started six days ago, not to the one starting tomorrow.
@@ -148,18 +155,13 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, current
 	}
 	week.Labels = labels
 
-	// Project the rest of this week at last week's daily average, then carry
-	// that week's daily rate across the days left in the month.
+	// Project the rest of this week at last week's daily average.
 	avgPerDay := float64(week.Previous) / 7
 	remainingDays := 7 - dayOfWeek
 	if dayOfWeek == 0 {
 		remainingDays = 0
 	}
-	projectedWeekly := float64(week.Current) + avgPerDay*float64(remainingDays)
-	week.ProjectedWeekly = roundToInt64(projectedWeekly)
-
-	daysRemaining := daysInMonth(now) - now.Day()
-	week.ProjectedMonthly = roundToInt64(float64(currentIncome) + (projectedWeekly/7)*float64(daysRemaining))
+	week.ProjectedWeekly = roundToInt64(float64(week.Current) + avgPerDay*float64(remainingDays))
 
 	return week
 }

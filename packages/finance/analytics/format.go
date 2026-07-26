@@ -48,11 +48,10 @@ func formatBRL(centavos int64) string {
 	return b.String()
 }
 
-// formatBRLFloat rounds a fractional centavos value (a per-day rate, say) to
-// the nearest centavo before formatting.
-func formatBRLFloat(centavos float64) string {
-	return formatBRL(roundToInt64(centavos))
-}
+// There is deliberately no float variant of formatBRL. The per-day rate was
+// the only fractional amount that reached the copy, and it is rounded to a
+// whole centavo in Projection.NeededPerDay — one rounding, at the point the
+// number is derived, rather than one per consumer that prints it.
 
 // dayMonthLabel renders "12 de jul." — the short day label used for
 // highlights.

@@ -78,8 +78,12 @@ func (a Analysis) ToolPayload() map[string]any {
 			"faturamento_atual":           reais(a.WeekComparison.Current),
 			"faturamento_semana_passada":  reais(a.WeekComparison.Previous),
 			"mesmo_dia_da_semana_passada": reais(a.WeekComparison.PreviousUpToDay),
-			"projecao_do_mes":             reais(a.WeekComparison.ProjectedMonthly),
 		},
+		// The same projection the dashboard draws. It used to be derived here
+		// from last week's flat daily rate while the page used the weekday
+		// averages, so the bot and the screen quoted different figures for the
+		// same month.
+		"projecao_do_mes": reais(a.Projection.Projected),
 		"meta": map[string]any{
 			"faturamento_meta":  reais(a.Goals.RevenueTarget),
 			"faturamento_atual": reais(a.Goals.RevenueActual),
@@ -103,8 +107,11 @@ func (a Analysis) ToolPayload() map[string]any {
 		"pior_dia":         dayText(a.Highlights.WorstIncome),
 	}
 
-	if p, ok := goalPace(a.Goals); ok && p.neededPerDay > 0 {
-		payload["necessario_por_dia_para_bater_a_meta"] = reais(roundToInt64(p.neededPerDay))
+	if a.Projection.NeededPerDay > 0 {
+		payload["necessario_por_dia_para_bater_a_meta"] = reais(a.Projection.NeededPerDay)
+	}
+	if a.Projection.Gap > 0 {
+		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
 	if d := a.CashPosition.DaysUntilNegative; d != nil {
 		payload["caixa"].(map[string]any)["dias_ate_saldo_negativo"] = *d
