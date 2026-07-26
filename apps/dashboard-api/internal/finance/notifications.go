@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,14 +10,20 @@ import (
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type NotificationsHandler struct {
-	store pkgfinance.Store
+// NotificationPrefsStore is the slice of the finance store the notification
+// preference endpoints use.
+type NotificationPrefsStore interface {
+	GetNotificationPrefs(ctx context.Context, userID string) (domain.NotificationPrefs, error)
+	SaveNotificationPrefs(ctx context.Context, prefs domain.NotificationPrefs) error
 }
 
-func NewNotificationsHandler(store pkgfinance.Store) *NotificationsHandler {
+type NotificationsHandler struct {
+	store NotificationPrefsStore
+}
+
+func NewNotificationsHandler(store NotificationPrefsStore) *NotificationsHandler {
 	return &NotificationsHandler{store: store}
 }
 

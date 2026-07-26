@@ -1,20 +1,29 @@
 package finance
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
+	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type SummaryHandler struct {
-	store pkgfinance.Store
+// SummaryStore is the slice of the finance store the summary endpoints use.
+type SummaryStore interface {
+	MonthlySummary(ctx context.Context, userID, yearMonth string) (pkgfinance.MonthlySummary, error)
+	CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]pkgfinance.CategorySummary, error)
+	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
 }
 
-func NewSummaryHandler(store pkgfinance.Store) *SummaryHandler {
+type SummaryHandler struct {
+	store SummaryStore
+}
+
+func NewSummaryHandler(store SummaryStore) *SummaryHandler {
 	return &SummaryHandler{store: store}
 }
 
@@ -26,15 +35,16 @@ func (h *SummaryHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month := r.URL.Query().Get("month")
-	if month == "" {
-		month = time.Now().Format("2006-01")
+	month, err := httpx.Month(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	summary, err := h.store.MonthlySummary(r.Context(), claims.UserID, month)
 	if err != nil {
 		log.Printf("monthly summary error: %v", err)
-		httpx.Error(w, "failed to get monthly summary: "+err.Error(), http.StatusInternalServerError)
+		httpx.Error(w, "failed to get monthly summary", http.StatusInternalServerError)
 		return
 	}
 	httpx.OK(w, summary)
@@ -48,19 +58,10 @@ func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	to := from.AddDate(0, 1, -1)
-
-	if f := r.URL.Query().Get("from"); f != "" {
-		if t, err := time.Parse("2006-01-02", f); err == nil {
-			from = t
-		}
-	}
-	if t := r.URL.Query().Get("to"); t != "" {
-		if parsed, err := time.Parse("2006-01-02", t); err == nil {
-			to = parsed
-		}
+	from, to, err := httpx.DateRange(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	cats, err := h.store.CategorySummary(r.Context(), claims.UserID, from, to)
@@ -68,7 +69,11 @@ func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "failed to get category summary", http.StatusInternalServerError)
 		return
 	}
-	httpx.OK(w, map[string]any{"categories": cats, "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02")})
+	httpx.OK(w, map[string]any{
+		"categories": cats,
+		"from":       domain.NewCalendarDate(from).String(),
+		"to":         domain.NewCalendarDate(to).String(),
+	})
 }
 
 // CashFlow handles GET /summary/cashflow?month=2026-07
@@ -79,9 +84,10 @@ func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month := r.URL.Query().Get("month")
-	if month == "" {
-		month = time.Now().Format("2006-01")
+	month, err := httpx.Month(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	points, err := h.store.CashFlowForecast(r.Context(), claims.UserID, month)

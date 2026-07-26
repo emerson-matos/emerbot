@@ -552,7 +552,7 @@ func TestFormatBRL(t *testing.T) {
 	}
 }
 
-func TestMonthRangeAndBounds(t *testing.T) {
+func TestMonthRange(t *testing.T) {
 	got := MonthRange("2026-01", 3)
 	want := []string{"2025-11", "2025-12", "2026-01"}
 	for i := range want {
@@ -561,15 +561,11 @@ func TestMonthRangeAndBounds(t *testing.T) {
 		}
 	}
 
-	from, to, err := MonthBounds("2026-02")
-	if err != nil {
-		t.Fatalf("MonthBounds: %v", err)
-	}
-	if from.Format("2006-01-02") != "2026-02-01" || to.Format("2006-01-02") != "2026-02-28" {
-		t.Errorf("bounds = %s..%s, want the whole of February", from, to)
-	}
-	if _, _, err := MonthBounds("julho"); err == nil {
-		t.Error("expected an error for a malformed month")
+	// An unparseable month yields just that month, so a caller still gets a
+	// usable window instead of an empty one. Month *bounds* are the domain's
+	// job now (see domain.ParseMonth) — this package no longer re-derives them.
+	if got := MonthRange("julho", 3); len(got) != 1 || got[0] != "julho" {
+		t.Fatalf("MonthRange(%q) = %v, want the month back unchanged", "julho", got)
 	}
 }
 

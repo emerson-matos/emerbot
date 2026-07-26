@@ -1,7 +1,6 @@
 package analytics
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -169,25 +168,15 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, current
 // (inclusive), oldest-first. An unparseable month yields just that month, so
 // callers still get a usable window rather than an empty one.
 func MonthRange(month string, count int) []string {
-	t, err := time.Parse("2006-01", month)
+	t, _, err := domain.ParseMonth(month)
 	if err != nil {
 		return []string{month}
 	}
 	months := make([]string, 0, count)
 	for i := count - 1; i >= 0; i-- {
-		months = append(months, t.AddDate(0, -i, 0).Format("2006-01"))
+		months = append(months, domain.MonthOf(t.AddDate(0, -i, 0)))
 	}
 	return months
-}
-
-// MonthBounds returns the first and last calendar day of month, for the entry
-// queries that feed the analysis.
-func MonthBounds(month string) (from, to time.Time, err error) {
-	from, err = time.Parse("2006-01", month)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid month %q: %w", month, err)
-	}
-	return from, from.AddDate(0, 1, -1), nil
 }
 
 // counterSalesTotal sums counter sales across the given entries.

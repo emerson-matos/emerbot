@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -22,8 +23,20 @@ const (
 	maxEntriesLimit     = 200
 )
 
+// EntryStore is the slice of the finance store the entries endpoints use.
+// Declaring it here, rather than depending on the 17-method pkgfinance.Store,
+// keeps these handlers unaffected by methods added for other consumers — and
+// lets a test double implement five methods instead of seventeen.
+type EntryStore interface {
+	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
+	GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
+	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
+	UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error
+	DeleteEntry(ctx context.Context, userID, entryID string) error
+}
+
 type EntriesHandler struct {
-	store pkgfinance.Store
+	store EntryStore
 }
 
 // entryResponse is the transport shape; it intentionally has no JSON tags so
@@ -60,7 +73,7 @@ func responseEntry(e domain.FinancialEntry) entryResponse {
 	return r
 }
 
-func NewEntriesHandler(store pkgfinance.Store) *EntriesHandler {
+func NewEntriesHandler(store EntryStore) *EntriesHandler {
 	return &EntriesHandler{store: store}
 }
 
@@ -76,16 +89,20 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	if from := q.Get("from"); from != "" {
-		t, err := time.Parse("2006-01-02", from)
-		if err == nil {
-			filter.From = &t
+		t, err := domain.ParseDay(from)
+		if err != nil {
+			httpx.Error(w, "invalid from date, expected YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		filter.From = &t
 	}
 	if to := q.Get("to"); to != "" {
-		t, err := time.Parse("2006-01-02", to)
-		if err == nil {
-			filter.To = &t
+		t, err := domain.ParseDay(to)
+		if err != nil {
+			httpx.Error(w, "invalid to date, expected YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		filter.To = &t
 	}
 	filter.Cursor = q.Get("cursor")
 	filter.Category = q.Get("category")
@@ -147,7 +164,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	date := domain.NewCalendarDate(time.Now().UTC())
 	if req.Date != "" {
-		t, err := time.Parse("2006-01-02", req.Date)
+		t, err := domain.ParseDay(req.Date)
 		if err != nil {
 			httpx.Error(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
 			return
@@ -174,13 +191,18 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		status = domain.PaymentStatusPaid
 	}
 
+	// A malformed due date is rejected rather than dropped: silently saving the
+	// entry without the date the user typed loses a bill's deadline, and every
+	// due/overdue alert keys off that field.
 	var dueDate *domain.CalendarDate
 	if req.DueDate != "" {
-		t, err := time.Parse("2006-01-02", req.DueDate)
-		if err == nil {
-			d := domain.NewCalendarDate(t)
-			dueDate = &d
+		t, err := domain.ParseDay(req.DueDate)
+		if err != nil {
+			httpx.Error(w, "invalid due_date format, use YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		d := domain.NewCalendarDate(t)
+		dueDate = &d
 	}
 
 	source := domain.EntrySource(strings.TrimSpace(req.Source))
@@ -212,9 +234,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "failed to save entry", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(responseEntry(entry)) //nolint:errcheck
+	httpx.JSON(w, http.StatusCreated, responseEntry(entry))
 }
 
 // Update handles PUT /entries/{id}
@@ -270,11 +290,13 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Supplier = req.Supplier
 	}
 	if req.DueDate != "" {
-		t, err := time.Parse("2006-01-02", req.DueDate)
-		if err == nil {
-			d := domain.NewCalendarDate(t)
-			existing.DueDate = &d
+		t, err := domain.ParseDay(req.DueDate)
+		if err != nil {
+			httpx.Error(w, "invalid due_date format, use YYYY-MM-DD", http.StatusBadRequest)
+			return
 		}
+		d := domain.NewCalendarDate(t)
+		existing.DueDate = &d
 	}
 	existing.UpdatedAt = time.Now().UTC()
 

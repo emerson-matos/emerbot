@@ -14,23 +14,21 @@ import (
 	"github.com/emerson/emerbot/packages/finance/analytics"
 )
 
-const testUserID = "shared-ledger"
-
 // analysisRequest builds an authenticated GET against the analysis endpoint.
 func analysisRequest(query string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/analysis/monthly"+query, nil)
-	claims := apiauth.Claims{UserID: testUserID}
+	claims := apiauth.Claims{UserID: testUser}
 	return req.WithContext(apiauth.WithClaims(req.Context(), claims))
 }
 
-func seedEntry(t *testing.T, store pkgfinance.Store, date string, amount int64, category string, kind domain.EntryType) {
+func seedPaidEntry(t *testing.T, store pkgfinance.Store, date string, amount int64, category string, kind domain.EntryType) {
 	t.Helper()
 	d, err := domain.ParseCalendarDate(date)
 	if err != nil {
 		t.Fatalf("parse date %q: %v", date, err)
 	}
 	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
-		UserID:          testUserID,
+		UserID:          testUser,
 		TransactionDate: d,
 		Amount:          amount,
 		Category:        category,
@@ -50,8 +48,8 @@ func seedEntry(t *testing.T, store pkgfinance.Store, date string, amount int64, 
 func TestAnalysisMonthlyReturnsTheWholeAnalysis(t *testing.T) {
 	store := pkgfinance.NewInMemoryStore()
 	month := time.Now().Format("2006-01")
-	seedEntry(t, store, month+"-01", 250000, "venda_balcao", domain.EntryTypeIncome)
-	seedEntry(t, store, month+"-02", 100000, "aluguel", domain.EntryTypeExpense)
+	seedPaidEntry(t, store, month+"-01", 250000, "venda_balcao", domain.EntryTypeIncome)
+	seedPaidEntry(t, store, month+"-02", 100000, "aluguel", domain.EntryTypeExpense)
 
 	rec := httptest.NewRecorder()
 	NewAnalysisHandler(store, time.UTC).Monthly(rec, analysisRequest(""))

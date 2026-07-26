@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,14 +9,19 @@ import (
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type CategoriesHandler struct {
-	store pkgfinance.Store
+// CategoryStore is the slice of the finance store the category endpoints use.
+type CategoryStore interface {
+	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
+	SaveCategory(ctx context.Context, cat domain.Category) error
 }
 
-func NewCategoriesHandler(store pkgfinance.Store) *CategoriesHandler {
+type CategoriesHandler struct {
+	store CategoryStore
+}
+
+func NewCategoriesHandler(store CategoryStore) *CategoriesHandler {
 	return &CategoriesHandler{store: store}
 }
 
@@ -89,7 +95,5 @@ func (h *CategoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "failed to save category", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(cat) //nolint:errcheck
+	httpx.JSON(w, http.StatusCreated, cat)
 }

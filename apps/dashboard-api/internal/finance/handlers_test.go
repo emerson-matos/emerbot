@@ -732,18 +732,99 @@ func TestCategorySummary(t *testing.T) {
 	}
 }
 
-func TestCategorySummaryIgnoresMalformedDates(t *testing.T) {
-	// A malformed from/to falls back to the current month rather than failing,
-	// so the response still describes a real range.
-	w := run(NewSummaryHandler(newStore(t)).Categories, authed(http.MethodGet, "/summary/categories?from=julho&to=agosto", ""))
+func TestCategorySummaryRejectsMalformedDates(t *testing.T) {
+	// A malformed from/to used to fall back to the current month, so a typo'd
+	// date returned a real period's numbers under the label the user asked
+	// for — indistinguishable from correct data on a financial dashboard.
+	h := NewSummaryHandler(newStore(t))
+	for _, query := range []string{"?from=julho", "?to=agosto", "?from=2026-07-31&to=2026-07-01", "?from=1900-01-01&to=2999-12-31"} {
+		t.Run(query, func(t *testing.T) {
+			w := run(h.Categories, authed(http.MethodGet, "/summary/categories"+query, ""))
+			assertStatus(t, w, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestCategorySummaryDefaultsToTheCurrentMonth(t *testing.T) {
+	w := run(NewSummaryHandler(newStore(t)).Categories, authed(http.MethodGet, "/summary/categories", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
-	now := time.Now().UTC()
-	wantFrom := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
-	if body["from"] != wantFrom {
-		t.Fatalf("from = %v, want the current month's first day %v", body["from"], wantFrom)
+	wantFrom, _ := domain.CurrentMonthRange()
+	if body["from"] != domain.NewCalendarDate(wantFrom).String() {
+		t.Fatalf("from = %v, want the current month's first day", body["from"])
 	}
+}
+
+func TestMonthParamIsValidated(t *testing.T) {
+	store := newStore(t)
+	summary := NewSummaryHandler(store)
+	goals := NewGoalsHandler(store)
+
+	// Every endpoint taking ?month= must reject a month it cannot parse, so
+	// "no data" and "you typed it wrong" never render the same.
+	endpoints := map[string]http.HandlerFunc{
+		"monthly":  summary.Monthly,
+		"cashflow": summary.CashFlow,
+		"goals":    goals.Get,
+	}
+	for name, h := range endpoints {
+		for _, month := range []string{"julho", "2026", "2026-13"} {
+			t.Run(name+"/"+month, func(t *testing.T) {
+				w := run(h, authed(http.MethodGet, "/x?month="+month, ""))
+				assertStatus(t, w, http.StatusBadRequest)
+			})
+		}
+	}
+}
+
+func TestSaveGoalRejectsAMonthTheOldCheckLetThrough(t *testing.T) {
+	store := newStore(t)
+	// The previous validation only inspected months starting with "20" that
+	// held exactly one dash, so both of these were stored verbatim.
+	for _, month := range []string{"julho", "1999-7", "2026-13"} {
+		t.Run(month, func(t *testing.T) {
+			body := `{"month":"` + month + `","revenue_target":1000}`
+			w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", body))
+			assertStatus(t, w, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestEntriesRejectMalformedDates(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000)
+	h := NewEntriesHandler(store)
+
+	t.Run("list from/to", func(t *testing.T) {
+		for _, query := range []string{"?from=julho", "?to=agosto"} {
+			w := run(h.List, authed(http.MethodGet, "/entries"+query, ""))
+			assertStatus(t, w, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("create due_date", func(t *testing.T) {
+		// A dropped due date loses a bill's deadline, and every due/overdue
+		// alert keys off that field — so it must be rejected, not ignored.
+		body := `{"amount":100,"category":"mercado","type":"expense","due_date":"20/08/2026"}`
+		w := run(h.Create, authed(http.MethodPost, "/entries", body))
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("update due_date", func(t *testing.T) {
+		r := authed(http.MethodPut, "/entries/e1", `{"due_date":"20/08/2026"}`)
+		r.SetPathValue("id", "e1")
+		w := run(h.Update, r)
+		assertStatus(t, w, http.StatusBadRequest)
+
+		stored, err := store.GetEntry(context.Background(), testUser, "e1")
+		if err != nil {
+			t.Fatalf("get entry: %v", err)
+		}
+		if stored.DueDate != nil {
+			t.Fatalf("due date = %v, want the rejected update not to have been applied", stored.DueDate)
+		}
+	})
 }
 
 func TestCategorySummaryStoreFailureIs500(t *testing.T) {

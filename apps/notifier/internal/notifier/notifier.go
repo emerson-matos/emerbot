@@ -27,8 +27,23 @@ import (
 // looking for still-pending bills — matches the web hook's window.
 const OverdueLookbackMonths = 3
 
+// LedgerReader is the slice of the finance store the notifier needs: it reads
+// entries and goals, and keeps its own per-day delivery log. It writes no
+// financial data at all, and declaring that here makes it impossible to start.
+type LedgerReader interface {
+	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+	ListNotificationPrefs(ctx context.Context) ([]domain.NotificationPrefs, error)
+	NotificationSent(ctx context.Context, userID, key string) (bool, error)
+	RecordNotificationSent(ctx context.Context, userID, key string, sentAt time.Time) error
+	// The digest embeds the month's analysis, which reads a trailing window of
+	// summaries and the ledger's cash-flow projection.
+	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
+	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
+}
+
 type Notifier struct {
-	store         pkgfinance.Store
+	store         LedgerReader
 	sessions      wasession.Store
 	wa            whatsapp.Client
 	phoneNumberID string
@@ -44,7 +59,7 @@ type Notifier struct {
 // generator used to personalize the daily digest (pass StaticClient{} or
 // NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store pkgfinance.Store, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
+func New(store LedgerReader, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}

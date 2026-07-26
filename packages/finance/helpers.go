@@ -1,7 +1,6 @@
 package finance
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -58,13 +57,12 @@ func emptySummaries(yearMonths []string) (map[string]MonthlySummary, time.Time, 
 	var from, to time.Time
 
 	for _, ym := range yearMonths {
-		start, err := time.Parse("2006-01", ym)
+		start, end, err := domain.ParseMonth(ym)
 		if err != nil {
-			return nil, time.Time{}, time.Time{}, fmt.Errorf("invalid yearMonth %q: %w", ym, err)
+			return nil, time.Time{}, time.Time{}, err
 		}
 		summaries[ym] = MonthlySummary{Month: ym}
 
-		end := start.AddDate(0, 1, -1)
 		if from.IsZero() || start.Before(from) {
 			from = start
 		}
@@ -80,7 +78,7 @@ func emptySummaries(yearMonths []string) (map[string]MonthlySummary, time.Time, 
 // are ignored.
 func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.FinancialEntry) {
 	for _, e := range entries {
-		key := EffectiveDate(e).Format("2006-01")
+		key := domain.MonthOf(EffectiveDate(e))
 		summary, ok := summaries[key]
 		if !ok {
 			continue

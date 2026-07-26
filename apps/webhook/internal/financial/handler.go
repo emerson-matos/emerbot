@@ -14,12 +14,25 @@ import (
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
-type Handler struct {
-	regex *whatsapp.RegexParser
-	store pkgfinance.Store
+// LedgerStore is the slice of the finance store the slash commands use. The
+// webhook records entries and goals and reads back summaries; it never touches
+// categories or notification preferences, and declaring that here keeps it
+// independent of methods added for the dashboard or the notifier.
+type LedgerStore interface {
+	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
+	SaveEntries(ctx context.Context, entries []domain.FinancialEntry) error
+	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
+	MonthlySummary(ctx context.Context, userID, yearMonth string) (pkgfinance.MonthlySummary, error)
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+	SaveGoal(ctx context.Context, goal domain.Goal) error
 }
 
-func NewHandler(regex *whatsapp.RegexParser, store pkgfinance.Store) *Handler {
+type Handler struct {
+	regex *whatsapp.RegexParser
+	store LedgerStore
+}
+
+func NewHandler(regex *whatsapp.RegexParser, store LedgerStore) *Handler {
 	return &Handler{regex: regex, store: store}
 }
 

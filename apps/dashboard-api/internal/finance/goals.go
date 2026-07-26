@@ -1,23 +1,27 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
-	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-type GoalsHandler struct {
-	store pkgfinance.Store
+// GoalStore is the slice of the finance store the goal endpoints use.
+type GoalStore interface {
+	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
+	SaveGoal(ctx context.Context, goal domain.Goal) error
 }
 
-func NewGoalsHandler(store pkgfinance.Store) *GoalsHandler {
+type GoalsHandler struct {
+	store GoalStore
+}
+
+func NewGoalsHandler(store GoalStore) *GoalsHandler {
 	return &GoalsHandler{store: store}
 }
 
@@ -29,9 +33,10 @@ func (h *GoalsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month := r.URL.Query().Get("month")
-	if month == "" {
-		month = time.Now().Format("2006-01")
+	month, err := httpx.Month(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	goal, err := h.store.GetGoal(r.Context(), claims.UserID, month)
@@ -62,7 +67,14 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	month := body.Month
 	if month == "" {
-		month = time.Now().Format("2006-01")
+		month = domain.CurrentMonth()
+	}
+	// Validated up front, and for real: the previous check only looked at
+	// months starting with "20" that contained exactly one dash, so "julho"
+	// and "1999-7" were both stored verbatim as a goal's month.
+	if _, _, err := domain.ParseMonth(month); err != nil {
+		httpx.Error(w, "invalid month format, use YYYY-MM", http.StatusBadRequest)
+		return
 	}
 
 	if body.RevenueTarget == nil && body.ExpenseTarget == nil {
@@ -89,16 +101,6 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		goal.ExpenseTarget = *body.ExpenseTarget
-	}
-
-	if strings.HasPrefix(month, "20") && strings.Count(month, "-") == 1 {
-		parts := strings.Split(month, "-")
-		if len(parts) == 2 && len(parts[0]) == 4 && len(parts[1]) == 2 {
-			// valid month format
-		} else {
-			httpx.Error(w, "invalid month format, use YYYY-MM", http.StatusBadRequest)
-			return
-		}
 	}
 
 	if err := h.store.SaveGoal(r.Context(), goal); err != nil {

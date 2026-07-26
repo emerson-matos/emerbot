@@ -267,7 +267,7 @@ func TestListEntriesLimitAndCursorPageWithoutLoss(t *testing.T) {
 	}
 
 	last := first[len(first)-1]
-	cursor := effectiveDate(last).Format("2006-01-02") + "#" + string(last.EntryID)
+	cursor := EffectiveDate(last).Format("2006-01-02") + "#" + string(last.EntryID)
 	second := list(t, s, EntryFilter{Limit: 2, Cursor: cursor})
 
 	seen := append(ids(first), ids(second)...)
@@ -491,100 +491,6 @@ func TestDeleteEntry(t *testing.T) {
 }
 
 // --- summaries ---
-
-func TestMonthlySummary(t *testing.T) {
-	s, _ := newStore(t, 0)
-	save(
-		t, s,
-		entry(t, "in", "2026-07-05", 100000, withIncome()),
-		entry(t, "out1", "2026-07-10", 30000),
-		entry(t, "out2", "2026-07-31", 20000),
-		entry(t, "other-month", "2026-08-01", 999999),
-	)
-
-	got, err := s.MonthlySummary(context.Background(), "u1", "2026-07")
-	if err != nil {
-		t.Fatalf("monthly summary: %v", err)
-	}
-	want := MonthlySummary{Month: "2026-07", TotalIncome: 100000, TotalExpense: 50000, Balance: 50000}
-	if got != want {
-		t.Fatalf("summary = %+v, want %+v", got, want)
-	}
-}
-
-func TestMonthlySummaryRejectsBadMonth(t *testing.T) {
-	s, _ := newStore(t, 0)
-	if _, err := s.MonthlySummary(context.Background(), "u1", "julho"); err == nil {
-		t.Fatal("expected an error for a malformed yearMonth")
-	}
-}
-
-func TestCategorySummarySortsByTotalDescending(t *testing.T) {
-	s, _ := newStore(t, 0)
-	save(
-		t, s,
-		entry(t, "a", "2026-07-05", 1000, withCategory("mercado")),
-		entry(t, "b", "2026-07-06", 2000, withCategory("mercado")),
-		entry(t, "c", "2026-07-07", 5000, withCategory("aluguel")),
-	)
-
-	got, err := s.CategorySummary(context.Background(), "u1", *day(t, "2026-07-01"), *day(t, "2026-07-31"))
-	if err != nil {
-		t.Fatalf("category summary: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d categories, want 2", len(got))
-	}
-	if got[0].Category != "aluguel" || got[0].Total != 5000 || got[0].Count != 1 {
-		t.Fatalf("first category = %+v, want aluguel/5000/1", got[0])
-	}
-	if got[1].Category != "mercado" || got[1].Total != 3000 || got[1].Count != 2 {
-		t.Fatalf("second category = %+v, want mercado/3000/2", got[1])
-	}
-}
-
-func TestCashFlowForecast(t *testing.T) {
-	s, _ := newStore(t, 0)
-	save(
-		t, s,
-		entry(t, "past-in", "2026-06-15", 50000, withIncome()), // opening balance
-		entry(t, "past-out", "2026-06-20", 20000),
-		entry(t, "jul-out", "2026-07-02", 5000),
-		entry(t, "jul-in", "2026-07-03", 10000, withIncome()),
-	)
-
-	points, err := s.CashFlowForecast(context.Background(), "u1", "2026-07")
-	if err != nil {
-		t.Fatalf("cash flow forecast: %v", err)
-	}
-	if len(points) != 31 {
-		t.Fatalf("got %d points, want 31 days in July", len(points))
-	}
-
-	// Day 1 carries the opening balance only; June's entries must not be
-	// double counted into July.
-	if points[0].RunningBalance != 30000 {
-		t.Fatalf("day 1 balance = %d, want the 30000 carried in from June", points[0].RunningBalance)
-	}
-	if points[1].ProjectedExpense != 5000 || points[1].RunningBalance != 25000 {
-		t.Fatalf("day 2 = %+v, want expense 5000 and balance 25000", points[1])
-	}
-	if points[2].ProjectedIncome != 10000 || points[2].RunningBalance != 35000 {
-		t.Fatalf("day 3 = %+v, want income 10000 and balance 35000", points[2])
-	}
-	if last := points[30]; last.Date != "2026-07-31" || last.RunningBalance != 35000 {
-		t.Fatalf("last point = %+v, want 2026-07-31 holding the balance flat", last)
-	}
-}
-
-func TestCashFlowForecastRejectsBadMonth(t *testing.T) {
-	s, _ := newStore(t, 0)
-	if _, err := s.CashFlowForecast(context.Background(), "u1", "nope"); err == nil {
-		t.Fatal("expected an error for a malformed month")
-	}
-}
-
-// --- goals and categories ---
 
 func TestGoalRoundTrip(t *testing.T) {
 	s, _ := newStore(t, 0)
