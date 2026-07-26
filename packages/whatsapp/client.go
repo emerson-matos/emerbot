@@ -17,7 +17,7 @@ type Client interface {
 }
 
 func NewLocalClient(replyURL string) Client {
-	return &LocalClient{replyURL: replyURL}
+	return &LocalClient{replyURL: replyURL, client: http.DefaultClient}
 }
 
 func NewMetaClient(graphAPIToken string) Client {
