@@ -35,6 +35,16 @@ If the action is already in `main.tf`, the policy is simply not applied yet:
 run `make tofu-bootstrap` and re-run the deploy. `make tofu-bootstrap-plan` is
 the read-only version — an empty plan means the live role matches this repo.
 
+## If the plan wants to create everything
+
+The state here is local *and* gitignored, so it lives only on the machine that
+first applied this config. Anywhere else, `tofu plan` sees an empty state and
+proposes creating the bucket, provider and role that are already running —
+`9 to add, 0 to destroy`. Do not apply that: it collides on
+`EntityAlreadyExists` and leaves a partial state. Run `make tofu-bootstrap-adopt`
+instead, which imports the nine live resources into the local state (a read as
+far as AWS is concerned), then plan again.
+
 ## Usage
 
 ```sh

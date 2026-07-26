@@ -34,7 +34,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         seed seed-payments import-pagbank demo demo-ollama \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-bootstrap-plan tofu-migrate-state gh-secrets \
+        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-bootstrap-plan tofu-bootstrap-adopt tofu-migrate-state gh-secrets \
         tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
@@ -268,6 +268,37 @@ tofu-bootstrap-plan:
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) plan
+
+# Recovery for the case tofu-bootstrap-plan exposes as "9 to add, 0 to destroy":
+# this module keeps LOCAL state and .gitignore's it, so any machine that did not
+# personally run tofu-bootstrap sees an empty state and plans to create four
+# resources that already exist in the account. Applying that plan collides
+# (EntityAlreadyExists) instead of converging. Adopt the live resources into the
+# local state first, then tofu-bootstrap-plan should show only the role policy.
+#
+# Only writes infra/opentofu/bootstrap/terraform.tfstate — it changes nothing in
+# AWS. Re-runnable: anything already in state just reports and is skipped.
+BOOTSTRAP_BUCKET ?= emerbot-dev-tofu-state
+BOOTSTRAP_ROLE   ?= emerbot-dev-deploy
+tofu-bootstrap-adopt:
+	eval "$$(aws configure export-credentials --format env)" && \
+	acct=$$(aws sts get-caller-identity --query Account --output text) && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
+	for pair in \
+	  "aws_s3_bucket.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_versioning.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_server_side_encryption_configuration.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_lifecycle_configuration.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_public_access_block.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_policy.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_iam_openid_connect_provider.github[0]=arn:aws:iam::$$acct:oidc-provider/token.actions.githubusercontent.com" \
+	  "aws_iam_role.deploy=$(BOOTSTRAP_ROLE)" \
+	  "aws_iam_role_policy.deploy=$(BOOTSTRAP_ROLE):$(BOOTSTRAP_ROLE)-permissions" \
+	; do \
+	  addr=$${pair%%=*}; id=$${pair#*=}; \
+	  $(TOFU) -chdir=$(BOOTSTRAP_DIR) import "$$addr" "$$id" || \
+	    echo ">> pulando $$addr (já no state, ou ausente na conta)"; \
+	done
 
 # One-time: push the existing local terraform.tfstate up to the S3 backend
 # (run after tofu-bootstrap, the first time you switch to remote state).

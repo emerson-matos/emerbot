@@ -125,12 +125,43 @@ half-adopted state you then have to `tofu import` out of. So always read the
 `tofu-bootstrap-plan` output before applying:
 
 - `~ aws_iam_role_policy.deploy` and nothing else → the expected change, apply it;
-- four `+ create` lines → **stop**, you are on a machine without the state.
+- a screen of `+ create` lines → **stop**, you are on a machine without the state.
 
 To change only the policy and leave every other resource untouched:
 
 ```sh
 tofu -chdir=infra/opentofu/bootstrap apply -target=aws_iam_role_policy.deploy
+```
+
+### "9 to add, 0 to change, 0 to destroy"
+
+That is the empty-state case, not a pending rebuild: the bucket, provider and
+role already exist in AWS, Tofu just cannot see them. Applying it would call
+`CreateBucket` on the live state bucket and then die on `EntityAlreadyExists`
+for the OIDC provider and the role — a partial, half-adopted state. Adopt them
+into the local state first:
+
+```sh
+make tofu-bootstrap-adopt   # tofu import ×9; writes only the local state file
+make tofu-bootstrap-plan    # now shows ~ aws_iam_role_policy.deploy alone
+```
+
+`tofu-bootstrap-adopt` changes nothing in AWS (imports are reads) and is safe to
+re-run — anything already tracked is reported and skipped. Keep the resulting
+`infra/opentofu/bootstrap/terraform.tfstate`; it is gitignored, so the next
+machine pays this cost again.
+
+If you need the deploy unblocked before dealing with any of that, the role's
+policy can be written directly — same document this config renders, so a later
+bootstrap apply converges on it rather than fighting it:
+
+```sh
+tofu -chdir=infra/opentofu/bootstrap plan  # copy the AppBuckets statement, or
+aws iam get-role-policy --role-name emerbot-dev-deploy \
+  --policy-name emerbot-dev-deploy-permissions --query PolicyDocument  # diff first
+aws iam put-role-policy --role-name emerbot-dev-deploy \
+  --policy-name emerbot-dev-deploy-permissions \
+  --policy-document file://policy.json
 ```
 
 ## Importing acquirer data
