@@ -579,3 +579,31 @@ func TestDigestStillSendsWhenTheAnalysisIsEmpty(t *testing.T) {
 		t.Errorf("digest lost its alert:\n%s", wa.sent[0].body)
 	}
 }
+
+func TestRunPersistsInsightSnapshot(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	_, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot should be persisted for today's date.
+	date := runDay.Format("2006-01-02")
+	snap, err := s.fin.GetInsightSnapshot(context.Background(), shared.FinanceLedgerID, date)
+	if err != nil {
+		t.Fatalf("snapshot not persisted: %v", err)
+	}
+	if len(snap.Snapshot) == 0 {
+		t.Error("snapshot is empty")
+	}
+	if snap.ComputedAt.IsZero() {
+		t.Error("computedAt is zero")
+	}
+}

@@ -6,6 +6,7 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,9 @@ type LedgerReader interface {
 	// summaries and the ledger's cash-flow projection.
 	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
+	// SaveInsightSnapshot persists the daily analysis as a subproduct of the
+	// digest run, so the dashboard-api can serve it without recomputing.
+	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error
 }
 
 type Notifier struct {
@@ -215,6 +219,15 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		runLog.Warn("notifier digest analysis unavailable, sending alerts alone", "error", err)
 	} else {
 		digestInsights = analysis.DigestLines()
+
+		// Persist the analysis as a daily snapshot — subproduct of the digest
+		// run, zero extra calculation. The dashboard-api serves this instead of
+		// recomputing on every request.
+		if snapshotJSON, merr := json.Marshal(analysis); merr != nil {
+			runLog.Warn("marshal analysis snapshot", "error", merr)
+		} else if serr := n.store.SaveInsightSnapshot(ctx, shared.FinanceLedgerID, today.Format("2006-01-02"), snapshotJSON, nowInstant); serr != nil {
+			runLog.Warn("persist analysis snapshot", "error", serr)
+		}
 	}
 
 	for _, prefs := range candidates {

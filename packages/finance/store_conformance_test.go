@@ -403,3 +403,52 @@ func TestStoresAgreeOnNotifications(t *testing.T) {
 		}
 	})
 }
+
+func TestStoresAgreeOnInsightSnapshot(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+		snapshot := []byte(`{"month":"2026-07","health":{"status":"boa"}}`)
+
+		// Get on missing returns error.
+		_, err := s.GetInsightSnapshot(ctx, "u1", "2026-07-20")
+		if err == nil {
+			t.Fatal("get missing snapshot: want error, got nil")
+		}
+
+		// Save and get roundtrip.
+		if err := s.SaveInsightSnapshot(ctx, "u1", "2026-07-20", snapshot, now); err != nil {
+			t.Fatalf("save snapshot: %v", err)
+		}
+		got, err := s.GetInsightSnapshot(ctx, "u1", "2026-07-20")
+		if err != nil {
+			t.Fatalf("get snapshot: %v", err)
+		}
+		if string(got.Snapshot) != string(snapshot) {
+			t.Errorf("snapshot = %s, want %s", got.Snapshot, snapshot)
+		}
+		if !got.ComputedAt.Equal(now) {
+			t.Errorf("computedAt = %v, want %v", got.ComputedAt, now)
+		}
+
+		// Different date returns not found.
+		_, err = s.GetInsightSnapshot(ctx, "u1", "2026-07-21")
+		if err == nil {
+			t.Fatal("get different date: want error, got nil")
+		}
+
+		// Overwrite same date.
+		newSnap := []byte(`{"month":"2026-07","health":{"status":"atencao"}}`)
+		newTime := now.Add(1 * time.Hour)
+		if err := s.SaveInsightSnapshot(ctx, "u1", "2026-07-20", newSnap, newTime); err != nil {
+			t.Fatalf("overwrite snapshot: %v", err)
+		}
+		got, err = s.GetInsightSnapshot(ctx, "u1", "2026-07-20")
+		if err != nil {
+			t.Fatalf("get overwritten: %v", err)
+		}
+		if string(got.Snapshot) != string(newSnap) {
+			t.Errorf("snapshot after overwrite = %s, want %s", got.Snapshot, newSnap)
+		}
+	})
+}

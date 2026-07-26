@@ -77,6 +77,12 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	// comparison, goal pace, cash position and recommendations.
 	mux.Handle("GET /analysis/monthly", authMw(http.HandlerFunc(analysisHandler.Monthly)))
 
+	// Cached daily snapshot — the notifier persists it, this serves it.
+	// POST /analysis triggers an on-demand recalculation.
+	snapshotHandler := apifinance.NewSnapshotHandler(finStore, shared.PharmacyLocation())
+	mux.Handle("GET /analysis", authMw(http.HandlerFunc(snapshotHandler.Get)))
+	mux.Handle("POST /analysis", authMw(http.HandlerFunc(snapshotHandler.Recalculate)))
+
 	goalHandler := apifinance.NewGoalsHandler(finStore)
 
 	mux.Handle("GET /categories", authMw(http.HandlerFunc(catsHandler.List)))
