@@ -29,6 +29,10 @@ Pipeline: `.github/workflows/deploy.yml`.
    > `infra/opentofu/bootstrap/variables.tf` **and** `bucket` in
    > `infra/opentofu/environments/dev/backend.tf` to match.
 
+   > This creates the role but not its permissions: those live in
+   > `environments/dev` and arrive with the first deploy — see
+   > [granting CI a new permission](#granting-ci-a-new-permission).
+
 2. **Migrate existing local state to S3** (only if you were applying locally
    before — a fresh account can skip this):
 
@@ -72,6 +76,69 @@ Pipeline: `.github/workflows/deploy.yml`.
 1. Open a PR. Review the **Tofu plan** comment the pipeline posts.
 2. Merge.
 3. Go to **Actions → deploy → Run workflow** and run it on `main`. That applies.
+
+## Granting CI a new permission
+
+The deploy role's permissions live in
+`infra/opentofu/environments/dev/deploy_role.tf` — inside the stack CI applies,
+not beside the role. So adding a new kind of resource is **one** apply: put the
+resource and the actions it needs in the same PR, merge, press the button. The
+plan comment shows the policy diff alongside the resource diff.
+
+This works because the role may rewrite its own inline policy
+(`ProjectIAM` grants `iam:PutRolePolicy` on `role/emerbot-*`, which matches
+`emerbot-dev-deploy` itself), and `aws_iam_role_policy` writes via
+`PutRolePolicy`, an upsert by name.
+
+Two statements are load-bearing and must never leave that document:
+
+- **`ProjectIAM`** — what lets CI apply the policy resource at all;
+- **`StateBucket`** — without it OpenTofu cannot read or lock the state.
+
+Drop either and CI locks itself out of the account. The recovery is
+`aws_iam_role_policy.floor` in the bootstrap config: a second inline policy
+granting state access plus `iam:PutRolePolicy` on this one role. IAM unions
+inline policies, so the floor survives a broken permissions policy and CI can
+apply its way back out. It only exists once bootstrap has been applied on the
+account — until then, that mistake needs admin credentials to undo.
+
+### Ordering on the very first apply
+
+The policy resource and the resources it authorises have no dependency on each
+other, so a run that introduces both may create the resource first and fail:
+
+```
+Error: creating S3 Bucket (emerbot-dev-payment-imports): api error AccessDenied:
+User: …assumed-role/emerbot-dev-deploy/GitHubActions is not authorized to
+perform: s3:CreateBucket …
+```
+
+Press **Run workflow** again; the grant landed in the first run, and apply
+resumes from where it stopped. There is deliberately no `depends_on` forcing the
+order — it would buy ordering but not IAM propagation (the grant still needs a
+few seconds to take effect), so it would not actually deliver the guarantee it
+looks like, while pushing `module.assistant`'s data sources to apply time and
+making every PR plan noisier.
+
+## What still needs admin credentials
+
+Only what `infra/opentofu/bootstrap` owns, and none of it tracks the stack:
+
+| Change | Where |
+| --- | --- |
+| The role's **permissions** | `environments/dev` — ships with the deploy ✅ |
+| The role's **trust policy** (which repo/branch may assume it) | bootstrap, admin |
+| The OIDC provider | bootstrap, admin |
+| The state bucket itself | bootstrap, admin |
+| The `-floor` policy | bootstrap, admin |
+
+Bootstrap keeps **local** state, gitignored, so it lives only on the machine
+that first applied it. Elsewhere `tofu plan` sees an empty state and proposes
+creating resources that already exist (`9 to add, 0 to destroy`). Do not apply
+that — it collides on `EntityAlreadyExists` and leaves a partial state. Run
+`make tofu-bootstrap-adopt` first: it imports the live resources into the local
+state (a read, as far as AWS is concerned; re-runnable) and then the plan tells
+you the truth. `make tofu-bootstrap-plan` is the read-only check.
 
 ## Importing acquirer data
 

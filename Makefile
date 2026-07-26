@@ -34,7 +34,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         seed seed-payments import-pagbank demo demo-ollama \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
-        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-migrate-state gh-secrets \
+        tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-bootstrap-plan tofu-bootstrap-adopt tofu-migrate-state gh-secrets \
         tofu-plan tofu-apply tofu-destroy
 
 # ---------------------------------------------------------------------------
@@ -252,12 +252,53 @@ export TF_VAR_cloudflare_zone_id
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init
 
-# One-time-per-account: create the S3 state bucket + GitHub OIDC deploy role.
-# Uses your local admin AWS creds. See docs/deploy.md.
+# Creates the S3 state bucket, the GitHub OIDC provider and the deploy role
+# itself, with your local admin AWS creds. Genuinely one-time per account:
+# what CI is ALLOWED to do lives in environments/dev/deploy_role.tf and ships
+# with the normal deploy, so day-to-day permission changes never come back here.
+# See docs/deploy.md.
 tofu-bootstrap:
 	eval "$$(aws configure export-credentials --format env)" && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
 	$(TOFU) -chdir=$(BOOTSTRAP_DIR) apply
+
+# Read-only: does the live account still match what this module says?
+tofu-bootstrap-plan:
+	eval "$$(aws configure export-credentials --format env)" && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) plan
+
+# Recovery for the case tofu-bootstrap-plan exposes as "9 to add, 0 to destroy":
+# this module keeps LOCAL state and .gitignore's it, so any machine that did not
+# personally run tofu-bootstrap sees an empty state and plans to create
+# resources that already exist in the account. Applying that plan collides
+# (EntityAlreadyExists) instead of converging. Adopt the live resources into the
+# local state first, then plan again.
+#
+# The role's permission policy is NOT in the list: environments/dev owns it now.
+#
+# Only writes infra/opentofu/bootstrap/terraform.tfstate — it changes nothing in
+# AWS. Re-runnable: anything already in state just reports and is skipped.
+BOOTSTRAP_BUCKET ?= emerbot-dev-tofu-state
+BOOTSTRAP_ROLE   ?= emerbot-dev-deploy
+tofu-bootstrap-adopt:
+	eval "$$(aws configure export-credentials --format env)" && \
+	acct=$$(aws sts get-caller-identity --query Account --output text) && \
+	$(TOFU) -chdir=$(BOOTSTRAP_DIR) init && \
+	for pair in \
+	  "aws_s3_bucket.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_versioning.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_server_side_encryption_configuration.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_lifecycle_configuration.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_public_access_block.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_s3_bucket_policy.state=$(BOOTSTRAP_BUCKET)" \
+	  "aws_iam_openid_connect_provider.github[0]=arn:aws:iam::$$acct:oidc-provider/token.actions.githubusercontent.com" \
+	  "aws_iam_role.deploy=$(BOOTSTRAP_ROLE)" \
+	; do \
+	  addr=$${pair%%=*}; id=$${pair#*=}; \
+	  $(TOFU) -chdir=$(BOOTSTRAP_DIR) import "$$addr" "$$id" || \
+	    echo ">> pulando $$addr (já no state, ou ausente na conta)"; \
+	done
 
 # One-time: push the existing local terraform.tfstate up to the S3 backend
 # (run after tofu-bootstrap, the first time you switch to remote state).

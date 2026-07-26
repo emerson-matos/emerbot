@@ -26,6 +26,7 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 - Prod secrets (`GEMINI_API_KEY`, `META_GRAPH_API_TOKEN`, etc.) are injected as **plain Lambda env vars** by OpenTofu from `TF_VAR_*` (see `infra/modules/api_gateway_lambda`) — there is no Secrets Manager.
 - **Shipping**: deploys run from **GitHub Actions** (`.github/workflows/deploy.yml`) via **GitHub OIDC** (no stored AWS keys). PRs get a `tofu plan` comment; `apply` is a **manual button** (`workflow_dispatch`), never on merge. `make tofu-apply` still works locally as break-glass. Full runbook: `docs/deploy.md` (ADR-009).
 - State is **remote in S3** (bucket `emerbot-dev-tofu-state`, native `use_lockfile` locking). One-time per account: `make tofu-bootstrap` (creates the bucket + OIDC deploy role, `infra/opentofu/bootstrap/`), then `make tofu-migrate-state`. Only a `dev` environment exists.
+- **The deploy role's permissions are part of the stack**, in `infra/opentofu/environments/dev/deploy_role.tf` — not in `bootstrap/`. A resource and the IAM actions it needs belong in the same PR; CI rewrites its own inline policy on apply. Bootstrap holds only identity (role, trust, OIDC, state bucket) plus a minimal `-floor` policy that is the way back in if a merge ever drops `ProjectIAM`/`StateBucket`.
 
 ## Conventions
 
