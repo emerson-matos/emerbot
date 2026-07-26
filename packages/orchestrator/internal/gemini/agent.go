@@ -13,6 +13,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/agentprompt"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/agenttools"
 )
 
 const model = "gemini-3.1-flash-lite"
@@ -41,7 +42,7 @@ func NewAgent(ctx context.Context, apiKey string, store finance.Store, dashboard
 		return nil, fmt.Errorf("create gemini client: %w", err)
 	}
 
-	financeTools := finance.FinanceTools(store, dashboardURL)
+	financeTools := agenttools.All(store, dashboardURL)
 	genaiTools := make([]*genai.Tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {

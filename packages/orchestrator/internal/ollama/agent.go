@@ -20,6 +20,7 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/agentprompt"
+	"github.com/emerson/emerbot/packages/orchestrator/internal/agenttools"
 )
 
 const (
@@ -53,7 +54,7 @@ func NewAgent(host, model string, store finance.Store, dashboardURL string) *Age
 		model = DefaultModel
 	}
 
-	financeTools := finance.FinanceTools(store, dashboardURL)
+	financeTools := agenttools.All(store, dashboardURL)
 	tools := make([]tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {
