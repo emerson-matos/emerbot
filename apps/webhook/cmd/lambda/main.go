@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	_ "time/tzdata" // embed zoneinfo so LoadLocation works on provided.al2
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/emerson/emerbot/apps/webhook/internal/app"
