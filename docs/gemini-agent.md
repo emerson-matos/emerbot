@@ -200,6 +200,12 @@ Diferenças em relação ao rascunho abaixo (o código é a fonte da verdade):
   primeiro) e responde com `{"output": ...}`.
 - O `financial.Handler` recebe `(regex *whatsapp.RegexParser, agent Agent, store)`;
   `Agent` é uma interface local (nil = deployment regex-only).
+- A lista de tools é montada em `packages/orchestrator/internal/agenttools`, não
+  direto por `finance.FinanceTools`: além das tools financeiras ela acrescenta
+  `get_analysis` (`packages/finance/analytics`), que não pode morar no pacote
+  `finance` porque `analytics` é construído em cima dele — seria ciclo de
+  import. Os dois agentes (Gemini e Ollama) passam pelo mesmo `agenttools.All`,
+  então nenhum deles oferece um conjunto de tools diferente do outro.
 
 **Atualização (pós-implementação):** o desenho acima foi novamente movido quando
 `packages/orchestrator` (ADR-006) passou a centralizar todo o fluxo, não só o

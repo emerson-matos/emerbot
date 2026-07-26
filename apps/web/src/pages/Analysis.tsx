@@ -347,13 +347,6 @@ function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekC
             <RecommendationItem recommendation={recommendation} />
           </div>
         )}
-        {data.avg8Weeks !== undefined && (
-          <div className="border-t pt-2">
-            <p className="text-sm text-muted-foreground">
-              Média 8 semanas: <span className="text-foreground">{formatBRL(data.avg8Weeks)}</span>
-            </p>
-          </div>
-        )}
       </CardContent>
     </Card>
   )
