@@ -6,6 +6,7 @@ import (
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
@@ -21,7 +22,7 @@ func NewSummaryHandler(store pkgfinance.Store) *SummaryHandler {
 func (h *SummaryHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -33,17 +34,17 @@ func (h *SummaryHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 	summary, err := h.store.MonthlySummary(r.Context(), claims.UserID, month)
 	if err != nil {
 		log.Printf("monthly summary error: %v", err)
-		jsonError(w, "failed to get monthly summary: "+err.Error(), http.StatusInternalServerError)
+		httpx.Error(w, "failed to get monthly summary: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, summary)
+	httpx.OK(w, summary)
 }
 
 // Categories handles GET /summary/categories?from=YYYY-MM-DD&to=YYYY-MM-DD
 func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -64,17 +65,17 @@ func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 
 	cats, err := h.store.CategorySummary(r.Context(), claims.UserID, from, to)
 	if err != nil {
-		jsonError(w, "failed to get category summary", http.StatusInternalServerError)
+		httpx.Error(w, "failed to get category summary", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"categories": cats, "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02")})
+	httpx.OK(w, map[string]any{"categories": cats, "from": from.Format("2006-01-02"), "to": to.Format("2006-01-02")})
 }
 
 // CashFlow handles GET /summary/cashflow?month=2026-07
 func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -85,8 +86,8 @@ func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 
 	points, err := h.store.CashFlowForecast(r.Context(), claims.UserID, month)
 	if err != nil {
-		jsonError(w, "failed to get cash flow forecast", http.StatusInternalServerError)
+		httpx.Error(w, "failed to get cash flow forecast", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"points": points, "month": month})
+	httpx.OK(w, map[string]any{"points": points, "month": month})
 }

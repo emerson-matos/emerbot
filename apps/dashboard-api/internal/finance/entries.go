@@ -8,6 +8,7 @@ import (
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
@@ -67,7 +68,7 @@ func NewEntriesHandler(store pkgfinance.Store) *EntriesHandler {
 func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -108,14 +109,14 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.store.ListEntries(r.Context(), claims.UserID, filter)
 	if err != nil {
-		jsonError(w, "failed to list entries", http.StatusInternalServerError)
+		httpx.Error(w, "failed to list entries", http.StatusInternalServerError)
 		return
 	}
 	response := make([]entryResponse, len(entries))
 	for i := range entries {
 		response[i] = responseEntry(entries[i])
 	}
-	jsonOK(w, map[string]any{"entries": response, "count": len(entries)})
+	httpx.OK(w, map[string]any{"entries": response, "count": len(entries)})
 }
 
 type createEntryRequest struct {
@@ -134,13 +135,13 @@ type createEntryRequest struct {
 func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var req createEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -148,23 +149,23 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Date != "" {
 		t, err := time.Parse("2006-01-02", req.Date)
 		if err != nil {
-			jsonError(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
+			httpx.Error(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
 			return
 		}
 		date = domain.NewCalendarDate(t)
 	}
 
 	if req.Amount <= 0 {
-		jsonError(w, "amount must be positive (in centavos)", http.StatusBadRequest)
+		httpx.Error(w, "amount must be positive (in centavos)", http.StatusBadRequest)
 		return
 	}
 	if req.Category == "" {
-		jsonError(w, "category is required", http.StatusBadRequest)
+		httpx.Error(w, "category is required", http.StatusBadRequest)
 		return
 	}
 	entryType := domain.EntryType(req.Type)
 	if entryType != domain.EntryTypeExpense && entryType != domain.EntryTypeIncome {
-		jsonError(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
+		httpx.Error(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
 		return
 	}
 
@@ -199,16 +200,16 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Source:          source,
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := entry.Validate(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.SaveEntry(r.Context(), entry); err != nil {
-		jsonError(w, "failed to save entry", http.StatusInternalServerError)
+		httpx.Error(w, "failed to save entry", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -220,25 +221,25 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	entryID := r.PathValue("id")
 	if entryID == "" {
-		jsonError(w, "entry id is required", http.StatusBadRequest)
+		httpx.Error(w, "entry id is required", http.StatusBadRequest)
 		return
 	}
 
 	existing, err := h.store.GetEntry(r.Context(), claims.UserID, entryID)
 	if err != nil {
-		jsonError(w, "entry not found", http.StatusNotFound)
+		httpx.Error(w, "entry not found", http.StatusNotFound)
 		return
 	}
 
 	var req createEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -278,32 +279,32 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	existing.UpdatedAt = time.Now().UTC()
 
 	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
-		jsonError(w, "failed to update entry", http.StatusInternalServerError)
+		httpx.Error(w, "failed to update entry", http.StatusInternalServerError)
 		return
 	}
 	if err := existing.Validate(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	jsonOK(w, responseEntry(existing))
+	httpx.OK(w, responseEntry(existing))
 }
 
 // Delete handles DELETE /entries/{id}
 func (h *EntriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	entryID := r.PathValue("id")
 	if entryID == "" {
-		jsonError(w, "entry id is required", http.StatusBadRequest)
+		httpx.Error(w, "entry id is required", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.DeleteEntry(r.Context(), claims.UserID, entryID); err != nil {
-		jsonError(w, "entry not found", http.StatusNotFound)
+		httpx.Error(w, "entry not found", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

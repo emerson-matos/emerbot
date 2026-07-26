@@ -10,6 +10,8 @@ import (
 	"github.com/MicahParks/jwkset"
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 )
 
 // NewLocalCognitoMiddleware verifies Cognito-issued ID tokens directly
@@ -47,7 +49,7 @@ func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID st
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if !strings.HasPrefix(header, "Bearer ") {
-				jsonError(w, "missing or invalid authorization header", http.StatusUnauthorized)
+				httpx.Error(w, "missing or invalid authorization header", http.StatusUnauthorized)
 				return
 			}
 			tokenStr := strings.TrimPrefix(header, "Bearer ")
@@ -58,12 +60,12 @@ func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID st
 				jwt.WithIssuer(issuer),
 			)
 			if err != nil || !token.Valid {
-				jsonError(w, "invalid token", http.StatusUnauthorized)
+				httpx.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
-				jsonError(w, "invalid token claims", http.StatusUnauthorized)
+				httpx.Error(w, "invalid token claims", http.StatusUnauthorized)
 				return
 			}
 
@@ -72,11 +74,11 @@ func NewLocalCognitoMiddleware(ctx context.Context, jwksURL, issuer, clientID st
 			// validates its `audience` config against in the deployed path (see
 			// infra/modules/api_gateway_lambda/main.tf).
 			if tokenUse, _ := claims["token_use"].(string); tokenUse != "id" {
-				jsonError(w, "not an id token", http.StatusUnauthorized)
+				httpx.Error(w, "not an id token", http.StatusUnauthorized)
 				return
 			}
 			if aud, _ := claims["aud"].(string); aud != clientID {
-				jsonError(w, "unrecognized audience", http.StatusUnauthorized)
+				httpx.Error(w, "unrecognized audience", http.StatusUnauthorized)
 				return
 			}
 

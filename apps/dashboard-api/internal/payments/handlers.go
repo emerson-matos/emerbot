@@ -5,13 +5,13 @@
 package payments
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/payments"
@@ -34,18 +34,18 @@ func NewHandler(repo payments.Repository, finStore pkgfinance.Store) *Handler {
 // per-method breakdown.
 func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 	if _, ok := apiauth.ClaimsFromContext(r.Context()); !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	from, to, err := monthRange(r)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	sales, err := h.repo.ListSales(r.Context(), from, to)
 	if err != nil {
 		slog.Error("list sales", "error", err)
-		jsonError(w, "failed to list sales", http.StatusInternalServerError)
+		httpx.Error(w, "failed to list sales", http.StatusInternalServerError)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 		fee += s.FeeAmount
 		byMethod[s.Method] += s.GrossAmount
 	}
-	jsonOK(w, map[string]any{
+	httpx.OK(w, map[string]any{
 		"sales":     responseSales(sales),
 		"totals":    map[string]int64{"gross": gross, "net": net, "fee": fee},
 		"by_method": byMethod,
@@ -69,25 +69,25 @@ func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 // current month), returning the expected receivables plus their total.
 func (h *Handler) Receivables(w http.ResponseWriter, r *http.Request) {
 	if _, ok := apiauth.ClaimsFromContext(r.Context()); !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	from, to, err := monthRange(r)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	recv, err := h.repo.ListReceivables(r.Context(), from, to)
 	if err != nil {
 		slog.Error("list receivables", "error", err)
-		jsonError(w, "failed to list receivables", http.StatusInternalServerError)
+		httpx.Error(w, "failed to list receivables", http.StatusInternalServerError)
 		return
 	}
 	var total int64
 	for _, rc := range recv {
 		total += rc.Amount
 	}
-	jsonOK(w, map[string]any{
+	httpx.OK(w, map[string]any{
 		"receivables": responseReceivables(recv), "total": total,
 		"from": from.String(), "to": to.String(),
 	})
@@ -98,7 +98,7 @@ func (h *Handler) Receivables(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Forecast(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	month := r.URL.Query().Get("month")
@@ -107,7 +107,7 @@ func (h *Handler) Forecast(w http.ResponseWriter, r *http.Request) {
 	}
 	monthStart, err := time.Parse("2006-01", month)
 	if err != nil {
-		jsonError(w, "invalid month", http.StatusBadRequest)
+		httpx.Error(w, "invalid month", http.StatusBadRequest)
 		return
 	}
 	monthEnd := monthStart.AddDate(0, 1, -1)
@@ -115,16 +115,16 @@ func (h *Handler) Forecast(w http.ResponseWriter, r *http.Request) {
 	base, err := h.finStore.CashFlowForecast(r.Context(), claims.UserID, month)
 	if err != nil {
 		slog.Error("cashflow forecast", "error", err)
-		jsonError(w, "failed to build forecast", http.StatusInternalServerError)
+		httpx.Error(w, "failed to build forecast", http.StatusInternalServerError)
 		return
 	}
 	recv, err := h.repo.ListReceivables(r.Context(), domain.NewCalendarDate(monthStart), domain.NewCalendarDate(monthEnd))
 	if err != nil {
 		slog.Error("list receivables", "error", err)
-		jsonError(w, "failed to build forecast", http.StatusInternalServerError)
+		httpx.Error(w, "failed to build forecast", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"points": responsePoints(combineForecast(base, recv)), "month": month})
+	httpx.OK(w, map[string]any{"points": responsePoints(combineForecast(base, recv)), "month": month})
 }
 
 // maxRangeDays bounds a from/to window. Each request is a DynamoDB range query
@@ -162,16 +162,4 @@ func monthRange(r *http.Request) (domain.CalendarDate, domain.CalendarDate, erro
 		return domain.CalendarDate{}, domain.CalendarDate{}, errors.New("date range too large, max 731 days")
 	}
 	return domain.NewCalendarDate(from), domain.NewCalendarDate(to), nil
-}
-
-func jsonOK(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
-}
-
-func jsonError(w http.ResponseWriter, msg string, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
 }
