@@ -48,7 +48,7 @@ func NewLocal(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw 
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
 func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
-	entriesHandler := apifinance.NewEntriesHandler(finStore)
+	entriesHandler := apifinance.NewEntriesHandler(finStore, shared.PharmacyLocation())
 	summaryHandler := apifinance.NewSummaryHandler(finStore)
 	catsHandler := apifinance.NewCategoriesHandler(finStore)
 	paymentsHandler := apipayments.NewHandler(payRepo, finStore)

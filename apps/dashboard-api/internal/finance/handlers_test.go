@@ -173,7 +173,7 @@ func (f failingStore) CashFlowForecast(ctx context.Context, userID, month string
 
 func TestEveryEndpointRequiresClaims(t *testing.T) {
 	store := newStore(t)
-	entries := NewEntriesHandler(store)
+	entries := NewEntriesHandler(store, time.UTC)
 	cats := NewCategoriesHandler(store)
 	goals := NewGoalsHandler(store)
 	summary := NewSummaryHandler(store)
@@ -217,7 +217,7 @@ func TestListEntriesReturnsEntriesAndCount(t *testing.T) {
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
 	seedEntry(t, store, "e2", "2026-07-11", 2000)
 
-	w := run(NewEntriesHandler(store).List, authed(http.MethodGet, "/entries", ""))
+	w := run(NewEntriesHandler(store, time.UTC).List, authed(http.MethodGet, "/entries", ""))
 	assertStatus(t, w, http.StatusOK)
 	assertJSONContentType(t, w)
 
@@ -231,7 +231,7 @@ func TestListEntriesReturnsEntriesAndCount(t *testing.T) {
 }
 
 func TestListEntriesIsEmptyNotNullWhenNothingMatches(t *testing.T) {
-	w := run(NewEntriesHandler(newStore(t)).List, authed(http.MethodGet, "/entries", ""))
+	w := run(NewEntriesHandler(newStore(t), time.UTC).List, authed(http.MethodGet, "/entries", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	// The dashboard maps over this array, so it must be [] and never null.
@@ -247,7 +247,7 @@ func TestListEntriesAppliesFilters(t *testing.T) {
 		e.Category = "aluguel"
 	})
 
-	w := run(NewEntriesHandler(store).List, authed(http.MethodGet, "/entries?category=aluguel", ""))
+	w := run(NewEntriesHandler(store, time.UTC).List, authed(http.MethodGet, "/entries?category=aluguel", ""))
 	assertStatus(t, w, http.StatusOK)
 	if got := decode(t, w)["count"]; got != float64(1) {
 		t.Fatalf("count = %v, want 1 entry matching the category filter", got)
@@ -259,7 +259,7 @@ func TestListEntriesLimitDefaultsAndCaps(t *testing.T) {
 	for i := range 210 {
 		seedEntry(t, store, "e"+string(rune('a'+i/26))+string(rune('a'+i%26)), "2026-07-10", int64(i+1))
 	}
-	h := NewEntriesHandler(store)
+	h := NewEntriesHandler(store, time.UTC)
 
 	cases := []struct {
 		name   string
@@ -293,7 +293,7 @@ func TestListEntriesDateRangeReturnsEveryEntryInThePeriod(t *testing.T) {
 
 	// A date-bounded query must not be silently truncated to the default
 	// limit, or the dashboard's monthly totals would disagree with its table.
-	w := run(NewEntriesHandler(store).List, authed(http.MethodGet, "/entries?from=2026-07-01&to=2026-07-31", ""))
+	w := run(NewEntriesHandler(store, time.UTC).List, authed(http.MethodGet, "/entries?from=2026-07-01&to=2026-07-31", ""))
 	assertStatus(t, w, http.StatusOK)
 	if got := decode(t, w)["count"]; got != float64(60) {
 		t.Fatalf("count = %v, want all 60 entries in the range", got)
@@ -301,7 +301,7 @@ func TestListEntriesDateRangeReturnsEveryEntryInThePeriod(t *testing.T) {
 }
 
 func TestListEntriesStoreFailureIs500(t *testing.T) {
-	h := NewEntriesHandler(failingStore{Store: newStore(t), fail: "ListEntries"})
+	h := NewEntriesHandler(failingStore{Store: newStore(t), fail: "ListEntries"}, time.UTC)
 	w := run(h.List, authed(http.MethodGet, "/entries", ""))
 	assertStatus(t, w, http.StatusInternalServerError)
 }
@@ -310,7 +310,7 @@ func TestCreateEntry(t *testing.T) {
 	store := newStore(t)
 	body := `{"date":"2026-07-15","amount":2500,"category":"mercado","type":"expense","description":"Feira","payment_status":"pending","supplier":"Hortifruti"}`
 
-	w := run(NewEntriesHandler(store).Create, authed(http.MethodPost, "/entries", body))
+	w := run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", body))
 	assertStatus(t, w, http.StatusCreated)
 	assertJSONContentType(t, w)
 
@@ -336,7 +336,7 @@ func TestCreateEntryDefaults(t *testing.T) {
 	// No date, no status, no source: today, paid, manual.
 	body := `{"amount":100,"category":"mercado","type":"income"}`
 
-	w := run(NewEntriesHandler(store).Create, authed(http.MethodPost, "/entries", body))
+	w := run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", body))
 	assertStatus(t, w, http.StatusCreated)
 
 	var got entryResponse
@@ -355,7 +355,7 @@ func TestCreateEntryDefaults(t *testing.T) {
 }
 
 func TestCreateEntryRejectsBadInput(t *testing.T) {
-	h := NewEntriesHandler(newStore(t))
+	h := NewEntriesHandler(newStore(t), time.UTC)
 	cases := []struct {
 		name, body, wantErr string
 	}{
@@ -379,7 +379,7 @@ func TestCreateEntryRejectsBadInput(t *testing.T) {
 }
 
 func TestCreateEntryStoreFailureIs500(t *testing.T) {
-	h := NewEntriesHandler(failingStore{Store: newStore(t), fail: "SaveEntry"})
+	h := NewEntriesHandler(failingStore{Store: newStore(t), fail: "SaveEntry"}, time.UTC)
 	body := `{"amount":100,"category":"mercado","type":"expense"}`
 	w := run(h.Create, authed(http.MethodPost, "/entries", body))
 	assertStatus(t, w, http.StatusInternalServerError)
@@ -394,7 +394,7 @@ func TestUpdateEntryAppliesOnlySuppliedFields(t *testing.T) {
 
 	r := authed(http.MethodPut, "/entries/e1", `{"amount":5000}`)
 	r.SetPathValue("id", "e1")
-	w := run(NewEntriesHandler(store).Update, r)
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
 	var got entryResponse
@@ -411,19 +411,69 @@ func TestUpdateEntryAppliesOnlySuppliedFields(t *testing.T) {
 }
 
 func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
-	t.Run("pending to paid sets a payment date", func(t *testing.T) {
+	t.Run("pending to paid records today, not the transaction date", func(t *testing.T) {
 		store := newStore(t)
+		// A bill incurred on the 10th and settled today. Recording the
+		// transaction date made the dashboard say "pago em 10/07" no matter
+		// when the button was actually pressed.
 		seedEntry(t, store, "e1", "2026-07-10", 1000)
 
 		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
 		r.SetPathValue("id", "e1")
-		w := run(NewEntriesHandler(store).Update, r)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
 		var got entryResponse
 		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
-		if got.PaymentDate == nil || *got.PaymentDate != "2026-07-10" {
-			t.Fatalf("payment date = %v, want it filled from the transaction date", got.PaymentDate)
+		today := time.Now().UTC().Format("2006-01-02")
+		if got.PaymentDate == nil || *got.PaymentDate != today {
+			t.Fatalf("payment date = %v, want today (%s)", got.PaymentDate, today)
+		}
+		// The transaction date itself must not move: the bill still belongs to
+		// the month it was incurred in.
+		if got.TransactionDate != "2026-07-10" {
+			t.Fatalf("transaction date = %q, want it untouched at 2026-07-10", got.TransactionDate)
+		}
+	})
+
+	t.Run("today is the pharmacy's calendar day, not UTC's", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+		// A zone far enough east that its calendar day differs from UTC's for
+		// part of the day; the recorded date must follow the configured zone.
+		loc := time.FixedZone("UTC+14", 14*3600)
+		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
+		r.SetPathValue("id", "e1")
+		w := run(NewEntriesHandler(store, loc).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		want := time.Now().In(loc).Format("2006-01-02")
+		if got.PaymentDate == nil || *got.PaymentDate != want {
+			t.Fatalf("payment date = %v, want %s (the configured zone's today)", got.PaymentDate, want)
+		}
+	})
+
+	t.Run("an already-paid entry keeps its original payment date", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+			d, _ := domain.ParseCalendarDate("2026-07-12")
+			e.PaymentStatus = domain.PaymentStatusPaid
+			e.PaymentDate = &d
+		})
+
+		// Re-sending "paid" must not stamp today over the day it was settled.
+		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
+		r.SetPathValue("id", "e1")
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		if got.PaymentDate == nil || *got.PaymentDate != "2026-07-12" {
+			t.Fatalf("payment date = %v, want the original 2026-07-12", got.PaymentDate)
 		}
 	})
 
@@ -437,7 +487,7 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 
 		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"pending"}`)
 		r.SetPathValue("id", "e1")
-		w := run(NewEntriesHandler(store).Update, r)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
 		var got entryResponse
@@ -457,7 +507,7 @@ func TestUpdateEntryRejectsInvalidBeforeWriting(t *testing.T) {
 	// 400 response and a corrupted ledger.
 	r := authed(http.MethodPut, "/entries/e1", `{"type":"transferencia"}`)
 	r.SetPathValue("id", "e1")
-	w := run(NewEntriesHandler(store).Update, r)
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusBadRequest)
 
 	stored, err := store.GetEntry(context.Background(), testUser, "e1")
@@ -472,7 +522,7 @@ func TestUpdateEntryRejectsInvalidBeforeWriting(t *testing.T) {
 func TestUpdateEntryErrors(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
-	h := NewEntriesHandler(store)
+	h := NewEntriesHandler(store, time.UTC)
 
 	t.Run("missing id", func(t *testing.T) {
 		w := run(h.Update, authed(http.MethodPut, "/entries/", `{}`))
@@ -494,7 +544,7 @@ func TestUpdateEntryErrors(t *testing.T) {
 	})
 
 	t.Run("store failure", func(t *testing.T) {
-		failing := NewEntriesHandler(failingStore{Store: store, fail: "UpdateEntry"})
+		failing := NewEntriesHandler(failingStore{Store: store, fail: "UpdateEntry"}, time.UTC)
 		r := authed(http.MethodPut, "/entries/e1", `{"amount":200}`)
 		r.SetPathValue("id", "e1")
 		w := run(failing.Update, r)
@@ -505,7 +555,7 @@ func TestUpdateEntryErrors(t *testing.T) {
 func TestDeleteEntry(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
-	h := NewEntriesHandler(store)
+	h := NewEntriesHandler(store, time.UTC)
 
 	r := authed(http.MethodDelete, "/entries/e1", "")
 	r.SetPathValue("id", "e1")
@@ -794,7 +844,7 @@ func TestSaveGoalRejectsAMonthTheOldCheckLetThrough(t *testing.T) {
 func TestEntriesRejectMalformedDates(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
-	h := NewEntriesHandler(store)
+	h := NewEntriesHandler(store, time.UTC)
 
 	t.Run("list from/to", func(t *testing.T) {
 		for _, query := range []string{"?from=julho", "?to=agosto"} {

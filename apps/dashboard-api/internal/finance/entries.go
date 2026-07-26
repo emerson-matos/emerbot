@@ -37,6 +37,10 @@ type EntryStore interface {
 
 type EntriesHandler struct {
 	store EntryStore
+	// loc is the calendar the pharmacy reasons about days in. Marking an entry
+	// paid records "today", and in UTC that is already tomorrow for part of
+	// every evening in Brazil.
+	loc *time.Location
 }
 
 // entryResponse is the transport shape; it intentionally has no JSON tags so
@@ -73,8 +77,13 @@ func responseEntry(e domain.FinancialEntry) entryResponse {
 	return r
 }
 
-func NewEntriesHandler(store EntryStore) *EntriesHandler {
-	return &EntriesHandler{store: store}
+// NewEntriesHandler builds the handler. loc is the timezone whose calendar day
+// defines "today" when an entry is marked paid; nil falls back to UTC.
+func NewEntriesHandler(store EntryStore, loc *time.Location) *EntriesHandler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &EntriesHandler{store: store, loc: loc}
 }
 
 // List handles GET /entries
@@ -279,7 +288,10 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.PaymentStatus != "" {
 		existing.PaymentStatus = domain.PaymentStatus(req.PaymentStatus)
 		if req.PaymentStatus == "paid" && existing.PaymentDate == nil {
-			d := existing.TransactionDate
+			// Settling an entry happens now, not on the day the expense was
+			// incurred. Using the transaction date made a bill registered on
+			// the 14th and paid on the 26th report "pago em 14/07".
+			d := domain.NewCalendarDate(time.Now().In(h.loc))
 			existing.PaymentDate = &d
 		}
 		if req.PaymentStatus == "pending" {

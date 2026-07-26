@@ -11,7 +11,12 @@ import (
 
 func handlerFor(t *testing.T, store Store, name string) ToolFunc {
 	t.Helper()
-	for _, tool := range FinanceTools(store, "") {
+	return handlerForIn(t, store, name, time.UTC)
+}
+
+func handlerForIn(t *testing.T, store Store, name string, loc *time.Location) ToolFunc {
+	t.Helper()
+	for _, tool := range FinanceTools(store, "", loc) {
 		if tool.Name == name {
 			return tool.Handler
 		}
@@ -337,6 +342,37 @@ func TestEditEntryToolMarkingPaidSetsPaymentDate(t *testing.T) {
 	}
 	if entry.PaymentDate == nil {
 		t.Fatal("expected PaymentDate to be set")
+	}
+	if got, want := entry.PaymentDate.String(), time.Now().UTC().Format("2006-01-02"); got != want {
+		t.Fatalf("payment date = %s, want today (%s)", got, want)
+	}
+}
+
+func TestEditEntryToolPaysOnThePharmacysCalendarDay(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	day := domain.NewCalendarDate(time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC))
+	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: day, Amount: 5000,
+		Category: "aluguel", Type: domain.EntryTypeExpense,
+		PaymentStatus: domain.PaymentStatusPending, Source: domain.SourceManual,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Far enough east that its calendar day differs from UTC's for part of the
+	// day — settling in UTC recorded tomorrow for every evening in Brazil.
+	loc := time.FixedZone("UTC+14", 14*3600)
+	h := handlerForIn(t, store, "edit_financial_entry", loc)
+	callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": false})
+
+	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if got, want := entry.PaymentDate.String(), time.Now().In(loc).Format("2006-01-02"); got != want {
+		t.Fatalf("payment date = %s, want %s (the configured zone's today)", got, want)
 	}
 }
 
