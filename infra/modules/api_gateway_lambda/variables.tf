@@ -77,13 +77,17 @@ variable "whatsapp_phone_number_id" {
 variable "notifier_schedule" {
   type        = string
   default     = "cron(0 9 * * ? *)"
-  description = "Horário do notifier (cron). O fuso horário é notifier_timezone."
+  description = "Horário do notifier (cron). O fuso horário é app_timezone."
 }
 
-variable "notifier_timezone" {
-  type        = string
-  default     = "America/Sao_Paulo"
-  description = "Fuso horário que define o dia (\"vence hoje\") dos alertas do notifier."
+variable "app_timezone" {
+  type    = string
+  default = "America/Sao_Paulo"
+  # Um único fuso para todo o sistema: o dia ("vence hoje", "esta semana",
+  # "dias restantes no mês") tem que ser o mesmo no dashboard, no resumo do
+  # WhatsApp e nas respostas do bot. Dois knobs separados deixariam os três
+  # falando de dias diferentes.
+  description = "Fuso horário que define o dia do sistema (alertas do notifier, análise mensal e agenda do notifier)."
 }
 
 variable "dashboard_origin" {

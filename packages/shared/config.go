@@ -13,12 +13,21 @@ import (
 // the dashboard, the digest and the bot on different days.
 const DefaultTimezone = "America/Sao_Paulo"
 
-// Location loads the timezone from key, falling back to DefaultTimezone and,
-// if even that is unavailable (no zoneinfo in the Lambda image — import
-// _ "time/tzdata" to embed it), to UTC. It never fails: a wrong-by-hours clock
-// is better than a service that refuses to start.
-func Location(key string) *time.Location {
-	name := Getenv(key, DefaultTimezone)
+// PharmacyLocation loads the one timezone the whole system reasons about days
+// in, from APP_TIMEZONE. There is deliberately no per-service variable: the
+// dashboard, the WhatsApp digest and the bot all answer questions about "hoje",
+// "esta semana" and "dias restantes", and separate knobs would let them
+// disagree about what day it is.
+//
+// NOTIFIER_TIMEZONE is still honoured as a fallback because it is the name that
+// shipped first — a deploy that has not picked up APP_TIMEZONE yet keeps its
+// configured timezone instead of silently jumping to UTC.
+//
+// It never fails: a clock that is wrong by hours beats a service that refuses
+// to start. An unloadable zone (no zoneinfo in the Lambda image — import
+// _ "time/tzdata" to embed it) degrades to UTC with a warning.
+func PharmacyLocation() *time.Location {
+	name := Getenv("APP_TIMEZONE", Getenv("NOTIFIER_TIMEZONE", DefaultTimezone))
 	loc, err := time.LoadLocation(name)
 	if err != nil {
 		slog.Warn("falling back to UTC", "timezone", name, "error", err)

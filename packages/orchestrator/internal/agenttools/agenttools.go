@@ -14,5 +14,5 @@ import (
 // into it would be an import cycle.
 func All(store finance.Store, dashboardURL string) []finance.Tool {
 	tools := finance.FinanceTools(store, dashboardURL)
-	return append(tools, analytics.Tools(store, shared.Location("APP_TIMEZONE"))...)
+	return append(tools, analytics.Tools(store, shared.PharmacyLocation())...)
 }

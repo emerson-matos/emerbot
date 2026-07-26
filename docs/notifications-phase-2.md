@@ -49,7 +49,10 @@ janela e voltar a receber os alertas. Templates pagos ficam como decisão futura
   **`META_GRAPH_API_TOKEN`** precisam estar setados (via `TF_VAR_*`) para o
   notifier enviar. Sem o token, o cliente cai no simulador local.
 - **Agenda**: `var.notifier_schedule` (default `cron(0 11 * * ? *)` = 08h em
-  São Paulo). Ajuste o fuso do "vence hoje" com `NOTIFIER_TIMEZONE`.
+  São Paulo). O fuso do "vence hoje" vem de `var.app_timezone` (`APP_TIMEZONE`),
+  o mesmo fuso usado pelo dashboard e pelo bot — um knob só, para os três nunca
+  discordarem sobre que dia é hoje. `NOTIFIER_TIMEZONE` ainda é aceito como
+  fallback pelo código, mas não é mais injetado pelo OpenTofu.
 - **`DASHBOARD_URL`** (vem de `var.dashboard_origin`, o mesmo do webhook) define
   o link de "análise completa" no fim do resumo. Sem ela o resumo sai **sem
   link** — nunca com um texto substituto. O link é montado pelo próprio notifier

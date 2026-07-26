@@ -20,6 +20,7 @@ import (
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/finance/analytics"
 	pkgpayments "github.com/emerson/emerbot/packages/payments"
 )
 
@@ -266,6 +267,38 @@ func TestSummaryMonthly(t *testing.T) {
 	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 	if rec := do(t, app, http.MethodGet, "/summary/monthly?month=2026-07", token, nil); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from /summary/monthly, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAnalysisMonthlyIsWiredAndProtected(t *testing.T) {
+	t.Parallel()
+	app, key := newTestApp(t)
+
+	// Registered in the mux, behind the same auth as every other finance
+	// route. The handler's own test builds it directly, so only this one can
+	// catch a route string that never matched or a missing authMw wrap.
+	if rec := do(t, app, http.MethodGet, "/analysis/monthly", "", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without a token, got %d", rec.Code)
+	}
+
+	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
+	rec := do(t, app, http.MethodGet, "/analysis/monthly?month=2026-07", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from /analysis/monthly, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got analytics.Analysis
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode analysis response: %v", err)
+	}
+	if got.Month != "2026-07" {
+		t.Fatalf("month = %q, want the requested 2026-07", got.Month)
+	}
+	// The payload is the analysis itself, not wrapped in an envelope — the
+	// frontend assigns it straight to its Analysis type.
+	if len(got.Weekdays) != 7 || len(got.History) != analytics.HistoryMonths {
+		t.Fatalf("expected a fully-formed analysis, got %d weekdays and %d history months",
+			len(got.Weekdays), len(got.History))
 	}
 }
 

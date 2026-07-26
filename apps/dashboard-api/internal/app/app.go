@@ -54,7 +54,7 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	paymentsHandler := apipayments.NewHandler(payRepo, finStore)
 	// "Hoje", "esta semana" and "dias restantes" are the pharmacy's calendar
 	// day, not the Lambda's UTC one.
-	analysisHandler := apifinance.NewAnalysisHandler(finStore, shared.Location("APP_TIMEZONE"))
+	analysisHandler := apifinance.NewAnalysisHandler(finStore, shared.PharmacyLocation())
 
 	mux := http.NewServeMux()
 
