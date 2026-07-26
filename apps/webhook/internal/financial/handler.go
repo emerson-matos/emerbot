@@ -178,14 +178,13 @@ func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, 
 
 func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 	now := time.Now().UTC()
-	yearMonth := now.Format("2006-01")
+	yearMonth := domain.MonthOf(now)
 	summary, err := h.store.MonthlySummary(ctx, userID, yearMonth)
 	if err != nil {
 		return "", fmt.Errorf("resumo: %w", err)
 	}
 
-	from, _ := time.Parse("2006-01", yearMonth)
-	to := from.AddDate(0, 1, -1)
+	from, to, _ := domain.ParseMonth(yearMonth) // derived from the clock, cannot fail
 	monthEntries, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
 	if err != nil {
 		return "", fmt.Errorf("resumo entries: %w", err)
@@ -231,14 +230,13 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 
 func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
 	now := time.Now().UTC()
-	yearMonth := now.Format("2006-01")
+	yearMonth := domain.MonthOf(now)
 	summary, err := h.store.MonthlySummary(ctx, userID, yearMonth)
 	if err != nil {
 		return "", fmt.Errorf("goal: %w", err)
 	}
 
-	from, _ := time.Parse("2006-01", yearMonth)
-	to := from.AddDate(0, 1, -1)
+	from, to, _ := domain.ParseMonth(yearMonth) // derived from the clock, cannot fail
 	monthEntries, err := h.store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
 	if err != nil {
 		return "", fmt.Errorf("goal entries: %w", err)
@@ -299,7 +297,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	now := time.Now().UTC()
 	goal := domain.Goal{
 		UserID:        userID,
-		Month:         now.Format("2006-01"),
+		Month:         domain.MonthOf(now),
 		RevenueTarget: rev,
 		ExpenseTarget: exp,
 	}

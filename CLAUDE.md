@@ -31,3 +31,11 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 
 - **Conventional Commits** (`feat:`, `fix(infra):`, `refactor:`, `chore:`, `docs:`). Work on feature branches (`feat-*`, `fix/*`), merge via GitHub PRs to `main`.
 - Go apps split entrypoints: `cmd/lambda` (Lambda handler) vs `cmd/local` (local HTTP server). Shared domain logic lives in `packages/`.
+
+## Testing conventions (ADR-014)
+
+- **DynamoDB stores take `dynamostore.API`, never `*dynamodb.Client`.** Each has a `…WithClient` constructor for injection; `dynamostore.NewClient` is the one place that builds a real client.
+- **Test stores against `packages/dynamostore/dynamotest`**, an in-memory table that really evaluates key/filter/condition expressions, GSIs, sort order, `Limit`-before-filter and pagination. It **errors** on anything it does not model rather than silently matching — if you add a DynamoDB operation or expression, extend the fake. `dynamodb-local` (via `make demo`) stays the integration test.
+- **Behaviour shared by several implementations of an interface is written once.** The finance summaries live in `packages/finance/summaries.go` and both stores delegate; `store_conformance_test.go` runs the same scenario against every `Store` implementation, so a divergence is a red test rather than an environment-specific bug.
+- **Consumers declare the narrow interface they use** (e.g. `notifier.LedgerReader`, `finance.GoalStore`) instead of depending on the 17-method `finance.Store`.
+- **Dates go through `packages/domain`**: `ParseMonth`, `ParseDay`, `CurrentMonth`, `CurrentMonthRange`. Malformed input is an error, never a silent fallback to the current period — on a financial view, "no data" and "you typed it wrong" must not render the same. Handlers read query params via `internal/httpx` (`DateRange`, `Month`).

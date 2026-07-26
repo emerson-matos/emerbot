@@ -274,7 +274,7 @@ func resumoMensalTool(store Store) Tool {
 				return nil, fmt.Errorf("parse args: %w", err)
 			}
 			if args.Month == "" {
-				args.Month = time.Now().UTC().Format("2006-01")
+				args.Month = domain.CurrentMonth()
 			}
 
 			summary, err := store.MonthlySummary(ctx, userID, args.Month)
@@ -282,8 +282,10 @@ func resumoMensalTool(store Store) Tool {
 				return nil, fmt.Errorf("monthly summary: %w", err)
 			}
 
-			from, _ := time.Parse("2006-01", args.Month)
-			to := from.AddDate(0, 1, -1)
+			from, to, err := domain.ParseMonth(args.Month)
+			if err != nil {
+				return nil, err
+			}
 			monthEntries, err := store.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
 			if err != nil {
 				return nil, fmt.Errorf("monthly entries: %w", err)
@@ -355,7 +357,13 @@ func definirMetaTool(store Store) Tool {
 
 			month := args.Month
 			if month == "" {
-				month = time.Now().UTC().Format("2006-01")
+				month = domain.CurrentMonth()
+			}
+			// The month comes from LLM output, so it is validated before it can
+			// become a goal's key — an unchecked one stored "julho" verbatim and
+			// no later read could ever match it.
+			if _, _, err := domain.ParseMonth(month); err != nil {
+				return nil, err
 			}
 
 			if args.RevenueTarget <= 0 && args.ExpenseTarget <= 0 {

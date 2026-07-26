@@ -2,7 +2,6 @@ package finance
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -26,20 +25,10 @@ type EntryLister interface {
 	ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error)
 }
 
-// monthBounds turns "2006-01" into the month's first and last day. A month it
-// cannot parse is an error, never a silently empty range.
-func monthBounds(yearMonth string) (from, to time.Time, err error) {
-	from, err = time.Parse("2006-01", yearMonth)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid yearMonth %q: %w", yearMonth, err)
-	}
-	return from, from.AddDate(0, 1, -1), nil
-}
-
 // monthlySummary totals income and expense over one calendar month, bucketed
 // by each entry's effectiveDate.
 func monthlySummary(ctx context.Context, l EntryLister, userID, yearMonth string) (MonthlySummary, error) {
-	from, to, err := monthBounds(yearMonth)
+	from, to, err := domain.ParseMonth(yearMonth)
 	if err != nil {
 		return MonthlySummary{}, err
 	}
@@ -111,7 +100,7 @@ func categorySummary(ctx context.Context, l EntryLister, userID string, from, to
 // month (day 1 through the last day), not a rolling window centered on
 // today — the dashboard always shows the current month.
 func cashFlowForecast(ctx context.Context, l EntryLister, userID, yearMonth string) ([]CashFlowPoint, error) {
-	from, to, err := monthBounds(yearMonth)
+	from, to, err := domain.ParseMonth(yearMonth)
 	if err != nil {
 		return nil, err
 	}

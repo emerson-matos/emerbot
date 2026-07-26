@@ -34,12 +34,14 @@ func knownCategory(c string) bool {
 const maxEntryAmountReais = 10_000_000
 
 // parseDate parses a "YYYY-MM-DD" string; ok is false for empty or malformed
-// input so callers fall back to their default.
+// input so callers fall back to their default. Tool args come from LLM output,
+// where "no date given" and "a date I could not read" both mean "use the
+// default" — which is why this reports a bool rather than an error.
 func parseDate(s string) (time.Time, bool) {
 	if s == "" {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("2006-01-02", s)
+	t, err := domain.ParseDay(s)
 	if err != nil {
 		return time.Time{}, false
 	}

@@ -133,7 +133,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	// Anchor everything to a UTC calendar date so comparisons line up with
 	// how entries store their (timezone-free) dates.
 	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	month := today.Format("2006-01")
+	month := domain.MonthOf(today)
 	windowStart := time.Date(y, m-OverdueLookbackMonths, 1, 0, 0, 0, 0, time.UTC)
 	dedupeKey := today.Format("2006-01-02")
 
