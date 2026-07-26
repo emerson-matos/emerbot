@@ -17,8 +17,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL } from '@/lib/format'
-import type { YearMonth, Analysis, FinancialHealthStatus, Recommendation } from '@/lib/analytics/types'
-import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/lib/analytics/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, Recommendation } from '@/api/types'
+import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 function capitalizeFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)

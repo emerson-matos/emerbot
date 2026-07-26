@@ -18,6 +18,7 @@ export const queryKeys = {
   summaryCategories: (from?: string, to?: string) =>
     ["summary", "categories", from, to] as const,
   cashflow: (month: string) => ["summary", "cashflow", month] as const,
+  analysis: (month: string) => ["analysis", "monthly", month] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesByMonth: () => ["entries", "byMonth"] as const,
   goal: (month: string) => ["goal", month] as const,

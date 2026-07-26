@@ -1,13 +1,8 @@
-import type {
-  CashFlowPoint,
-  Category,
-  Entry,
-  MonthlySummary,
-} from "@/api/types";
+import type { Category, Entry } from "@/api/types";
 
 /**
- * Builders for the API shapes the analytics/lib helpers consume. Each takes
- * partial overrides so a test only spells out the fields it actually asserts on.
+ * Builders for the API shapes the lib helpers consume. Each takes partial
+ * overrides so a test only spells out the fields it actually asserts on.
  */
 
 export function makeEntry(overrides: Partial<Entry> = {}): Entry {
@@ -24,30 +19,6 @@ export function makeEntry(overrides: Partial<Entry> = {}): Entry {
     PaymentDate: null,
     Supplier: "",
     Source: "web",
-    ...overrides,
-  };
-}
-
-export function makeSummary(
-  overrides: Partial<MonthlySummary> = {},
-): MonthlySummary {
-  return {
-    Month: "2026-02",
-    TotalIncome: 0,
-    TotalExpense: 0,
-    Balance: 0,
-    ...overrides,
-  };
-}
-
-export function makeCashFlowPoint(
-  overrides: Partial<CashFlowPoint> = {},
-): CashFlowPoint {
-  return {
-    Date: "2026-02-05",
-    ProjectedIncome: 0,
-    ProjectedExpense: 0,
-    RunningBalance: 0,
     ...overrides,
   };
 }
