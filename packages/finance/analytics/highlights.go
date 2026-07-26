@@ -55,7 +55,7 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 func buildHighlights(entries []domain.FinancialEntry) Highlights {
 	days := aggregateByDay(entries)
 	if len(days) == 0 {
-		empty := DayHighlight{Date: "—", Label: "Sem dados", Amount: 0}
+		empty := DayHighlight{Date: NoDataDate, Label: "Sem dados", Amount: 0}
 		return Highlights{BestIncome: empty, WorstIncome: empty, BestBalance: empty, WorstBalance: empty}
 	}
 

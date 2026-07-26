@@ -147,7 +147,7 @@ func topExpenses(composition []ExpenseComposition) []map[string]any {
 }
 
 func dayText(h DayHighlight) string {
-	if h.Date == "—" {
+	if h.Date == NoDataDate {
 		return h.Label
 	}
 	return strings.TrimSpace(fmt.Sprintf("%s (%s)", h.Label, formatBRL(h.Amount)))

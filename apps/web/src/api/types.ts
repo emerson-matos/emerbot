@@ -106,7 +106,6 @@ export const InsightType = {
   WeeklyImprovement: "weekly_improvement",
   WeeklyDecline: "weekly_decline",
   GoalOnTrack: "goal_on_track",
-  CashRunway: "cash_runway",
 } as const;
 export type InsightType = (typeof InsightType)[keyof typeof InsightType];
 
@@ -157,7 +156,6 @@ export interface DayHighlight {
   date: string;
   label: string;
   amount: number;
-  detail?: string;
 }
 
 export interface CashOutDay {

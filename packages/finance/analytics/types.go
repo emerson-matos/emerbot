@@ -33,8 +33,11 @@ const (
 	InsightWeeklyImprovement InsightType = "weekly_improvement"
 	InsightWeeklyDecline     InsightType = "weekly_decline"
 	InsightGoalOnTrack       InsightType = "goal_on_track"
-	InsightCashRunway        InsightType = "cash_runway"
 )
+
+// There is deliberately no cash-runway insight: a balance about to go negative
+// is reported as a Recommendation ("Saldo fica negativo em breve"), because it
+// comes with something to do about it.
 
 // InsightSeverity drives both the colour in the dashboard and the overall
 // HealthStatus (see status).
@@ -101,13 +104,18 @@ type WeekdayStat struct {
 	IsToday bool   `json:"isToday"`
 }
 
-// DayHighlight names a single standout day.
+// DayHighlight names a single standout day. Date is "YYYY-MM-DD", or
+// NoDataDate when the month has no entries at all.
 type DayHighlight struct {
 	Date   string `json:"date"`
 	Label  string `json:"label"`
 	Amount int64  `json:"amount"`
-	Detail string `json:"detail,omitempty"`
 }
+
+// NoDataDate is the placeholder Date a highlight carries when there is nothing
+// to highlight, so consumers can tell "no data" from a real day without
+// guessing at the label.
+const NoDataDate = "—"
 
 // Highlights are the best and worst days of the month, by revenue and by
 // balance.
