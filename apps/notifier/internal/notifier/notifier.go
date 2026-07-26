@@ -28,10 +28,12 @@ import (
 // looking for still-pending bills — matches the web hook's window.
 const OverdueLookbackMonths = 3
 
-// LedgerReader is the slice of the finance store the notifier needs: it reads
-// entries and goals, and keeps its own per-day delivery log. It writes no
-// financial data at all, and declaring that here makes it impossible to start.
-type LedgerReader interface {
+// NotifierStore is the slice of the finance store the notifier needs: it reads
+// entries and goals, keeps its own per-day delivery log, and writes the daily
+// insight snapshot. It writes no financial data at all — no entry, category or
+// goal mutation is reachable from here, and declaring that makes it impossible
+// to start.
+type NotifierStore interface {
 	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
 	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
 	ListNotificationPrefs(ctx context.Context) ([]domain.NotificationPrefs, error)
@@ -42,12 +44,13 @@ type LedgerReader interface {
 	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
 	// SaveInsightSnapshot persists the daily analysis as a subproduct of the
-	// digest run, so the dashboard-api can serve it without recomputing.
+	// digest run, so the dashboard-api can serve it without recomputing. This
+	// is the only write on the ledger's own partition.
 	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error
 }
 
 type Notifier struct {
-	store         LedgerReader
+	store         NotifierStore
 	sessions      wasession.Store
 	wa            whatsapp.Client
 	phoneNumberID string
@@ -63,7 +66,7 @@ type Notifier struct {
 // generator used to personalize the daily digest (pass StaticClient{} or
 // NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store LedgerReader, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
+func New(store NotifierStore, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -169,9 +172,8 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 
 	// Every prefs row names a real Cognito user (who to notify, and on which
-	// phone), but they all read the same shared financial ledger — filter down
-	// to opted-in recipients first so a fresh install with nobody enabled
-	// skips the ledger reads below entirely.
+	// phone), but they all read the same shared financial ledger — sort them
+	// into recipients and reasons-not-to-send before reading anything.
 	var candidates []domain.NotificationPrefs
 	for _, prefs := range prefsList {
 		if !prefs.WAEnabled || prefs.Phone == "" {
@@ -188,14 +190,17 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		}
 		candidates = append(candidates, prefs)
 	}
-	if len(candidates) == 0 {
-		runLog.Warn("notifier run finished with no eligible recipients",
-			"prefs", res.Prefs, "not_opted_in", res.NotOptedIn)
-		return res, nil
-	}
 
 	// One ledger, read once — reused for every recipient below instead of
 	// once per recipient.
+	//
+	// These reads happen before the no-recipients check below, and stay there
+	// even on a day nobody is opted in: the snapshot they feed is the
+	// dashboard-api's data source for GET /analysis, not just a digest
+	// ingredient. Skipping them when WhatsApp has no audience would leave the
+	// API answering 404 forever on an install where nobody enabled WhatsApp —
+	// two features that have nothing to do with each other. It costs a handful
+	// of reads once a day.
 	entries, err := n.store.ListEntries(ctx, shared.FinanceLedgerID, pkgfinance.EntryFilter{
 		From: &windowStart,
 		To:   &today,
@@ -228,6 +233,12 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		} else if serr := n.store.SaveInsightSnapshot(ctx, shared.FinanceLedgerID, today.Format("2006-01-02"), snapshotJSON, nowInstant); serr != nil {
 			runLog.Warn("persist analysis snapshot", "error", serr)
 		}
+	}
+
+	if len(candidates) == 0 {
+		runLog.Warn("notifier run finished with no eligible recipients",
+			"prefs", res.Prefs, "not_opted_in", res.NotOptedIn)
+		return res, nil
 	}
 
 	for _, prefs := range candidates {

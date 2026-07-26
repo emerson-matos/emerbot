@@ -3,9 +3,9 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -185,7 +185,7 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 
 	// Yesterday: receita 100k
 	prev := analytics.Analysis{
-		Month: yesterday[:7],
+		Month:  yesterday[:7],
 		Health: analytics.Health{Status: analytics.HealthBoa},
 		KPIs:   analytics.KPIs{Receita: 100000, Despesa: 50000, Resultado: 50000},
 	}
@@ -196,7 +196,7 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 
 	// Today: receita 120k
 	curr := analytics.Analysis{
-		Month: today[:7],
+		Month:  today[:7],
 		Health: analytics.Health{Status: analytics.HealthBoa},
 		KPIs:   analytics.KPIs{Receita: 120000, Despesa: 45000, Resultado: 75000},
 	}
@@ -274,5 +274,109 @@ func TestPctChange(t *testing.T) {
 	}
 }
 
-// Ensure imports are used.
-var _ = strings.TrimSpace
+// At 22:00 in São Paulo it is already tomorrow in UTC. The snapshot key has to
+// follow the pharmacy's calendar, the same one the notifier writes under —
+// otherwise the dashboard spends every evening asking for a day that does not
+// exist yet and answering 404 with a snapshot sitting right there.
+func TestSnapshotGetUsesPharmacyCalendarDayNotUTC(t *testing.T) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skipf("zoneinfo unavailable: %v", err)
+	}
+	// 2026-07-21T01:00Z is 2026-07-20 22:00 in São Paulo.
+	evening := time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)
+
+	store := finance.NewInMemoryStore()
+	seedSnapshot(t, store, "2026-07-20", analytics.HealthBoa)
+
+	handler := NewSnapshotHandler(store, loc)
+	handler.SetClock(func() time.Time { return evening })
+
+	rec := httptest.NewRecorder()
+	handler.Get(rec, snapshotRequest(http.MethodGet, "/analysis"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — the Brazilian day is 2026-07-20; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// And the UTC day must not be what it looks for: a snapshot filed under
+	// 2026-07-21 is tomorrow's as far as the pharmacy is concerned.
+	utcOnly := finance.NewInMemoryStore()
+	seedSnapshot(t, utcOnly, "2026-07-21", analytics.HealthBoa)
+	utcHandler := NewSnapshotHandler(utcOnly, loc)
+	utcHandler.SetClock(func() time.Time { return evening })
+
+	rec = httptest.NewRecorder()
+	utcHandler.Get(rec, snapshotRequest(http.MethodGet, "/analysis"))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 — 2026-07-21 is not today in São Paulo", rec.Code)
+	}
+}
+
+// The same evening, Recalculate has to file its result under the Brazilian day
+// so the Get above finds it.
+func TestSnapshotRecalculateUsesPharmacyCalendarDay(t *testing.T) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skipf("zoneinfo unavailable: %v", err)
+	}
+	evening := time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)
+
+	store := finance.NewInMemoryStore()
+	handler := NewSnapshotHandler(store, loc)
+	handler.SetClock(func() time.Time { return evening })
+
+	rec := httptest.NewRecorder()
+	handler.Recalculate(rec, snapshotRequest(http.MethodPost, "/analysis"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := store.GetInsightSnapshot(context.Background(), shared.FinanceLedgerID, "2026-07-20"); err != nil {
+		t.Errorf("snapshot not filed under the São Paulo day: %v", err)
+	}
+}
+
+// failingSnapshotStore is an InMemoryStore whose snapshot read is broken — the
+// store is up, the item may well exist, the read itself failed.
+type failingSnapshotStore struct {
+	*finance.InMemoryStore
+	err error
+}
+
+func (s failingSnapshotStore) GetInsightSnapshot(context.Context, string, string) (finance.InsightSnapshot, error) {
+	return finance.InsightSnapshot{}, s.err
+}
+
+// A read failure is not an empty cache. Answering 404 here would tell the user
+// to wait for a digest that already ran, and hide a broken table behind a
+// message that reads like normal operation.
+func TestSnapshotGetReturns500OnStoreFailure(t *testing.T) {
+	store := failingSnapshotStore{
+		InMemoryStore: finance.NewInMemoryStore(),
+		err:           errors.New("dynamodb: throughput exceeded"),
+	}
+
+	rec := httptest.NewRecorder()
+	handler := NewSnapshotHandler(store, time.UTC)
+	handler.Get(rec, snapshotRequest(http.MethodGet, "/analysis"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// ...while a genuinely absent snapshot is still a 404 carrying the sentinel.
+func TestSnapshotGet404CarriesSentinel(t *testing.T) {
+	store := finance.NewInMemoryStore()
+	_, err := store.GetInsightSnapshot(context.Background(), shared.FinanceLedgerID, "2026-07-20")
+	if !errors.Is(err, finance.ErrInsightNotFound) {
+		t.Fatalf("missing snapshot error = %v, want ErrInsightNotFound", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler := NewSnapshotHandler(store, time.UTC)
+	handler.Get(rec, snapshotRequest(http.MethodGet, "/analysis"))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}

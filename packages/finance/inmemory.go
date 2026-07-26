@@ -278,7 +278,7 @@ func (s *InMemoryStore) GetInsightSnapshot(_ context.Context, userID, date strin
 	defer s.mu.RUnlock()
 	snap, ok := s.insights[insightKey(userID, date)]
 	if !ok {
-		return InsightSnapshot{}, fmt.Errorf("insight snapshot not found for %s/%s", userID, date)
+		return InsightSnapshot{}, fmt.Errorf("%w for %s/%s", ErrInsightNotFound, userID, date)
 	}
 	return snap, nil
 }

@@ -13,12 +13,15 @@ import (
 
 const insightTTLDays = 30
 
+// insightItem is one day's snapshot. ExpiresAt is the table's TTL attribute
+// (declared in infra/modules/api_gateway_lambda/main.tf) — the name has to
+// match the ttl block there or DynamoDB silently keeps every snapshot forever.
 type insightItem struct {
 	PK         string `dynamodbav:"PK"`
 	SK         string `dynamodbav:"SK"`
 	Snapshot   []byte `dynamodbav:"Snapshot"`
 	ComputedAt string `dynamodbav:"ComputedAt"` // RFC3339
-	TTL        int64  `dynamodbav:"TTL"`        // epoch seconds
+	ExpiresAt  int64  `dynamodbav:"ExpiresAt"`  // epoch seconds
 }
 
 func (s *DynamoDBStore) SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error {
@@ -27,7 +30,7 @@ func (s *DynamoDBStore) SaveInsightSnapshot(ctx context.Context, userID, date st
 		SK:         insightSKPrefix + date,
 		Snapshot:   snapshot,
 		ComputedAt: computedAt.UTC().Format(time.RFC3339),
-		TTL:        computedAt.UTC().Add(insightTTLDays * 24 * time.Hour).Unix(),
+		ExpiresAt:  computedAt.UTC().Add(insightTTLDays * 24 * time.Hour).Unix(),
 	}
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
@@ -52,7 +55,7 @@ func (s *DynamoDBStore) GetInsightSnapshot(ctx context.Context, userID, date str
 		return InsightSnapshot{}, fmt.Errorf("get insight snapshot: %w", err)
 	}
 	if out.Item == nil {
-		return InsightSnapshot{}, fmt.Errorf("insight snapshot not found for %s/%s", userID, date)
+		return InsightSnapshot{}, fmt.Errorf("%w for %s/%s", ErrInsightNotFound, userID, date)
 	}
 	var item insightItem
 	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {

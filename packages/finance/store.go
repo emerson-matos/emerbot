@@ -2,10 +2,18 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
 )
+
+// ErrInsightNotFound is returned by GetInsightSnapshot when no snapshot exists
+// for that day. It is a sentinel rather than a bare error so callers can tell
+// "the digest has not run yet" apart from "DynamoDB is failing" — the HTTP
+// layer answers 404 for the first and 500 for the second, and collapsing them
+// would tell a user to wait for a run that already happened.
+var ErrInsightNotFound = errors.New("insight snapshot not found")
 
 // EntryFilter constrains ListEntries queries. Zero-value fields are ignored.
 // From/To bound an entry's EffectiveDate (see below), not necessarily its
