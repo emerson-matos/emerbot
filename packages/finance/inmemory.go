@@ -87,16 +87,16 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 
 		// Cursor is an exclusive upper bound on the GSI2SK value.
 		if filter.Cursor != "" {
-			gsi2sk := effectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID)
+			gsi2sk := EffectiveDate(e).Format("2006-01-02") + "#" + string(e.EntryID)
 			if gsi2sk >= filter.Cursor {
 				continue
 			}
 		}
 
-		if filter.From != nil && effectiveDate(e).Before(*filter.From) {
+		if filter.From != nil && EffectiveDate(e).Before(*filter.From) {
 			continue
 		}
-		if filter.To != nil && effectiveDate(e).After(*filter.To) {
+		if filter.To != nil && EffectiveDate(e).After(*filter.To) {
 			continue
 		}
 		if filter.Category != "" && e.Category != filter.Category {
@@ -116,7 +116,7 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return effectiveDate(result[i]).After(effectiveDate(result[j]))
+		return EffectiveDate(result[i]).After(EffectiveDate(result[j]))
 	})
 	if filter.Limit > 0 && len(result) > filter.Limit {
 		result = result[:filter.Limit]
@@ -157,7 +157,7 @@ func (s *InMemoryStore) MonthlySummary(_ context.Context, userID, yearMonth stri
 		if e.UserID != userID {
 			continue
 		}
-		if !strings.HasPrefix(effectiveDate(e).Format("2006-01"), yearMonth) {
+		if !strings.HasPrefix(EffectiveDate(e).Format("2006-01"), yearMonth) {
 			continue
 		}
 		if e.Type == domain.EntryTypeIncome {
@@ -200,7 +200,7 @@ func (s *InMemoryStore) CategorySummary(_ context.Context, userID string, from, 
 		if e.UserID != userID {
 			continue
 		}
-		if effectiveDate(e).Before(from) || effectiveDate(e).After(to) {
+		if EffectiveDate(e).Before(from) || EffectiveDate(e).After(to) {
 			continue
 		}
 		key := e.Category
@@ -246,7 +246,7 @@ func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID, yearMonth st
 		if e.UserID != userID {
 			continue
 		}
-		d := effectiveDate(e)
+		d := EffectiveDate(e)
 		if d.Before(from) || d.After(to) {
 			continue
 		}
@@ -267,7 +267,7 @@ func (s *InMemoryStore) CashFlowForecast(_ context.Context, userID, yearMonth st
 		if e.UserID != userID {
 			continue
 		}
-		if !effectiveDate(e).Before(from) {
+		if !EffectiveDate(e).Before(from) {
 			continue
 		}
 		if e.Type == domain.EntryTypeIncome {

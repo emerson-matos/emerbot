@@ -141,6 +141,12 @@ export interface Trends {
   receita: MonthTrend;
   despesa: MonthTrend;
   resultado: MonthTrend;
+  /**
+   * Day of the month both sides were measured up to, or 0 when both months
+   * are closed and were compared whole. A month in progress is never held
+   * against a month that already finished — label the window when this is set.
+   */
+  comparedThroughDay: number;
 }
 
 export interface WeekdayStat {

@@ -86,11 +86,17 @@ type MonthTrend struct {
 	Direction TrendDirection `json:"direction"`
 }
 
-// Trends bundles the three headline metrics.
+// Trends bundles the three headline metrics, each compared against the
+// previous month at the same height of the month.
 type Trends struct {
 	Receita   MonthTrend `json:"receita"`
 	Despesa   MonthTrend `json:"despesa"`
 	Resultado MonthTrend `json:"resultado"`
+	// ComparedThroughDay is the day of the month both sides were measured up
+	// to, or 0 when both months are closed and were compared whole. The UI
+	// needs it to say which window a percentage refers to — the same number
+	// means something different for "the month so far" than for a full month.
+	ComparedThroughDay int `json:"comparedThroughDay"`
 }
 
 // WeekdayStat is the counter-sales average for one day of the week across the

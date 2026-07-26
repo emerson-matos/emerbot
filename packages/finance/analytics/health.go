@@ -26,10 +26,14 @@ const (
 
 // buildHealth turns the month's numbers into the traffic light and the list of
 // insights behind it.
+// The month-over-month insights read `compared`, not the raw summaries: those
+// hold a month in progress against a month that finished, which reads as a
+// collapse in revenue every time the month is young. Everything else here is
+// about the month on its own and uses the full summary.
 func buildHealth(
 	entries []domain.FinancialEntry,
 	summary pkgfinance.MonthlySummary,
-	previous *pkgfinance.MonthlySummary,
+	compared comparison,
 	week WeekComparison,
 	goals GoalProgress,
 ) Health {
@@ -65,13 +69,13 @@ func buildHealth(
 		})
 	}
 
-	// Month-over-month only says anything when both months actually traded;
-	// a percentage against a month with no income is noise.
-	if previous != nil && previous.TotalIncome > 0 && summary.TotalIncome > 0 {
-		incomeChange := percentChange(summary.TotalIncome, previous.TotalIncome)
+	// Month-over-month only says anything when both months actually traded up
+	// to this point; a percentage against a month with no income is noise.
+	if compared.previous.income > 0 && compared.current.income > 0 {
+		incomeChange := percentChange(compared.current.income, compared.previous.income)
 		var expenseChange float64
-		if previous.TotalExpense > 0 {
-			expenseChange = percentChange(summary.TotalExpense, previous.TotalExpense)
+		if compared.previous.expense > 0 {
+			expenseChange = percentChange(compared.current.expense, compared.previous.expense)
 		}
 
 		// Expenses growing is only a problem when income is not keeping up.
@@ -80,7 +84,7 @@ func buildHealth(
 				Type:        InsightExpenseGrowth,
 				Severity:    SeverityWarning,
 				Title:       "Despesas cresceram",
-				Description: fmt.Sprintf("%d%% acima do mês passado", roundToInt(expenseChange)),
+				Description: fmt.Sprintf("%d%% acima do mês passado%s", roundToInt(expenseChange), compared.suffix()),
 				Value:       ptr(expenseChange),
 			})
 		}
@@ -90,7 +94,7 @@ func buildHealth(
 				Type:        InsightRevenueDrop,
 				Severity:    SeverityWarning,
 				Title:       "Receitas cairam",
-				Description: fmt.Sprintf("%d%% abaixo do mês passado", roundToInt(-incomeChange)),
+				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-incomeChange), compared.suffix()),
 				Value:       ptr(incomeChange),
 			})
 		}

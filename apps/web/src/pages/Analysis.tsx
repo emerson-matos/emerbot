@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL } from '@/lib/format'
-import type { YearMonth, Analysis, FinancialHealthStatus, Recommendation } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Recommendation } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 function capitalizeFirst(s: string): string {
@@ -80,6 +80,15 @@ function RecommendationSection({ data }: { data: Analysis['recommendations'] }) 
   )
 }
 
+const TREND_ARROW = { up: '↑', down: '↓', stable: '—' } as const
+
+// The backend compares both months up to the same day, so a percentage from a
+// month in progress must not be presented as a whole-month figure.
+function trendLabel(trend: MonthTrend, throughDay: number): string {
+  const window = throughDay > 0 ? `vs mês passado até o dia ${throughDay}` : 'vs mês passado'
+  return `${TREND_ARROW[trend.direction]} ${Math.abs(trend.change)}% ${window}`
+}
+
 function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: Analysis['goals']; trends: Analysis['trends'] }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -93,7 +102,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.resultado)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trends.resultado.direction === 'down' ? '↓' : trends.resultado.direction === 'up' ? '↑' : '—'} {Math.abs(trends.resultado.change)}% vs mês passado
+            {trendLabel(trends.resultado, trends.comparedThroughDay)}
           </p>
         </KpiCardContent>
       </KpiCard>
@@ -105,7 +114,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.receita)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trends.receita.direction === 'down' ? '↓' : trends.receita.direction === 'up' ? '↑' : '—'} {Math.abs(trends.receita.change)}% vs mês passado
+            {trendLabel(trends.receita, trends.comparedThroughDay)}
           </p>
         </KpiCardContent>
       </KpiCard>
@@ -117,7 +126,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.despesa)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trends.despesa.direction === 'down' ? '↓' : trends.despesa.direction === 'up' ? '↑' : '—'} {Math.abs(trends.despesa.change)}% vs mês passado
+            {trendLabel(trends.despesa, trends.comparedThroughDay)}
           </p>
         </KpiCardContent>
       </KpiCard>

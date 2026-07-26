@@ -19,7 +19,9 @@ type Input struct {
 	// Month is the month under analysis, "YYYY-MM".
 	Month string
 	// Entries are the analysed month's entries; PreviousEntries the month
-	// before's (used only for the like-for-like income comparison).
+	// before's. Both are needed in full because the month-over-month
+	// comparison re-totals them day by day rather than reading the stored
+	// summaries, which only exist for whole months.
 	Entries         []domain.FinancialEntry
 	PreviousEntries []domain.FinancialEntry
 	// Summaries and Goals run oldest-first over the trailing HistoryMonths
@@ -45,7 +47,6 @@ func Build(in Input) Analysis {
 	if s := at(in.Summaries, current); s != nil {
 		currentSummary = *s
 	}
-	previousSummary := at(in.Summaries, current-1)
 	currentGoal := at(in.Goals, current)
 
 	counterSales := counterSalesTotal(in.Entries)
@@ -64,13 +65,18 @@ func Build(in Input) Analysis {
 	}
 	week := buildWeekComparison(in.Entries, in.Now, counterSales, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, in.Now, counterSales)
-	trends := buildTrends(currentSummary, previousSummary)
+	// One month-over-month comparison, measured at the same height of both
+	// months, shared by the trends and the health insights — they used to
+	// derive it separately from the full summaries and both inherited the
+	// partial-month distortion.
+	compared := buildComparison(in.Month, in.Entries, in.PreviousEntries, in.Now)
+	trends := buildTrends(compared)
 	cashPosition := buildCashPosition(in.CashFlowPoints, in.Now)
 
 	return Analysis{
 		Month:              in.Month,
 		KPIs:               kpis,
-		Health:             buildHealth(in.Entries, currentSummary, previousSummary, week, goals),
+		Health:             buildHealth(in.Entries, currentSummary, compared, week, goals),
 		Trends:             trends,
 		Weekdays:           weekdayStats(in.Entries, in.Now),
 		WeekComparison:     week,

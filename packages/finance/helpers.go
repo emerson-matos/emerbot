@@ -80,7 +80,7 @@ func emptySummaries(yearMonths []string) (map[string]MonthlySummary, time.Time, 
 // are ignored.
 func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.FinancialEntry) {
 	for _, e := range entries {
-		key := effectiveDate(e).Format("2006-01")
+		key := EffectiveDate(e).Format("2006-01")
 		summary, ok := summaries[key]
 		if !ok {
 			continue

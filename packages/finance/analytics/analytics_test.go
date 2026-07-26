@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -393,9 +394,13 @@ func TestHealthStatusEscalates(t *testing.T) {
 
 func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 	current := pkgfinance.MonthlySummary{TotalIncome: 80000, TotalExpense: 60000, Balance: 20000}
-	previous := summary(100000, 40000)
+	// Two closed months, so the comparison is whole-against-whole.
+	compared := comparison{
+		current:  monthTotals{income: 80000, expense: 60000, balance: 20000},
+		previous: monthTotals{income: 100000, expense: 40000, balance: 60000},
+	}
 
-	health := buildHealth(nil, current, previous, WeekComparison{}, GoalProgress{})
+	health := buildHealth(nil, current, compared, WeekComparison{}, GoalProgress{})
 
 	byType := map[InsightType]Insight{}
 	for _, m := range health.Messages {
@@ -423,7 +428,7 @@ func TestHealthGoalPaceMessages(t *testing.T) {
 	// 10 of 30 days gone, R$1.000,00 of a R$10.000,00 target — the rate so far
 	// (R$100/day) is far below the R$450/day still needed.
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 100000, DaysTotal: 30, DaysRemaining: 20}
-	health := buildHealth(nil, pkgfinance.MonthlySummary{}, nil, WeekComparison{}, goals)
+	health := buildHealth(nil, pkgfinance.MonthlySummary{}, comparison{}, WeekComparison{}, goals)
 
 	var behind *Insight
 	for i, m := range health.Messages {
@@ -608,9 +613,12 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	if got.Goals.RevenueActual != 450000 {
 		t.Errorf("Goals.RevenueActual = %d, want the counter-sales total", got.Goals.RevenueActual)
 	}
-	// June's 1.300.000 against July's 450.000.
-	if got.Trends.Receita.Direction != TrendDown {
-		t.Errorf("Receita trend = %+v, want down", got.Trends.Receita)
+	// July is genuinely *ahead* at the same height of the month: 450.000 by
+	// the 15th against June's 400.000 by its 15th. Comparing against June's
+	// closed 1.300.000 would call that a collapse, which is the whole point
+	// of measuring both months to the same day.
+	if got.Trends.Receita.Direction != TrendUp {
+		t.Errorf("Receita trend = %+v, want up", got.Trends.Receita)
 	}
 	if len(got.History) != HistoryMonths || got.History[0].Month != "2026-05" {
 		t.Errorf("History = %+v, want a trailing three-month window", got.History)
@@ -706,5 +714,149 @@ func TestToolPayloadUsesReais(t *testing.T) {
 	caixa := payload["caixa"].(map[string]any)
 	if caixa["dias_ate_saldo_negativo"] != nil {
 		t.Errorf("dias_ate_saldo_negativo = %v, want nil when the balance never goes negative", caixa["dias_ate_saldo_negativo"])
+	}
+}
+
+func TestComparisonMeasuresBothMonthsAtTheSameHeight(t *testing.T) {
+	// A month in progress: today is the 10th, and both months carry entries
+	// after it. Only the first ten days of each may count.
+	now := at12(t, "2026-07-10")
+	current := []domain.FinancialEntry{
+		sale(t, "2026-07-05", 40000),
+		sale(t, "2026-07-25", 60000), // later this month
+	}
+	previous := []domain.FinancialEntry{
+		sale(t, "2026-06-05", 50000),
+		sale(t, "2026-06-25", 900000), // the rest of a closed month
+	}
+
+	got := buildComparison("2026-07", current, previous, now)
+
+	if got.throughDay != 10 {
+		t.Errorf("throughDay = %d, want 10", got.throughDay)
+	}
+	if got.current.income != 40000 {
+		t.Errorf("current income = %d, want only the first ten days (40000)", got.current.income)
+	}
+	if got.previous.income != 50000 {
+		t.Errorf("previous income = %d, want only the first ten days (50000)", got.previous.income)
+	}
+}
+
+func TestComparisonUsesWholeMonthsForAClosedMonth(t *testing.T) {
+	// Analysing June while it is July: June is over, so cutting it at the
+	// 10th would be arbitrary.
+	now := at12(t, "2026-07-10")
+	june := []domain.FinancialEntry{sale(t, "2026-06-05", 50000), sale(t, "2026-06-25", 90000)}
+	may := []domain.FinancialEntry{sale(t, "2026-05-28", 70000)}
+
+	got := buildComparison("2026-06", june, may, now)
+
+	if got.throughDay != 0 {
+		t.Errorf("throughDay = %d, want 0 for a closed month", got.throughDay)
+	}
+	if got.current.income != 140000 || got.previous.income != 70000 {
+		t.Errorf("totals = %d vs %d, want both months whole", got.current.income, got.previous.income)
+	}
+}
+
+func TestComparisonBucketsByEffectiveDate(t *testing.T) {
+	// A bill registered on the 2nd but due on the 20th belongs to the 20th —
+	// the same day the stored monthly summary counts it on. Bucketing it by
+	// its registration date would make the comparison disagree with the KPIs
+	// shown beside it.
+	due := day(t, "2026-07-20")
+	bill := domain.FinancialEntry{
+		TransactionDate: day(t, "2026-07-02"),
+		DueDate:         &due,
+		Amount:          30000,
+		Type:            domain.EntryTypeExpense,
+		Category:        "aluguel",
+	}
+
+	if got := totalsThroughDay([]domain.FinancialEntry{bill}, 10); got.expense != 0 {
+		t.Errorf("expense = %d, want 0 — the bill is due after day 10", got.expense)
+	}
+	if got := totalsThroughDay([]domain.FinancialEntry{bill}, 0); got.expense != 30000 {
+		t.Errorf("expense = %d, want the whole month to include it", got.expense)
+	}
+}
+
+func TestPartialMonthNoLongerReadsAsACollapse(t *testing.T) {
+	// The bug this fixes: on the 10th, a month trading at exactly last
+	// month's pace was compared against last month's *closed* total and
+	// reported as a ~67% fall — every month, for the first three weeks.
+	now := at12(t, "2026-07-10")
+	var current, previous []domain.FinancialEntry
+	for d := 1; d <= 10; d++ {
+		current = append(current, sale(t, fmt.Sprintf("2026-07-%02d", d), 10000))
+	}
+	for d := 1; d <= 30; d++ {
+		previous = append(previous, sale(t, fmt.Sprintf("2026-06-%02d", d), 10000))
+	}
+
+	got := Build(Input{
+		Month:           "2026-07",
+		Entries:         current,
+		PreviousEntries: previous,
+		Summaries: []*pkgfinance.MonthlySummary{
+			nil, summary(300000, 0), summary(100000, 0),
+		},
+		Now: now,
+	})
+
+	if got.Trends.Receita.Direction != TrendStable || got.Trends.Receita.Change != 0 {
+		t.Errorf("Receita trend = %+v, want stable at 0%% — same pace, same height of month",
+			got.Trends.Receita)
+	}
+	if got.Trends.ComparedThroughDay != 10 {
+		t.Errorf("ComparedThroughDay = %d, want 10 so the UI can label the window",
+			got.Trends.ComparedThroughDay)
+	}
+	// And the false alarms that fell out of it are gone.
+	for _, r := range got.Recommendations {
+		if r.Title == "Receita caiu" {
+			t.Errorf("still recommending %q for a month trading at last month's pace", r.Title)
+		}
+	}
+	for _, m := range got.Health.Messages {
+		if m.Type == InsightRevenueDrop {
+			t.Errorf("still flagging a revenue drop: %+v", m)
+		}
+	}
+}
+
+func TestPartialMonthStillReportsARealDrop(t *testing.T) {
+	// Half last month's pace over the same ten days is a real fall and must
+	// still be reported — the fix removes the false alarm, not the alarm.
+	now := at12(t, "2026-07-10")
+	var current, previous []domain.FinancialEntry
+	for d := 1; d <= 10; d++ {
+		current = append(current, sale(t, fmt.Sprintf("2026-07-%02d", d), 5000))
+		previous = append(previous, sale(t, fmt.Sprintf("2026-06-%02d", d), 10000))
+	}
+
+	got := Build(Input{
+		Month:           "2026-07",
+		Entries:         current,
+		PreviousEntries: previous,
+		Summaries:       []*pkgfinance.MonthlySummary{nil, summary(100000, 0), summary(50000, 0)},
+		Now:             now,
+	})
+
+	if got.Trends.Receita.Direction != TrendDown || got.Trends.Receita.Change != -50 {
+		t.Errorf("Receita trend = %+v, want down 50%%", got.Trends.Receita)
+	}
+	var dropped *Insight
+	for i, m := range got.Health.Messages {
+		if m.Type == InsightRevenueDrop {
+			dropped = &got.Health.Messages[i]
+		}
+	}
+	if dropped == nil {
+		t.Fatalf("expected a revenue-drop insight, got %+v", got.Health.Messages)
+	}
+	if want := "50% abaixo do mês passado (até o dia 10)"; dropped.Description != want {
+		t.Errorf("description = %q, want %q — the window has to be stated", dropped.Description, want)
 	}
 }

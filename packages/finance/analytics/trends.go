@@ -1,22 +1,15 @@
 package analytics
 
-import (
-	"math"
+import "math"
 
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
-)
-
-// buildTrends compares the analysed month's totals against the previous
-// month's. A nil previous summary is treated as an all-zero month.
-func buildTrends(current pkgfinance.MonthlySummary, previous *pkgfinance.MonthlySummary) Trends {
-	var prev pkgfinance.MonthlySummary
-	if previous != nil {
-		prev = *previous
-	}
+// buildTrends expresses the analysed month against the previous one, both
+// measured at the same height of the month — see buildComparison.
+func buildTrends(c comparison) Trends {
 	return Trends{
-		Receita:   buildTrend(current.TotalIncome, prev.TotalIncome),
-		Despesa:   buildTrend(current.TotalExpense, prev.TotalExpense),
-		Resultado: buildTrend(current.Balance, prev.Balance),
+		Receita:            buildTrend(c.current.income, c.previous.income),
+		Despesa:            buildTrend(c.current.expense, c.previous.expense),
+		Resultado:          buildTrend(c.current.balance, c.previous.balance),
+		ComparedThroughDay: c.throughDay,
 	}
 }
 
