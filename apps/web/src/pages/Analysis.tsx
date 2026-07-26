@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import { format } from 'date-fns'
+import type { LucideIcon } from 'lucide-react'
 import {
   AlertTriangle,
   Calendar,
@@ -13,8 +15,9 @@ import {
   Wallet,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import EmptyState from '@/components/EmptyState'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL } from '@/lib/format'
@@ -23,6 +26,12 @@ import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity 
 
 function capitalizeFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
+  [Status.Boa]: 'Boa',
+  [Status.Atencao]: 'Atenção',
+  [Status.Critico]: 'Crítico',
 }
 
 function HealthIcon({ status }: { status: FinancialHealthStatus }) {
@@ -37,6 +46,15 @@ function formatMonthLabel(month: string): string {
   return capitalizeFirst(
     date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
   )
+}
+
+// "12 de jul." from a backend "YYYY-MM-DD". Parsed at noon so a negative UTC
+// offset cannot pull the label back to the day before.
+function dayMonthLabel(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+  })
 }
 
 function RecommendationItem({ recommendation }: { recommendation: Recommendation }) {
@@ -58,33 +76,97 @@ function RecommendationItem({ recommendation }: { recommendation: Recommendation
   )
 }
 
-function RecommendationSection({ data }: { data: Analysis['recommendations'] }) {
-  if (data.length === 0) return null
-
+/**
+ * Section is the one card shell every block on this page uses.
+ *
+ * Sections used to disappear when they had nothing to show, so the page came
+ * back a different shape on every visit and a reader could not tell "there was
+ * nothing to say" from "this failed to load". Each one now keeps its place and
+ * says which of the two it is.
+ */
+function Section({
+  title,
+  icon: Icon,
+  iconClassName = 'text-primary',
+  empty,
+  children,
+}: {
+  title: string
+  icon: LucideIcon
+  iconClassName?: string
+  empty?: string
+  children: ReactNode
+}) {
   return (
-    <Card className="col-span-full">
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Icon className={`size-4 ${iconClassName}`} aria-hidden />
+          {title}
+        </CardTitle>
+      </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Lightbulb className="size-4 text-primary" aria-hidden />
-          <p className="text-sm font-semibold">Recomendações</p>
-        </div>
-        <ul className="space-y-2">
-          {data.map((rec, i) => (
-            <li key={i}>
-              <RecommendationItem recommendation={rec} />
-            </li>
-          ))}
-        </ul>
+        {empty ? <EmptyState icon={Icon} message={empty} className="py-6" /> : children}
       </CardContent>
     </Card>
   )
 }
 
+function RecommendationSection({ data }: { data: Analysis['recommendations'] }) {
+  return (
+    <Section
+      title="Recomendações"
+      icon={Lightbulb}
+      empty={data.length === 0 ? 'Nada a ajustar por enquanto — o mês está seguindo o previsto.' : undefined}
+    >
+      <ul className="space-y-2">
+        {data.map((rec, i) => (
+          <li key={i}>
+            <RecommendationItem recommendation={rec} />
+          </li>
+        ))}
+      </ul>
+    </Section>
+  )
+}
+
 const TREND_ARROW = { up: '↑', down: '↓', stable: '—' } as const
+
+// The dead band the backend uses for a week-over-week move (weekPacePct): a
+// swing inside it is noise. The two percentages on this page used to colour
+// themselves at ±50%, so a fall the health card was calling a warning showed
+// up here in a neutral tone.
+const TREND_DEAD_BAND_PCT = 5
+
+function trendTone(pct: number): string {
+  if (pct < -TREND_DEAD_BAND_PCT) return 'text-warning'
+  if (pct > TREND_DEAD_BAND_PCT) return 'text-success'
+  return 'text-muted-foreground'
+}
+
+function pluralDias(n: number): string {
+  return n === 1 ? '1 dia' : `${n} dias`
+}
+
+// Keyed by the backend's weekday abbreviations (analytics.weekdayLabels).
+const WEEKDAY_FULL_PT: Record<string, string> = {
+  Dom: 'domingo',
+  Seg: 'segunda',
+  Ter: 'terça',
+  Qua: 'quarta',
+  Qui: 'quinta',
+  Sex: 'sexta',
+  Sáb: 'sábado',
+}
 
 // The backend compares both months up to the same day, so a percentage from a
 // month in progress must not be presented as a whole-month figure.
+//
+// A previous of zero has no percentage to report: the backend fills in a flat
+// 100% rise there (see buildTrend), which these cards were printing as a real
+// month-over-month move against a month that never traded.
 function trendLabel(trend: MonthTrend, throughDay: number): string {
+  if (trend.previous === 0) return 'Sem base no mês passado'
   const window = throughDay > 0 ? `vs mês passado até o dia ${throughDay}` : 'vs mês passado'
   return `${TREND_ARROW[trend.direction]} ${Math.abs(trend.change)}% ${window}`
 }
@@ -144,201 +226,195 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
   )
 }
 
-function HealthSection({ data }: { data: Analysis['health'] }) {
-  const infoCount = data.messages.filter(m => m.severity === 'info').length
-  const total = data.messages.length
-  const score = total > 0 ? Math.round((infoCount / total) * 100) : 50
+function InsightIcon({ severity }: { severity: Analysis['health']['messages'][number]['severity'] }) {
+  if (severity === 'info') return <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+  const tone = severity === 'critical' ? 'text-destructive' : 'text-warning'
+  return <AlertTriangle className={`mt-0.5 size-4 shrink-0 ${tone}`} aria-hidden />
+}
 
+// The health card carries its own heading rather than Section's, because the
+// traffic light and the score belong in it — but it builds that heading out of
+// CardHeader/CardTitle like every other card, so the section titles down the
+// page are one typeface and one weight.
+function HealthSection({ data }: { data: Analysis['health'] }) {
   return (
-    <Card className="col-span-full">
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <HealthIcon status={data.status} />
-            <div>
-              <p className="text-sm font-semibold">Saúde Financeira</p>
-              <p className="text-xs text-muted-foreground capitalize">{data.status === Status.Boa ? 'Boa' : data.status === Status.Atencao ? 'Atenção' : 'Crítico'}</p>
-            </div>
-          </div>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <HealthIcon status={data.status} />
+          Saúde Financeira
+          <span className="font-normal text-muted-foreground">· {HEALTH_LABEL[data.status]}</span>
+        </CardTitle>
+        <CardAction>
           <div className="text-right">
-            <p className="text-3xl font-bold tabular-nums">{score}</p>
+            <p className="text-3xl font-bold tabular-nums">{data.score}</p>
             <p className="text-xs text-muted-foreground">pontos</p>
           </div>
-        </div>
-        <ul className="space-y-1.5">
-          {data.messages.map((msg, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm">
-              {msg.severity === 'info' && (
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-              )}
-              {msg.severity === 'warning' && (
-                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-              )}
-              {msg.severity === 'critical' && (
-                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-              )}
-              <span>
-                {msg.title}
-                {msg.description && <span className="text-muted-foreground"> — {msg.description}</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {data.messages.length === 0 ? (
+          <EmptyState icon={CheckCircle2} message="Ainda não há movimento suficiente neste mês para avaliar." className="py-6" />
+        ) : (
+          <ul className="space-y-1.5">
+            {data.messages.map((msg, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm">
+                <InsightIcon severity={msg.severity} />
+                <span>
+                  {msg.title}
+                  {msg.description && <span className="text-muted-foreground"> — {msg.description}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </CardContent>
     </Card>
   )
 }
 
 function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
+  const traded = data.some((day) => day.count > 0)
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Calendar className="size-4 text-primary" aria-hidden />
-          Média por Dia da Semana
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
-          {[...data].sort((a, b) => {
-            if (a.isToday) return -1
-            if (b.isToday) return 1
-            return a.day - b.day
-          }).map((day) => (
-            <div
-              key={day.day}
-              className={`rounded-lg p-2 text-center ${day.isToday ? 'col-span-2 sm:col-span-1 bg-primary/10 ring-1 ring-primary' : 'bg-muted/50'}`}
-            >
-              <p className="text-[10px] font-medium text-muted-foreground">{day.label}</p>
-              <p className="mt-1 text-sm font-semibold tabular-nums">
-                {day.avg > 0 ? formatBRL(day.avg) : '—'}
+    <Section
+      title="Média por Dia da Semana"
+      icon={Calendar}
+      empty={traded ? undefined : 'Nenhuma venda de balcão registrada neste mês.'}
+    >
+      {/* Weekday order, always. Today used to be sorted to the front, which on
+          any day but a Sunday left a strip labelled Qua, Dom, Seg, Ter… — a
+          week that reads as scrambled. Today is marked in place. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
+        {[...data].sort((a, b) => a.day - b.day).map((day) => (
+          <div
+            key={day.day}
+            className={`rounded-lg p-2 text-center ${day.isToday ? 'bg-primary/10 ring-1 ring-primary' : 'bg-muted/50'}`}
+          >
+            <p className="text-[10px] font-medium text-muted-foreground">{day.label}</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">
+              {day.count > 0 ? formatBRL(day.avg) : '—'}
+            </p>
+            {/* Days with a sale are counted; a bare "—" already says there
+                were none, and "0x" underneath it read like a third figure. */}
+            {day.count > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {day.count} {day.count === 1 ? 'dia' : 'dias'}
               </p>
-              {day.count > 0 && (
-                <p className="text-[10px] text-muted-foreground">{day.count}x</p>
-              )}
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
   )
 }
 
-function ProjectionSection({ weekdays, kpis, goals }: { weekdays: Analysis['weekdays']; kpis: Analysis['kpis']; goals: Analysis['goals'] }) {
-  if (!weekdays) return null
-
-  const today = new Date()
-  const year = today.getFullYear()
-  const month = today.getMonth()
-  const lastDay = new Date(year, month + 1, 0).getDate()
-  const currentDay = today.getDate()
-
-  if (currentDay >= lastDay) return null
-
-  const weekdayMap = new Map(weekdays.map(w => [w.day, w.avg]))
-
-  let remainingDays = 0
-  let projected = 0
-  for (let d = currentDay + 1; d <= lastDay; d++) {
-    const date = new Date(year, month, d, 12)
-    const dayOfWeek = date.getDay()
-    const avg = weekdayMap.get(dayOfWeek) ?? 0
-    if (avg > 0) remainingDays++
-    projected += avg
-  }
-
-  const total = goals.revenueActual + projected
-  const gap = goals.revenueTarget - total
-  const hitGoal = total >= goals.revenueTarget
-  const necessaryPerDay = remainingDays > 0 ? gap / remainingDays : 0
-
+// ProjectionSection renders the backend's projection verbatim. It used to
+// recompute the whole thing here — the projection, the gap and its own
+// "necessário por dia útil" — off the weekday averages and the browser clock,
+// which put a second, smaller daily target on the same screen as the one the
+// health insight and the recommendation were quoting, and made the card
+// disagree with what the WhatsApp bot reported for the same month.
+function ProjectionSection({ projection, kpis, comparedThroughDay }: {
+  projection: Analysis['projection']
+  kpis: Analysis['kpis']
+  comparedThroughDay: number
+}) {
   const prevDiff = kpis.previousMonthIncomeUpToDay > 0
-    ? Math.round(((goals.revenueActual - kpis.previousMonthIncomeUpToDay) / kpis.previousMonthIncomeUpToDay) * 100)
+    ? Math.round(((projection.actual - kpis.previousMonthIncomeUpToDay) / kpis.previousMonthIncomeUpToDay) * 100)
     : null
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Target className="size-4 text-primary" aria-hidden />
-          Projeção do Mês
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Section
+      title="Projeção do Mês"
+      icon={Target}
+      empty={projection.target <= 0
+        ? 'Defina uma meta de faturamento em Metas para acompanhar a projeção do mês.'
+        : undefined}
+    >
+      <>
         <div className="grid grid-cols-[1fr_auto] gap-x-4">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Projeção</p>
             <p className="truncate text-lg tabular-nums">
-              {formatBRL(total)}
+              {formatBRL(projection.projected)}
             </p>
           </div>
 
           <div className="text-right">
             <p className="text-sm text-muted-foreground">Meta</p>
             <p className="text-lg whitespace-nowrap tabular-nums">
-              {formatBRL(goals.revenueTarget)}
+              {formatBRL(projection.target)}
             </p>
           </div>
         </div>
-        {prevDiff !== null && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Até hoje</span>
-              <span className="text-sm tabular-nums">{formatBRL(goals.revenueActual)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Mês passado (dia {currentDay})</span>
-              <span className="text-sm tabular-nums">{formatBRL(kpis.previousMonthIncomeUpToDay)}</span>
-            </div>
-            <p className={`text-sm ${prevDiff < -50 ? 'text-destructive' : prevDiff > 50 ? 'text-success' : 'text-yellow-600'}`}>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Até hoje</span>
+            <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Mês passado (dia {comparedThroughDay})</span>
+            <span className="text-sm tabular-nums">{formatBRL(kpis.previousMonthIncomeUpToDay)}</span>
+          </div>
+          {/* No previous month is not a 0% move: without a baseline there is
+              no percentage to report, and printing one invented a comparison
+              against a month that never traded. */}
+          {prevDiff === null ? (
+            <p className="text-sm text-muted-foreground">Sem faturamento no mês passado para comparar</p>
+          ) : (
+            <p className={`text-sm ${trendTone(prevDiff)}`}>
               {prevDiff > 0 ? '↑' : '↓'} {Math.abs(prevDiff)}% vs mês passado
             </p>
-          </div>
-        )}
-        {!hitGoal && (
-          <div className="space-y-2 border-t pt-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">Faltam</p>
-              <p className="text-base text-destructive tabular-nums">{formatBRL(gap)}</p>
-            </div>
-            {necessaryPerDay > 0 && (
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">Necessário por dia útil</p>
-                <p className="text-base tabular-nums">{formatBRL(necessaryPerDay)}</p>
-              </div>
-            )}
-          </div>
-        )}
-        {hitGoal && (
+          )}
+        </div>
+        {projection.onTrack ? (
           <div className="border-t pt-3">
             <p className="flex items-center gap-1.5 text-sm text-success">
               <CheckCircle2 className="size-4" aria-hidden />
               Se mantiver a média, fecha no azul
             </p>
           </div>
+        ) : (
+          <div className="space-y-2 border-t pt-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Faltam para a meta</p>
+              <p className="text-base text-destructive tabular-nums">{formatBRL(projection.gap)}</p>
+            </div>
+            {projection.neededPerDay > 0 ? (
+              <div className="flex items-center justify-between">
+                {/* Every remaining day, not just business days: the shop trades
+                    on weekends too, and the label used to say "dia útil" over a
+                    figure divided by all of them. */}
+                <p className="text-sm text-muted-foreground">
+                  Necessário por dia ({pluralDias(projection.daysRemaining)})
+                </p>
+                <p className="text-base tabular-nums">{formatBRL(projection.neededPerDay)}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Último dia do mês — não há mais dias para recuperar.</p>
+            )}
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </>
+    </Section>
   )
 }
 
 function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekComparison']; recommendation?: Recommendation }) {
   const pct = data.previousUpToDay !== 0
     ? Math.round(((data.current - data.previousUpToDay) / data.previousUpToDay) * 100)
-    : 0
+    : null
 
-  const WEEKDAY_LABELS_PT = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado']
-  const todayPt = WEEKDAY_LABELS_PT[new Date().getDay()]
+  // The backend emits one label per elapsed day of this week, so the last one
+  // is the day it actually measured through. Reading the browser clock instead
+  // captions the card with a different day than the figures cover whenever the
+  // viewer's timezone has already rolled over.
+  const todayPt = WEEKDAY_FULL_PT[data.labels.at(-1) ?? ''] ?? 'hoje'
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Clock className="size-4 text-primary" aria-hidden />
-          Comportamento Semanal
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Section title="Comportamento Semanal" icon={Clock}>
+      <>
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
@@ -348,71 +424,64 @@ function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekC
             <span className="text-sm text-muted-foreground">Semana passada (até {todayPt})</span>
             <span className="text-sm tabular-nums">{formatBRL(data.previousUpToDay)}</span>
           </div>
-          <p className={`text-sm ${pct < -50 ? 'text-destructive' : pct > 50 ? 'text-success' : 'text-yellow-600'}`}>
-            {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
-          </p>
+          {pct === null ? (
+            <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
+          ) : (
+            <p className={`text-sm ${trendTone(pct)}`}>
+              {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
+            </p>
+          )}
         </div>
         {recommendation && (
           <div className="border-t pt-2">
             <RecommendationItem recommendation={recommendation} />
           </div>
         )}
-      </CardContent>
-    </Card>
+      </>
+    </Section>
   )
 }
 
 function CashOutSection({ data }: { data: Analysis['cashOutDays'] }) {
-  if (data.length === 0) return null
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <CircleDollarSign className="size-4 text-destructive" aria-hidden />
-          Dias com Maior Saída de Caixa
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {data.map((day) => {
-          const date = new Date(day.date + 'T12:00:00')
-          const label = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
-          return (
-            <div key={day.date} className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{label}</span>
-                <span className="text-sm font-semibold tabular-nums">{formatBRL(day.total)}</span>
-              </div>
-              <ul className="space-y-1">
-                {day.items.map((item, i) => (
-                  <li key={i} className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{item.category.replace(/_/g, ' ')}</span>
-                    <span className="tabular-nums">{formatBRL(item.amount)}</span>
-                  </li>
-                ))}
-              </ul>
+    <Section
+      title="Dias com Maior Saída de Caixa"
+      icon={CircleDollarSign}
+      iconClassName="text-destructive"
+      empty={data.length === 0 ? 'Nenhuma despesa registrada neste mês.' : undefined}
+    >
+      <div className="space-y-4">
+        {data.map((day) => (
+          <div key={day.date} className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{dayMonthLabel(day.date)}</span>
+              <span className="text-sm font-semibold tabular-nums">{formatBRL(day.total)}</span>
             </div>
-          )
-        })}
-      </CardContent>
-    </Card>
+            <ul className="space-y-1">
+              {day.items.map((item, i) => (
+                <li key={i} className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{item.category.replace(/_/g, ' ')}</span>
+                  <span className="tabular-nums">{formatBRL(item.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Section>
   )
 }
 
+const COMPOSITION_PALETTE = ['var(--chart-4)', 'var(--chart-3)', 'var(--chart-2)', 'var(--chart-1)', 'var(--chart-5)']
+
 function CompositionSection({ data }: { data: Analysis['expenseComposition'] }) {
-  if (data.length === 0) return null
-
-  const palette = ['var(--chart-4)', 'var(--chart-3)', 'var(--chart-2)', 'var(--chart-1)', 'var(--chart-5)']
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <PieChart className="size-4 text-primary" aria-hidden />
-          Composição de Despesas
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Section
+      title="Composição de Despesas"
+      icon={PieChart}
+      empty={data.length === 0 ? 'Nenhuma despesa registrada neste mês.' : undefined}
+    >
+      <>
         {data.map((item, i) => (
           <div key={item.categoryId}>
             <div className="mb-1 flex items-baseline justify-between">
@@ -423,28 +492,25 @@ function CompositionSection({ data }: { data: Analysis['expenseComposition'] }) 
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full transition-[width] duration-500"
-                  style={{ width: `${item.percentage}%`, background: palette[i % palette.length] }}
+                  style={{
+                    width: `${item.percentage}%`,
+                    background: COMPOSITION_PALETTE[i % COMPOSITION_PALETTE.length],
+                  }}
                 />
               </div>
               <span className="text-xs text-muted-foreground tabular-nums">{item.percentage}%</span>
             </div>
           </div>
         ))}
-      </CardContent>
-    </Card>
+      </>
+    </Section>
   )
 }
 
 function CashPositionSection({ data }: { data: Analysis['cashPosition'] }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Wallet className="size-4 text-primary" aria-hidden />
-          Posição de Caixa
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Section title="Posição de Caixa" icon={Wallet}>
+      <>
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Saldo hoje</span>
           <span className="text-sm tabular-nums">{formatBRL(data.currentBalance)}</span>
@@ -458,31 +524,31 @@ function CashPositionSection({ data }: { data: Analysis['cashPosition'] }) {
         {data.daysUntilNegative !== null && (
           <div className="border-t pt-2">
             <p className="text-sm text-destructive">
-              Saldo fica negativo em {data.daysUntilNegative} dia{data.daysUntilNegative > 1 ? 's' : ''}
+              Saldo fica negativo em {pluralDias(data.daysUntilNegative)}
             </p>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </>
+    </Section>
   )
 }
 
+// SECTION_COUNT is how many cards the page renders below the KPI row. The
+// skeleton draws that many so the layout does not jump when the data lands.
+const SECTION_COUNT = 8
+
 function LoadingSkeleton() {
   return (
-    <div className="space-y-6">
-      <div>
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="mt-2 h-4 w-32" />
-      </div>
+    <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[1, 2, 3, 4].map((i) => (
+        {Array.from({ length: 4 }, (_, i) => (
           <Skeleton key={i} className="h-26" />
         ))}
       </div>
-      {[1, 2, 3, 4, 5, 6].map((i) => (
+      {Array.from({ length: SECTION_COUNT }, (_, i) => (
         <Skeleton key={i} className="h-40" />
       ))}
-    </div>
+    </>
   )
 }
 
@@ -505,34 +571,56 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
   )
 }
 
+function AnalysisBody({ analysis }: { analysis: Analysis }) {
+  // recommendations[0] is the weekly one, which captions the week-comparison
+  // card (see the backend's buildRecommendations). The list below carries the
+  // rest — printing it in both places put the same sentence on screen twice.
+  const [weeklyRec, ...otherRecs] = analysis.recommendations
+
+  return (
+    <>
+      {/* The headline numbers first: the cards below break them down, and the
+          summary of a page does not belong underneath its own detail. */}
+      <KpiSection data={analysis.kpis} goals={analysis.goals} trends={analysis.trends} />
+      <HealthSection data={analysis.health} />
+      <RecommendationSection data={otherRecs} />
+      <WeekdaySection data={analysis.weekdays} />
+      <ProjectionSection
+        projection={analysis.projection}
+        kpis={analysis.kpis}
+        comparedThroughDay={analysis.trends.comparedThroughDay}
+      />
+      <WeekComparisonSection data={analysis.weekComparison} recommendation={weeklyRec} />
+      <CashPositionSection data={analysis.cashPosition} />
+      <CashOutSection data={analysis.cashOutDays} />
+      <CompositionSection data={analysis.expenseComposition} />
+    </>
+  )
+}
+
 export default function Analysis() {
   const now = new Date()
   const month = format(now, 'yyyy-MM') as YearMonth
   const { data: analysis, isError, refetch } = useMonthlyAnalysis(month)
 
-  // A failed load has to say so: without this branch the skeleton below never
-  // resolves and the page looks like it is loading forever.
-  if (isError) return <ErrorCard onRetry={() => void refetch()} />
-  if (!analysis) return <LoadingSkeleton />
-
-  const weeklyRec = analysis.recommendations[0]
-
   return (
     <div className="space-y-6">
+      {/* The heading stays put through every state, so loading, a failure and
+          a loaded month are the same page rather than three of them. */}
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Análise</h1>
         <p className="mt-1 text-muted-foreground">{formatMonthLabel(month)}</p>
       </div>
 
-      <HealthSection data={analysis.health} />
-      <RecommendationSection data={analysis.recommendations} />
-      <WeekdaySection data={analysis.weekdays} />
-      <ProjectionSection weekdays={analysis.weekdays} kpis={analysis.kpis} goals={analysis.goals} />
-      <WeekComparisonSection data={analysis.weekComparison} recommendation={weeklyRec} />
-      <CashPositionSection data={analysis.cashPosition} />
-      <CashOutSection data={analysis.cashOutDays} />
-      <CompositionSection data={analysis.expenseComposition} />
-      <KpiSection data={analysis.kpis} goals={analysis.goals} trends={analysis.trends} />
+      {/* A failed load has to say so: without this branch the skeleton never
+          resolves and the page looks like it is loading forever. */}
+      {isError ? (
+        <ErrorCard onRetry={() => void refetch()} />
+      ) : analysis ? (
+        <AnalysisBody analysis={analysis} />
+      ) : (
+        <LoadingSkeleton />
+      )}
     </div>
   )
 }

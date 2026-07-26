@@ -18,10 +18,13 @@ const (
 	revenueDropPct = -10
 	// weekPacePct — the dead band for week-over-week pace, either direction.
 	weekPacePct = 5
-	// onTrackMargin — the current daily rate has to clear what is still needed
-	// per day by this much to count as "on track", so a rate sitting exactly on
-	// the requirement is not called safe.
-	onTrackMargin = 1.05
+)
+
+// What each problem costs the health score. A warning is a dent; a critical
+// takes the month out of the green on its own.
+const (
+	warningPenalty  = 15
+	criticalPenalty = 40
 )
 
 // buildHealth turns the month's numbers into the traffic light and the list of
@@ -35,7 +38,7 @@ func buildHealth(
 	summary pkgfinance.MonthlySummary,
 	compared comparison,
 	week WeekComparison,
-	goals GoalProgress,
+	projection Projection,
 ) Health {
 	messages := []Insight{}
 
@@ -51,11 +54,15 @@ func buildHealth(
 	}
 
 	if totalDays > 0 {
+		// "com movimento" is not padding: the denominator is days with any
+		// entry, while the weekday averages shown alongside count only days
+		// with a counter sale. Two different totals sat next to each other
+		// unlabelled and read like an arithmetic error.
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
-			Title:       fmt.Sprintf("%d dos %d dias", positiveDays, totalDays),
-			Description: "Dias fecharam no azul",
+			Title:       fmt.Sprintf("%d dos %d dias com movimento", positiveDays, totalDays),
+			Description: "Fecharam no azul",
 		})
 	}
 
@@ -131,11 +138,11 @@ func buildHealth(
 		}
 	}
 
-	if pace, ok := goalPace(goals); ok {
-		if pace.onTrack {
+	if projection.Pacing() {
+		if projection.OnTrack {
 			description := "Faturamento já superou a meta"
-			if pace.neededPerDay > 0 {
-				description = fmt.Sprintf("Necessário %s/dia — você está acima", formatBRLFloat(pace.neededPerDay))
+			if projection.NeededPerDay > 0 {
+				description = fmt.Sprintf("Necessário %s/dia — a projeção passa da meta", formatBRL(projection.NeededPerDay))
 			}
 			messages = append(messages, Insight{
 				Type:        InsightGoalOnTrack,
@@ -143,45 +150,44 @@ func buildHealth(
 				Title:       "No ritmo para bater a meta",
 				Description: description,
 			})
-		} else if pace.neededPerDay > 0 {
+		} else if projection.NeededPerDay > 0 {
 			messages = append(messages, Insight{
 				Type:     InsightGoalBehind,
 				Severity: SeverityWarning,
 				Title:    "Precisa acelerar para bater a meta",
 				Description: fmt.Sprintf("Necessário %s/dia nos próximos %s",
-					formatBRLFloat(pace.neededPerDay), pluralDias(goals.DaysRemaining)),
-				Value: ptr(pace.neededPerDay),
+					formatBRL(projection.NeededPerDay), pluralDias(projection.DaysRemaining)),
+				Value: ptr(float64(projection.NeededPerDay)),
 			})
 		}
 	}
 
-	return Health{Status: healthStatus(summary.Balance, messages), Messages: messages}
+	return Health{
+		Status:   healthStatus(summary.Balance, messages),
+		Score:    healthScore(messages),
+		Messages: messages,
+	}
 }
 
-// pace is the goal arithmetic shared by the goal insight and the weekly
-// recommendation: what the month still has to average per day, and whether
-// the rate so far clears it.
-type pace struct {
-	neededPerDay float64
-	onTrack      bool
-}
-
-// goalPace reports false when there is nothing to pace against — no target, no
-// days left, or a month that has not started.
-func goalPace(goals GoalProgress) (pace, bool) {
-	if goals.RevenueTarget <= 0 || goals.DaysRemaining <= 0 || goals.DaysTotal <= 0 {
-		return pace{}, false
+// healthScore is the number printed next to the traffic light.
+//
+// The dashboard used to compute it itself, as the share of insights that were
+// merely informational. That made the score a function of how many rules
+// happened to fire rather than of the month: a good month that picked up one
+// more cheerful insight moved the score, a critical and a mild warning weighed
+// the same, and the number could disagree with the status beside it. Here a
+// clean month is 100 and every problem is priced by its severity.
+func healthScore(messages []Insight) int {
+	score := 100
+	for _, m := range messages {
+		switch m.Severity {
+		case SeverityWarning:
+			score -= warningPenalty
+		case SeverityCritical:
+			score -= criticalPenalty
+		}
 	}
-	elapsed := goals.DaysTotal - goals.DaysRemaining
-	if elapsed <= 0 {
-		return pace{}, false
-	}
-	currentDailyRate := float64(goals.RevenueActual) / float64(elapsed)
-	neededPerDay := float64(goals.RevenueTarget-goals.RevenueActual) / float64(goals.DaysRemaining)
-	return pace{
-		neededPerDay: neededPerDay,
-		onTrack:      currentDailyRate >= neededPerDay*onTrackMargin,
-	}, true
+	return max(0, score)
 }
 
 // countDays returns how many days closed in the black, and how many days saw

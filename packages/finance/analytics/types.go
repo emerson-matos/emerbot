@@ -63,8 +63,13 @@ type Insight struct {
 
 // Health is the status plus every insight that fired this month.
 type Health struct {
-	Status   HealthStatus `json:"status"`
-	Messages []Insight    `json:"messages"`
+	Status HealthStatus `json:"status"`
+	// Score is the 0–100 number shown next to the traffic light: a clean month
+	// is 100 and each problem costs what its severity is worth (see
+	// healthScore). It is computed here rather than in each consumer so the
+	// number and the status can never tell different stories.
+	Score    int       `json:"score"`
+	Messages []Insight `json:"messages"`
 }
 
 // TrendDirection is the month-over-month movement, with a ±2% dead band so
@@ -187,11 +192,45 @@ type WeekComparison struct {
 	Previous int64 `json:"previous"`
 	// PreviousUpToDay is last week truncated at the same weekday as today —
 	// the only fair comparison mid-week, and what the pace insights use.
-	PreviousUpToDay  int64    `json:"previousUpToDay"`
-	ProjectedWeekly  int64    `json:"projectedWeekly"`
-	ProjectedMonthly int64    `json:"projectedMonthly"`
-	MonthlyTarget    int64    `json:"monthlyTarget"`
-	Labels           []string `json:"labels"`
+	PreviousUpToDay int64 `json:"previousUpToDay"`
+	ProjectedWeekly int64 `json:"projectedWeekly"`
+	// The month-level projection lives on Projection, not here: this one used
+	// to carry a second one derived from last week's flat daily rate, which
+	// disagreed with the projection the dashboard drew from the weekday
+	// averages.
+	MonthlyTarget int64    `json:"monthlyTarget"`
+	Labels        []string `json:"labels"`
+}
+
+// Projection is where the month lands and what it would take to close the gap
+// to the revenue goal. Every amount is counter sales (venda_balcao), matching
+// how the target is set.
+type Projection struct {
+	// Actual is what has come in so far, Remaining what the days left are
+	// expected to bring at their weekday averages, Projected the sum.
+	Actual    int64 `json:"actual"`
+	Remaining int64 `json:"remaining"`
+	Projected int64 `json:"projected"`
+	Target    int64 `json:"target"`
+	// Gap is what the projection still misses the target by, 0 once it clears
+	// it — so it never reads as a shortfall when there is none.
+	Gap int64 `json:"gap"`
+	// OnTrack is Projected reaching Target. It is the one verdict on whether
+	// the month closes: the health insight, the weekly recommendation and the
+	// dashboard card all read it rather than each deciding for themselves.
+	OnTrack       bool `json:"onTrack"`
+	DaysRemaining int  `json:"daysRemaining"`
+	// NeededPerDay is what each day left has to bring, measured from Actual, to
+	// reach Target. 0 when the target is already met or there is nothing to
+	// pace against.
+	NeededPerDay int64 `json:"neededPerDay"`
+}
+
+// Pacing reports whether there is anything to pace against: a target, and days
+// left to reach it in. A month with no goal, or one on its last day, has no
+// per-day ask to make.
+func (p Projection) Pacing() bool {
+	return p.Target > 0 && p.DaysRemaining > 0
 }
 
 // RecommendationSeverity drives the recommendation's colour.
@@ -247,6 +286,7 @@ type Analysis struct {
 	CashOutDays        []CashOutDay         `json:"cashOutDays"`
 	ExpenseComposition []ExpenseComposition `json:"expenseComposition"`
 	Goals              GoalProgress         `json:"goals"`
+	Projection         Projection           `json:"projection"`
 	History            []MonthlySnapshot    `json:"history"`
 	CashPosition       CashPosition         `json:"cashPosition"`
 	Recommendations    []Recommendation     `json:"recommendations"`

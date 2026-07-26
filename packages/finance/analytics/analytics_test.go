@@ -3,6 +3,7 @@ package analytics
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,7 +321,7 @@ func TestWeekComparison(t *testing.T) {
 		sale(t, "2026-07-12", 20000), // last Sunday: in Previous, not PreviousUpToDay
 	}
 
-	got := buildWeekComparison(entries, now, 100000, 500000)
+	got := buildWeekComparison(entries, now, 500000)
 
 	if got.Current != 20000 {
 		t.Errorf("Current = %d, want 20000", got.Current)
@@ -353,7 +354,7 @@ func TestWeekComparisonTreatsSundayAsTheEndOfItsWeek(t *testing.T) {
 		sale(t, "2026-07-20", 99999), // next Monday
 	}
 
-	got := buildWeekComparison(entries, now, 0, 0)
+	got := buildWeekComparison(entries, now, 0)
 
 	if got.Current != 20000 {
 		t.Errorf("Current = %d, want Monday-through-Sunday (20000)", got.Current)
@@ -400,7 +401,7 @@ func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 		previous: monthTotals{income: 100000, expense: 40000, balance: 60000},
 	}
 
-	health := buildHealth(nil, current, compared, WeekComparison{}, GoalProgress{})
+	health := buildHealth(nil, current, compared, WeekComparison{}, Projection{})
 
 	byType := map[InsightType]Insight{}
 	for _, m := range health.Messages {
@@ -425,10 +426,13 @@ func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 }
 
 func TestHealthGoalPaceMessages(t *testing.T) {
-	// 10 of 30 days gone, R$1.000,00 of a R$10.000,00 target — the rate so far
-	// (R$100/day) is far below the R$450/day still needed.
-	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 100000, DaysTotal: 30, DaysRemaining: 20}
-	health := buildHealth(nil, pkgfinance.MonthlySummary{}, comparison{}, WeekComparison{}, goals)
+	// 10 of 30 days gone, R$1.000,00 of a R$10.000,00 target: R$450/day still
+	// needed across the 20 days left, and a projection that misses.
+	projection := Projection{
+		Actual: 100000, Projected: 300000, Target: 1000000,
+		Gap: 700000, DaysRemaining: 20, NeededPerDay: 45000,
+	}
+	health := buildHealth(nil, pkgfinance.MonthlySummary{}, comparison{}, WeekComparison{}, projection)
 
 	var behind *Insight
 	for i, m := range health.Messages {
@@ -459,25 +463,27 @@ func TestHealthCountsPositiveDays(t *testing.T) {
 }
 
 func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
-	// 10 of 30 days gone; the actual chosen below decides "on track".
-	base := GoalProgress{RevenueTarget: 1000000, DaysTotal: 30, DaysRemaining: 20}
-
-	// On track: R$5.000,00 in 10 days is R$500/day against the R$250/day still
-	// needed. Behind: R$1.000,00 in 10 days is R$100/day against R$450/day.
-	onTrack := base
-	onTrack.RevenueActual = 500000
-	behind := base
-	behind.RevenueActual = 100000
+	// 10 of 30 days gone against a R$10.000,00 target; whether the projection
+	// reaches it is what decides "on track" — the same verdict the dashboard
+	// card and the health insight read.
+	onTrack := Projection{
+		Actual: 500000, Remaining: 600000, Projected: 1100000, Target: 1000000,
+		OnTrack: true, DaysRemaining: 20, NeededPerDay: 25000,
+	}
+	behind := Projection{
+		Actual: 100000, Remaining: 200000, Projected: 300000, Target: 1000000,
+		Gap: 700000, DaysRemaining: 20, NeededPerDay: 45000,
+	}
 
 	improved := WeekComparison{Current: 12000, PreviousUpToDay: 10000}
 	declined := WeekComparison{Current: 8000, PreviousUpToDay: 10000}
 	stable := WeekComparison{Current: 10000, PreviousUpToDay: 10000}
 
 	tests := []struct {
-		name  string
-		week  WeekComparison
-		goals GoalProgress
-		want  string
+		name       string
+		week       WeekComparison
+		projection Projection
+		want       string
 	}{
 		{"up and closing", improved, onTrack, "Ritmo subiu e fecha a meta"},
 		{"up but short", improved, behind, "Ritmo subiu mas ainda falta"},
@@ -488,7 +494,7 @@ func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			recs := buildRecommendations(tc.week, tc.goals, Trends{}, CashPosition{})
+			recs := buildRecommendations(tc.week, tc.projection, Trends{}, CashPosition{})
 			if len(recs) == 0 {
 				t.Fatal("expected a weekly recommendation")
 			}
@@ -499,8 +505,141 @@ func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
 	}
 }
 
+func TestRecommendationsNeedARealBaseline(t *testing.T) {
+	// buildTrend reports a previous of zero as a flat 100% rise, because there
+	// is no percentage over nothing. A month whose predecessor never traded
+	// must not be told its expenses "cresceram 100%" against it.
+	trends := Trends{
+		Receita: buildTrend(0, 0),
+		Despesa: buildTrend(140000, 0),
+	}
+	if trends.Despesa.Change != 100 || trends.Despesa.Direction != TrendUp {
+		t.Fatalf("precondition: buildTrend(140000, 0) = %+v, want the 100%% fallback", trends.Despesa)
+	}
+
+	recs := buildRecommendations(WeekComparison{}, Projection{}, trends, CashPosition{})
+
+	if len(recs) != 0 {
+		t.Errorf("recommendations = %+v, want none against a month with no expenses to compare to", recs)
+	}
+}
+
+func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
+	// Sunday 2026-07-26: five days left in the month (Mon–Fri the 27th–31st).
+	now := at12(t, "2026-07-26")
+	weekdays := []WeekdayStat{
+		{Day: 0, Avg: 100000},
+		{Day: 1, Avg: 100000},
+		{Day: 2, Avg: 100000},
+		{Day: 3, Avg: 100000},
+		{Day: 4, Avg: 100000},
+		{Day: 5, Avg: 100000},
+		{Day: 6, Avg: 100000},
+	}
+	goals := GoalProgress{
+		RevenueTarget: 3600000, RevenueActual: 2777500,
+		DaysTotal: 31, DaysRemaining: 5,
+	}
+
+	got := buildProjection(weekdays, goals, now)
+
+	if want := int64(500000); got.Remaining != want {
+		t.Errorf("Remaining = %d, want five days at R$1.000,00 (%d)", got.Remaining, want)
+	}
+	if want := int64(3277500); got.Projected != want {
+		t.Errorf("Projected = %d, want actual plus the days left (%d)", got.Projected, want)
+	}
+	if want := int64(322500); got.Gap != want {
+		t.Errorf("Gap = %d, want what the projection still misses (%d)", got.Gap, want)
+	}
+	if got.OnTrack {
+		t.Error("OnTrack = true, want false — the projection lands under the target")
+	}
+	// The one number the card, the insight and the recommendation all print:
+	// what is still missing, spread over the days left.
+	if want := int64(164500); got.NeededPerDay != want {
+		t.Errorf("NeededPerDay = %d, want (target-actual)/daysRemaining (%d)", got.NeededPerDay, want)
+	}
+}
+
+func TestProjectionStillJudgesTheLastDayOfTheMonth(t *testing.T) {
+	// 31 July: nothing left to project into, but the month either reached its
+	// target or it did not, and the card has to say which.
+	now := at12(t, "2026-07-31")
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}
+
+	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now)
+
+	if got.Remaining != 0 {
+		t.Errorf("Remaining = %d, want nothing left to project", got.Remaining)
+	}
+	if got.OnTrack {
+		t.Error("OnTrack = true, want false — the month closed under its target")
+	}
+	if want := int64(100000); got.Gap != want {
+		t.Errorf("Gap = %d, want %d", got.Gap, want)
+	}
+	// No days left to spread the shortfall over, so there is no ask to make.
+	if got.NeededPerDay != 0 {
+		t.Errorf("NeededPerDay = %d, want 0 with no days left", got.NeededPerDay)
+	}
+}
+
+func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
+	now := at12(t, "2026-07-26")
+	weekdays := []WeekdayStat{{Day: 1, Avg: 100000}}
+
+	got := buildProjection(weekdays, GoalProgress{RevenueActual: 50000, DaysRemaining: 5}, now)
+
+	if got.Pacing() {
+		t.Error("Pacing = true, want false with no target")
+	}
+	if got.NeededPerDay != 0 || got.Gap != 0 || got.OnTrack {
+		t.Errorf("got %+v, want no verdict without a target", got)
+	}
+	// The projection itself still stands: Monday the 27th is the only day left
+	// with an average.
+	if want := int64(150000); got.Projected != want {
+		t.Errorf("Projected = %d, want %d", got.Projected, want)
+	}
+}
+
+func TestHealthScorePricesProblemsBySeverity(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []Insight
+		want     int
+	}{
+		{"a clean month", []Insight{{Severity: SeverityInfo}, {Severity: SeverityInfo}}, 100},
+		{"one warning", []Insight{{Severity: SeverityInfo}, {Severity: SeverityWarning}}, 85},
+		{"two warnings", []Insight{{Severity: SeverityWarning}, {Severity: SeverityWarning}}, 70},
+		{"a critical costs more than a warning", []Insight{{Severity: SeverityCritical}}, 60},
+		{"the floor is zero", []Insight{
+			{Severity: SeverityCritical},
+			{Severity: SeverityCritical},
+			{Severity: SeverityCritical},
+			{Severity: SeverityCritical},
+		}, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := healthScore(tc.messages); got != tc.want {
+				t.Errorf("healthScore = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	// Good news must not move the score: it used to be the share of insights
+	// that were informational, so an extra cheerful line changed the number
+	// without anything financial changing.
+	warned := []Insight{{Severity: SeverityWarning}}
+	if healthScore(warned) != healthScore(append(warned, Insight{Severity: SeverityInfo})) {
+		t.Error("an added info insight moved the score")
+	}
+}
+
 func TestRecommendationsWithoutAGoal(t *testing.T) {
-	recs := buildRecommendations(WeekComparison{}, GoalProgress{}, Trends{}, CashPosition{})
+	recs := buildRecommendations(WeekComparison{}, Projection{}, Trends{}, CashPosition{})
 	if len(recs) != 0 {
 		t.Errorf("recommendations = %+v, want none when there is nothing to pace against", recs)
 	}
@@ -508,13 +647,13 @@ func TestRecommendationsWithoutAGoal(t *testing.T) {
 
 func TestRecommendationsFlagTrendsAndRunway(t *testing.T) {
 	trends := Trends{
-		Receita: MonthTrend{Change: -25, Direction: TrendDown},
-		Despesa: MonthTrend{Change: 40, Direction: TrendUp},
+		Receita: MonthTrend{Current: 75000, Previous: 100000, Change: -25, Direction: TrendDown},
+		Despesa: MonthTrend{Current: 140000, Previous: 100000, Change: 40, Direction: TrendUp},
 	}
 	oneDay := 1
 	cash := CashPosition{DaysUntilNegative: &oneDay}
 
-	recs := buildRecommendations(WeekComparison{}, GoalProgress{}, trends, cash)
+	recs := buildRecommendations(WeekComparison{}, Projection{}, trends, cash)
 
 	titles := make([]string, len(recs))
 	for i, r := range recs {
@@ -624,6 +763,53 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	}
 	if len(got.Recommendations) == 0 {
 		t.Error("expected at least the weekly recommendation")
+	}
+}
+
+// The analysis page shows the per-day ask three times — in the health
+// insight, in the recommendation and on the projection card — and the bot
+// reads it back a fourth. They were computed separately and disagreed: the
+// card divided the shortfall left *after* its own projection, everyone else
+// divided the shortfall from real revenue, and the page told the user two
+// different daily targets at once.
+func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
+	now := at12(t, "2026-07-15")
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-01", 200000),
+		sale(t, "2026-07-14", 100000),
+	}
+
+	got := Build(Input{
+		Month:     "2026-07",
+		Entries:   entries,
+		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(300000, 0)},
+		Goals:     []*domain.Goal{nil, nil, {RevenueTarget: 2000000}},
+		Now:       now,
+	})
+
+	if got.Projection.NeededPerDay <= 0 {
+		t.Fatalf("Projection = %+v, want a per-day ask", got.Projection)
+	}
+	asked := formatBRL(got.Projection.NeededPerDay)
+
+	var insight string
+	for _, m := range got.Health.Messages {
+		if m.Type == InsightGoalBehind {
+			insight = m.Description
+		}
+	}
+	if !strings.Contains(insight, asked) {
+		t.Errorf("health insight = %q, want it to quote %s", insight, asked)
+	}
+	if len(got.Recommendations) == 0 || !strings.Contains(got.Recommendations[0].Message, asked) {
+		t.Errorf("recommendation = %+v, want it to quote %s", got.Recommendations, asked)
+	}
+	if want := reais(got.Projection.NeededPerDay); got.ToolPayload()["necessario_por_dia_para_bater_a_meta"] != want {
+		t.Errorf("tool payload per-day ask = %v, want %v", got.ToolPayload()["necessario_por_dia_para_bater_a_meta"], want)
+	}
+	// And one projection of the month, not one per consumer.
+	if want := reais(got.Projection.Projected); got.ToolPayload()["projecao_do_mes"] != want {
+		t.Errorf("projecao_do_mes = %v, want the shared projection (%v)", got.ToolPayload()["projecao_do_mes"], want)
 	}
 }
 

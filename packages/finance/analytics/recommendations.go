@@ -17,14 +17,14 @@ const (
 // The first recommendation is always the weekly one when a goal exists: the
 // dashboard pulls recommendations[0] out to caption the week-comparison card,
 // and the notifier leads its digest with it.
-func buildRecommendations(week WeekComparison, goals GoalProgress, trends Trends, cash CashPosition) []Recommendation {
+func buildRecommendations(week WeekComparison, projection Projection, trends Trends, cash CashPosition) []Recommendation {
 	recs := []Recommendation{}
 
-	if p, ok := goalPace(goals); ok {
-		recs = append(recs, weeklyPaceRecommendation(week, goals, p))
+	if projection.Pacing() {
+		recs = append(recs, weeklyPaceRecommendation(week, projection))
 	}
 
-	if trends.Despesa.Direction == TrendUp && trends.Despesa.Change > expenseSpikePct {
+	if hasBaseline(trends.Despesa) && trends.Despesa.Direction == TrendUp && trends.Despesa.Change > expenseSpikePct {
 		recs = append(recs, Recommendation{
 			Severity: RecWarning,
 			Title:    "Despesas acima do normal",
@@ -33,7 +33,7 @@ func buildRecommendations(week WeekComparison, goals GoalProgress, trends Trends
 		})
 	}
 
-	if trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > revenueSlumpPct {
+	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > revenueSlumpPct {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",
@@ -54,12 +54,21 @@ func buildRecommendations(week WeekComparison, goals GoalProgress, trends Trends
 	return recs
 }
 
+// hasBaseline reports whether a trend has a previous month to be a percentage
+// of. buildTrend reports a previous of zero as a flat 100% rise (there is no
+// meaningful percentage over nothing), so without this a month whose
+// predecessor never traded would be told its expenses "cresceram 100% vs mês
+// passado" against a month that saw no expenses at all. The health insights
+// already require a real baseline; these say the same thing to the same person
+// on the same page, so they require one too.
+func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
+
 // weeklyPaceRecommendation crosses this week's pace with whether the month is
 // on track for its goal. Both halves matter on their own — a week that
 // improved but still misses the target needs a different message from one that
 // improved and closes it — so all four combinations get their own copy rather
 // than collapsing into "good" and "bad".
-func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) Recommendation {
+func weeklyPaceRecommendation(week WeekComparison, projection Projection) Recommendation {
 	var weekPct float64
 	if week.PreviousUpToDay != 0 {
 		weekPct = percentChange(week.Current, week.PreviousUpToDay)
@@ -68,16 +77,16 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 	behind := weekPct < -weekPacePct
 
 	// The per-day ask, or an acknowledgement when the goal is already beaten
-	// (neededPerDay goes non-positive once actual passes the target).
+	// (NeededPerDay is 0 once actual passes the target).
 	needed := func(ifNeeded, ifBeaten string) string {
-		if p.neededPerDay > 0 {
-			return fmt.Sprintf(ifNeeded, formatBRLFloat(p.neededPerDay), pluralDias(goals.DaysRemaining))
+		if projection.NeededPerDay > 0 {
+			return fmt.Sprintf(ifNeeded, formatBRL(projection.NeededPerDay), pluralDias(projection.DaysRemaining))
 		}
 		return ifBeaten
 	}
 
 	switch {
-	case improved && p.onTrack:
+	case improved && projection.OnTrack:
 		return Recommendation{
 			Severity: RecSuccess,
 			Title:    "Ritmo subiu e fecha a meta",
@@ -92,7 +101,7 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 				"Melhorou vs semana passada. Continue nesse ritmo.",
 			),
 		}
-	case behind && p.onTrack:
+	case behind && projection.OnTrack:
 		return Recommendation{
 			Severity: RecWarning,
 			Title:    "Caiu mas a projeção fecha",
@@ -107,7 +116,7 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 				"Faturamento caiu mas já superou a meta do mês.",
 			),
 		}
-	case p.onTrack:
+	case projection.OnTrack:
 		return Recommendation{
 			Severity: RecSuccess,
 			Title:    "Ritmo estável e dentro da projeção",

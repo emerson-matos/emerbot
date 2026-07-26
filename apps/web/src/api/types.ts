@@ -127,6 +127,14 @@ export interface Insight {
 
 export interface FinancialHealth {
   status: FinancialHealthStatus;
+  /**
+   * The 0–100 number shown next to the traffic light. Computed in Go from the
+   * insight severities so it can never disagree with the status beside it —
+   * this page used to derive it here as the share of insights that were
+   * informational, which moved the score whenever a rule fired or stopped
+   * firing, with nothing financial having changed.
+   */
+  score: number;
   messages: Insight[];
 }
 
@@ -202,9 +210,32 @@ export interface WeekComparison {
   previous: number;
   previousUpToDay: number;
   projectedWeekly: number;
-  projectedMonthly: number;
   monthlyTarget: number;
   labels: string[];
+}
+
+/**
+ * Where the month lands and what it would take to close the gap to the revenue
+ * goal, in counter sales (venda_balcao).
+ *
+ * All of this used to be worked out in the browser from the weekday averages,
+ * while the backend told the WhatsApp bot a different projection and priced
+ * the daily ask off real revenue rather than off the projection. The page
+ * therefore printed two different "necessário por dia" figures within one
+ * screen. It is computed once in Go now; render these fields, don't re-derive
+ * them.
+ */
+export interface Projection {
+  actual: number;
+  remaining: number;
+  projected: number;
+  target: number;
+  /** What the projection still misses the target by; 0 once it clears it. */
+  gap: number;
+  onTrack: boolean;
+  daysRemaining: number;
+  /** What each day left must bring, measured from `actual`, to reach `target`. */
+  neededPerDay: number;
 }
 
 export const RecommendationSeverity = {
@@ -251,6 +282,7 @@ export interface Analysis {
   cashOutDays: CashOutDay[];
   expenseComposition: ExpenseComposition[];
   goals: GoalProgress;
+  projection: Projection;
   history: MonthlySnapshot[];
   cashPosition: CashPosition;
   recommendations: Recommendation[];
