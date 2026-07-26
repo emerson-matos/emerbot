@@ -163,6 +163,7 @@ export function useSaveGoalMutation(month: string) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.goal(month) });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }
@@ -239,6 +240,7 @@ export function useMarkPaidMutation() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
       queryClient.invalidateQueries(entriesKey);
     },
   });
@@ -258,6 +260,7 @@ export function useCreateEntryMutation() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }
@@ -276,6 +279,7 @@ export function useDeleteEntryMutation() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }

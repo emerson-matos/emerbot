@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/http";
 import { queryKeys } from "../api/queries";
-import type { Analysis, YearMonth } from "@/api/types";
+import type { YearMonth } from "@/api/types";
 
 /**
  * The month's analysis, assembled by the backend.
@@ -11,13 +11,13 @@ import type { Analysis, YearMonth } from "@/api/types";
  * browser — could not say any of it. The logic now lives in Go
  * (packages/finance/analytics) and every consumer reads the same numbers.
  *
- * Returns undefined while loading, which is what the page renders its skeleton
- * from.
+ * Returns the query rather than just its data so the page can tell "still
+ * loading" from "the request failed" — collapsing the two leaves a failed load
+ * showing a skeleton that never resolves.
  */
-export function useMonthlyAnalysis(month: YearMonth): Analysis | undefined {
-  const { data } = useQuery({
+export function useMonthlyAnalysis(month: YearMonth) {
+  return useQuery({
     queryKey: queryKeys.analysis(month),
     queryFn: () => api.analysis.monthly(month),
   });
-  return data;
 }

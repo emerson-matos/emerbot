@@ -30,21 +30,21 @@ afterEach(() => {
 
 describe("useMonthlyAnalysis", () => {
   it("fetches the month's analysis from the backend in one call", async () => {
-    const monthly = vi.spyOn(api.analysis, "monthly").mockResolvedValue(analysis);
+    const monthly = vi
+      .spyOn(api.analysis, "monthly")
+      .mockResolvedValue(analysis);
 
     const { result } = renderHook(
       () => useMonthlyAnalysis("2026-02" as YearMonth),
       { wrapper: wrapper() },
     );
 
-    // Undefined while in flight — that is what the page renders its skeleton
-    // from.
-    expect(result.current).toBeUndefined();
-    await waitFor(() => expect(result.current).toEqual(analysis));
+    expect(result.current.data).toBeUndefined();
+    await waitFor(() => expect(result.current.data).toEqual(analysis));
     expect(monthly).toHaveBeenCalledExactlyOnceWith("2026-02");
   });
 
-  it("stays undefined when the request fails", async () => {
+  it("reports a failure instead of looking like it is still loading", async () => {
     vi.spyOn(api.analysis, "monthly").mockRejectedValue(new Error("boom"));
 
     const { result } = renderHook(
@@ -52,7 +52,11 @@ describe("useMonthlyAnalysis", () => {
       { wrapper: wrapper() },
     );
 
-    await waitFor(() => expect(result.current).toBeUndefined());
+    // The page branches on isError; if a failure only ever showed up as
+    // `data === undefined` it would render its skeleton forever.
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isPending).toBe(false);
+    expect(result.current.data).toBeUndefined();
   });
 });
 
@@ -61,5 +65,11 @@ describe("queryKeys.analysis", () => {
     expect(queryKeys.analysis("2026-02")).not.toEqual(
       queryKeys.analysis("2026-03"),
     );
+  });
+
+  it('sits under "analysis" so entry and goal mutations can invalidate it', () => {
+    // The mutations in api/queries.ts drop the whole ["analysis"] subtree,
+    // because the analysis is derived from entries, summaries and goals.
+    expect(queryKeys.analysis("2026-02")[0]).toBe("analysis");
   });
 });

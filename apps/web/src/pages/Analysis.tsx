@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
@@ -476,11 +477,33 @@ function LoadingSkeleton() {
   )
 }
 
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-start gap-3 py-8">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="size-5 text-destructive" aria-hidden />
+          <p className="font-medium">Não foi possível carregar a análise</p>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Tente novamente em alguns instantes.
+        </p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Tentar de novo
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Analysis() {
   const now = new Date()
   const month = format(now, 'yyyy-MM') as YearMonth
-  const analysis = useMonthlyAnalysis(month)
+  const { data: analysis, isError, refetch } = useMonthlyAnalysis(month)
 
+  // A failed load has to say so: without this branch the skeleton below never
+  // resolves and the page looks like it is loading forever.
+  if (isError) return <ErrorCard onRetry={() => void refetch()} />
   if (!analysis) return <LoadingSkeleton />
 
   const weeklyRec = analysis.recommendations[0]
