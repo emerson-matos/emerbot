@@ -27,7 +27,8 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 	ctx := context.Background()
 	store := pkgfinance.NewInMemoryStore()
 
-	seed(t, store,
+	seed(
+		t, store,
 		sale(t, "2026-05-10", 100000),
 		sale(t, "2026-06-10", 800000),
 		sale(t, "2026-07-01", 200000),

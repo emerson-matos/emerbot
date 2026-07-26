@@ -89,7 +89,8 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 			Title:    "Ritmo subiu mas ainda falta",
 			Message: needed(
 				"Melhorou vs semana passada, mas precisa de %s/dia nos próximos %s para bater a meta.",
-				"Melhorou vs semana passada. Continue nesse ritmo."),
+				"Melhorou vs semana passada. Continue nesse ritmo.",
+			),
 		}
 	case behind && p.onTrack:
 		return Recommendation{
@@ -103,7 +104,8 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 			Title:    "Faturamento caiu e não bate a meta",
 			Message: needed(
 				"Precisa de %s/dia nos próximos %s para atingir a meta do mês.",
-				"Faturamento caiu mas já superou a meta do mês."),
+				"Faturamento caiu mas já superou a meta do mês.",
+			),
 		}
 	case p.onTrack:
 		return Recommendation{
@@ -117,7 +119,8 @@ func weeklyPaceRecommendation(week WeekComparison, goals GoalProgress, p pace) R
 			Title:    "Ritmo estável mas não é suficiente",
 			Message: needed(
 				"Precisa acelerar para %s/dia nos próximos %s para bater a meta.",
-				"Ritmo estável. Continue para preservar a projeção."),
+				"Ritmo estável. Continue para preservar a projeção.",
+			),
 		}
 	}
 }

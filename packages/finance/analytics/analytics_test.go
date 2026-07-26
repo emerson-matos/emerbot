@@ -154,7 +154,8 @@ func TestCashOutDaysRankedAndCapped(t *testing.T) {
 		entries = append(entries, expense(t, time.Date(2026, 7, i, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
 			"fornecedor_geral", int64(i)*1000))
 	}
-	entries = append(entries,
+	entries = append(
+		entries,
 		expense(t, "2026-07-06", "aluguel", 500),
 		expense(t, "2026-07-06", "aluguel", 500),
 		sale(t, "2026-07-06", 999999), // income must not appear
@@ -374,8 +375,11 @@ func TestHealthStatusEscalates(t *testing.T) {
 	}{
 		{"nothing wrong", 100, []Insight{{Severity: SeverityInfo}}, HealthBoa},
 		{"a warning is attention", 100, []Insight{{Severity: SeverityWarning}}, HealthAtencao},
-		{"a critical outranks a later warning", 100,
-			[]Insight{{Severity: SeverityCritical}, {Severity: SeverityWarning}}, HealthCritico},
+		{
+			"a critical outranks a later warning", 100,
+			[]Insight{{Severity: SeverityCritical}, {Severity: SeverityWarning}},
+			HealthCritico,
+		},
 		{"a negative balance is critical on its own", -1, []Insight{{Severity: SeverityInfo}}, HealthCritico},
 	}
 	for _, tc := range tests {
