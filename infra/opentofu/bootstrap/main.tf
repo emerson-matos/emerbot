@@ -8,8 +8,15 @@ locals {
 # ---------------------------------------------------------------------------
 # Remote state bucket (versioned + encrypted, all public access blocked)
 # ---------------------------------------------------------------------------
+# Losing this bucket loses the record of every deployed resource, so no apply is
+# allowed to plan its destruction — not a rename, not a stale-state mistake. To
+# genuinely retire it, delete this block first, deliberately.
 resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket_name
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_versioning" "state" {
@@ -131,9 +138,17 @@ data "aws_iam_policy_document" "deploy_trust" {
   }
 }
 
+# Destroying the role would lock CI out of the account until someone with admin
+# creds recreated it and updated the AWS_DEPLOY_ROLE_ARN secret. The permission
+# policy attached below is deliberately NOT protected: rewriting it in place is
+# the routine change this config exists to make.
 resource "aws_iam_role" "deploy" {
   name               = var.deploy_role_name
   assume_role_policy = data.aws_iam_policy_document.deploy_trust.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Service-scoped rather than per-resource: this is a single-purpose dev account,

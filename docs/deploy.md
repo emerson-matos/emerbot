@@ -107,6 +107,32 @@ re-running it after a partial failure just continues from where it stopped.
 changing anything — an empty plan means it is. Worth running whenever a deploy
 fails on `AccessDenied`, and before shipping a PR that touched `bootstrap/`.
 
+### Re-applying bootstrap on a live stack is safe
+
+Re-running it against a running deployment does not risk the app. Bootstrap is
+a **separate root module with its own state** — it cannot see, let alone
+destroy, the Lambdas, tables, gateway or Cognito pool, which live in
+`environments/dev`'s remote state. Granting a permission is a single in-place
+`PutRolePolicy` on `aws_iam_role_policy.deploy`; the state bucket and the role
+itself carry `prevent_destroy`, so any plan that would remove them fails at
+plan time instead of applying.
+
+The one thing that actually bites is **missing local state**: this module keeps
+its `terraform.tfstate` on the machine that first ran it, and it is gitignored.
+From a different machine Tofu sees an empty state, tries to create all four
+resources, and stops on `EntityAlreadyExists` — nothing destroyed, but a
+half-adopted state you then have to `tofu import` out of. So always read the
+`tofu-bootstrap-plan` output before applying:
+
+- `~ aws_iam_role_policy.deploy` and nothing else → the expected change, apply it;
+- four `+ create` lines → **stop**, you are on a machine without the state.
+
+To change only the policy and leave every other resource untouched:
+
+```sh
+tofu -chdir=infra/opentofu/bootstrap apply -target=aws_iam_role_policy.deploy
+```
+
 ## Importing acquirer data
 
 Uploading an envelope to the imports bucket is what runs the importer:
