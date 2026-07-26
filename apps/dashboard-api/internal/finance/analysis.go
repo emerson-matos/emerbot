@@ -41,16 +41,15 @@ func (h *AnalysisHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 	if month == "" {
 		month = now.Format("2006-01")
 	}
+	// Checked here so a typo comes back as the caller's 400 rather than as a
+	// 500 from somewhere inside the assembly.
+	if _, _, err := analytics.MonthBounds(month); err != nil {
+		jsonError(w, "invalid month, use YYYY-MM", http.StatusBadRequest)
+		return
+	}
 
 	analysis, err := analytics.Assemble(r.Context(), h.store, claims.UserID, month, now)
 	if err != nil {
-		// A malformed month is the caller's mistake, not a server fault, and
-		// it is the only failure mode Assemble reports without touching the
-		// store.
-		if _, _, boundsErr := analytics.MonthBounds(month); boundsErr != nil {
-			jsonError(w, "invalid month, use YYYY-MM", http.StatusBadRequest)
-			return
-		}
 		log.Printf("monthly analysis error: %v", err)
 		jsonError(w, "failed to build monthly analysis", http.StatusInternalServerError)
 		return
