@@ -3,6 +3,7 @@ package shared
 import (
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func TestGetenv(t *testing.T) {
@@ -88,6 +89,46 @@ func TestInitSlogSetsLevelFromEnv(t *testing.T) {
 		InitSlog()
 		if slog.Default().Enabled(t.Context(), slog.LevelDebug) {
 			t.Fatal("an unknown LOG_LEVEL must not enable debug")
+		}
+	})
+}
+
+func TestPharmacyLocation(t *testing.T) {
+	t.Run("defaults to the pharmacy's calendar", func(t *testing.T) {
+		if got := PharmacyLocation().String(); got != DefaultTimezone {
+			t.Fatalf("location = %q, want %q", got, DefaultTimezone)
+		}
+	})
+
+	t.Run("APP_TIMEZONE wins", func(t *testing.T) {
+		t.Setenv("APP_TIMEZONE", "America/Manaus")
+		if got := PharmacyLocation().String(); got != "America/Manaus" {
+			t.Fatalf("location = %q, want America/Manaus", got)
+		}
+	})
+
+	t.Run("NOTIFIER_TIMEZONE is honoured as the older name", func(t *testing.T) {
+		// A deploy that has not picked up APP_TIMEZONE yet must keep its
+		// configured zone rather than silently jumping to UTC.
+		t.Setenv("NOTIFIER_TIMEZONE", "America/Manaus")
+		if got := PharmacyLocation().String(); got != "America/Manaus" {
+			t.Fatalf("location = %q, want America/Manaus", got)
+		}
+	})
+
+	t.Run("APP_TIMEZONE takes precedence over NOTIFIER_TIMEZONE", func(t *testing.T) {
+		t.Setenv("NOTIFIER_TIMEZONE", "America/Manaus")
+		t.Setenv("APP_TIMEZONE", "America/Recife")
+		if got := PharmacyLocation().String(); got != "America/Recife" {
+			t.Fatalf("location = %q, want America/Recife", got)
+		}
+	})
+
+	t.Run("an unloadable zone degrades to UTC", func(t *testing.T) {
+		// A clock that is wrong by hours beats a service that refuses to start.
+		t.Setenv("APP_TIMEZONE", "Mars/Olympus_Mons")
+		if got := PharmacyLocation(); got != time.UTC {
+			t.Fatalf("location = %v, want UTC", got)
 		}
 	})
 }
