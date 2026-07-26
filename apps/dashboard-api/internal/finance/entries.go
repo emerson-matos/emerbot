@@ -278,12 +278,15 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.UpdatedAt = time.Now().UTC()
 
-	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
-		httpx.Error(w, "failed to update entry", http.StatusInternalServerError)
-		return
-	}
+	// Validate before writing: the reverse order persisted the bad entry and
+	// only then answered 400, leaving the caller with a rejection and the
+	// ledger with the invalid row.
 	if err := existing.Validate(); err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
+		httpx.Error(w, "failed to update entry", http.StatusInternalServerError)
 		return
 	}
 	httpx.OK(w, responseEntry(existing))
