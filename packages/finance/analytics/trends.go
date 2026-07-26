@@ -1,0 +1,52 @@
+package analytics
+
+import (
+	"math"
+
+	pkgfinance "github.com/emerson/emerbot/packages/finance"
+)
+
+// buildTrends compares the analysed month's totals against the previous
+// month's. A nil previous summary is treated as an all-zero month.
+func buildTrends(current pkgfinance.MonthlySummary, previous *pkgfinance.MonthlySummary) Trends {
+	var prev pkgfinance.MonthlySummary
+	if previous != nil {
+		prev = *previous
+	}
+	return Trends{
+		Receita:   buildTrend(current.TotalIncome, prev.TotalIncome),
+		Despesa:   buildTrend(current.TotalExpense, prev.TotalExpense),
+		Resultado: buildTrend(current.Balance, prev.Balance),
+	}
+}
+
+// buildTrend expresses current as a percentage change from previous.
+//
+// A previous of zero has no meaningful percentage — anything over nothing is
+// infinite growth — so it is reported as a flat 100% up (or stable at zero)
+// rather than a division by zero. The denominator is the absolute value so a
+// swing out of a negative balance reads as "up", not "down".
+func buildTrend(current, previous int64) MonthTrend {
+	if previous == 0 {
+		t := MonthTrend{Current: current, Previous: previous, Change: 0, Direction: TrendStable}
+		if current > 0 {
+			t.Change, t.Direction = 100, TrendUp
+		}
+		return t
+	}
+
+	change := (float64(current-previous) / math.Abs(float64(previous))) * 100
+	rounded := roundToInt(change)
+
+	// ±2% is a dead band: month-to-month noise should not be reported as a
+	// direction the user is expected to act on.
+	direction := TrendStable
+	switch {
+	case rounded > 2:
+		direction = TrendUp
+	case rounded < -2:
+		direction = TrendDown
+	}
+
+	return MonthTrend{Current: current, Previous: previous, Change: rounded, Direction: direction}
+}

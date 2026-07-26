@@ -170,6 +170,27 @@ func (s *InMemoryStore) MonthlySummary(_ context.Context, userID, yearMonth stri
 	return summary, nil
 }
 
+// MultiMonthlySummary returns one summary per requested month; months with no
+// entries come back with zero totals rather than missing.
+func (s *InMemoryStore) MultiMonthlySummary(_ context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error) {
+	summaries, _, _, err := emptySummaries(yearMonths)
+	if err != nil || len(summaries) == 0 {
+		return summaries, err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	owned := make([]domain.FinancialEntry, 0, len(s.entries))
+	for _, e := range s.entries {
+		if e.UserID == userID {
+			owned = append(owned, e)
+		}
+	}
+	accumulateSummaries(summaries, owned)
+	return summaries, nil
+}
+
 func (s *InMemoryStore) CategorySummary(_ context.Context, userID string, from, to time.Time) ([]CategorySummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

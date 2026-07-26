@@ -88,6 +88,12 @@ type Store interface {
 
 	// Summaries
 	MonthlySummary(ctx context.Context, userID, yearMonth string) (MonthlySummary, error)
+	// MultiMonthlySummary returns one summary per requested month, keyed by
+	// "YYYY-MM". Months with no entries are present with zero totals rather
+	// than absent, so callers can index the result directly. It exists so the
+	// analysis's trailing-month window costs one query instead of one per
+	// month.
+	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error)
 	CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]CashFlowPoint, error)
 

@@ -4,7 +4,28 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 )
+
+// DefaultTimezone is the pharmacy's local calendar. Everything that reasons
+// about "today", "this week" or "days remaining" has to agree on it — a UTC
+// instant is a day ahead for part of every evening in Brazil, which would put
+// the dashboard, the digest and the bot on different days.
+const DefaultTimezone = "America/Sao_Paulo"
+
+// Location loads the timezone from key, falling back to DefaultTimezone and,
+// if even that is unavailable (no zoneinfo in the Lambda image — import
+// _ "time/tzdata" to embed it), to UTC. It never fails: a wrong-by-hours clock
+// is better than a service that refuses to start.
+func Location(key string) *time.Location {
+	name := Getenv(key, DefaultTimezone)
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		slog.Warn("falling back to UTC", "timezone", name, "error", err)
+		return time.UTC
+	}
+	return loc
+}
 
 // FinanceLedgerID is a TEMPORARY shared finance partition key: the WhatsApp bot
 // and every dashboard user read/write this single ledger. It is a hardcoded

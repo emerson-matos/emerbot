@@ -465,6 +465,29 @@ func (s *DynamoDBStore) MonthlySummary(ctx context.Context, userID, yearMonth st
 	return summary, nil
 }
 
+// MultiMonthlySummary aggregates several months in a single query over the
+// span they cover, rather than one query per month. The analysis needs a
+// trailing three-month window on every request, and three sequential queries
+// against the same partition is three times the latency and read cost for the
+// same rows.
+//
+// Months need not be contiguous or sorted; entries outside the requested
+// months are read but discarded, which is still cheaper than separate queries
+// for any realistic window.
+func (s *DynamoDBStore) MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]MonthlySummary, error) {
+	summaries, from, to, err := emptySummaries(yearMonths)
+	if err != nil || len(summaries) == 0 {
+		return summaries, err
+	}
+
+	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
+	if err != nil {
+		return nil, err
+	}
+	accumulateSummaries(summaries, entries)
+	return summaries, nil
+}
+
 func (s *DynamoDBStore) CategorySummary(ctx context.Context, userID string, from, to time.Time) ([]CategorySummary, error) {
 	entries, err := s.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
 	if err != nil {
