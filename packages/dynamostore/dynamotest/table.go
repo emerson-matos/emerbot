@@ -85,9 +85,10 @@ var _ dynamostore.API = (*Table)(nil)
 // --- test controls ---
 
 // FailNext queues err to be returned by the next call to op ("PutItem",
-// "GetItem", "DeleteItem", "Query", "BatchWriteItem", "TransactWriteItems").
-// Queued errors are consumed in order, one per call, so a test can fail a
-// specific call in a multi-call operation.
+// "GetItem", "DeleteItem", "Query", "Scan", "BatchWriteItem",
+// "TransactWriteItems"). Queued errors are consumed in order, one per call, so
+// a test can fail a specific call within a multi-call operation: queue nil for
+// the calls that should succeed, then the error for the one that should not.
 func (t *Table) FailNext(op string, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -533,7 +534,11 @@ func (t *Table) begin(op string, tableName *string) error {
 	if queued := t.faults[op]; len(queued) > 0 {
 		err := queued[0]
 		t.faults[op] = queued[1:]
-		return err
+		// A queued nil consumes its slot and lets the call run normally, so a
+		// test can single out the Nth call of a repeated operation.
+		if err != nil {
+			return err
+		}
 	}
 	if tableName != nil {
 		return t.checkTableName(tableName)

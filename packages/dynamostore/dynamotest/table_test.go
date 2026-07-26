@@ -545,6 +545,27 @@ func TestFailNextInjectsErrorOnce(t *testing.T) {
 	}
 }
 
+func TestFailNextNilLetsTheCallThrough(t *testing.T) {
+	tbl := newTable(t, Config{})
+	boom := errors.New("boom")
+	tbl.FailNext("PutItem", nil) // first call succeeds
+	tbl.FailNext("PutItem", boom)
+
+	if _, err := tbl.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(tbl.Name()), Item: item("u1", "a"),
+	}); err != nil {
+		t.Fatalf("first put should succeed, got %v", err)
+	}
+	if tbl.Len() != 1 {
+		t.Fatal("a nil-queued call must still apply its write")
+	}
+	if _, err := tbl.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(tbl.Name()), Item: item("u1", "b"),
+	}); !errors.Is(err, boom) {
+		t.Fatalf("second put error = %v, want boom", err)
+	}
+}
+
 func assertSKs(t *testing.T, out *dynamodb.QueryOutput, want []string) {
 	t.Helper()
 	got := sks(out)

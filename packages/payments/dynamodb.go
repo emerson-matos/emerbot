@@ -119,6 +119,16 @@ type DynamoDBRepository struct {
 	client    dynamostore.API
 	tableName string
 	ledgerID  string // partition all payment items belong to (the pharmacy ledger)
+
+	// backoffBase overrides defaultBackoffBase; zero means use the default.
+	backoffBase time.Duration
+}
+
+func (r *DynamoDBRepository) backoff() time.Duration {
+	if r.backoffBase > 0 {
+		return r.backoffBase
+	}
+	return defaultBackoffBase
 }
 
 var _ Repository = (*DynamoDBRepository)(nil)
@@ -197,6 +207,11 @@ const maxBatchWriteItems = 25
 // maxBatchWriteRetries bounds the retry loop for UnprocessedItems (throttling).
 const maxBatchWriteRetries = 8
 
+// defaultBackoffBase is the first retry delay; each further attempt doubles it.
+// Tests shrink it via the backoffBase field so exercising the full retry ladder
+// does not mean actually sleeping through it.
+const defaultBackoffBase = 50 * time.Millisecond
+
 // batchWrite writes every request, re-submitting UnprocessedItems — which
 // BatchWriteItem returns instead of failing when a batch is throttled.
 func (r *DynamoDBRepository) batchWrite(ctx context.Context, writes []types.WriteRequest) error {
@@ -221,7 +236,7 @@ func (r *DynamoDBRepository) batchWrite(ctx context.Context, writes []types.Writ
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Duration(1<<attempt) * 50 * time.Millisecond):
+			case <-time.After(time.Duration(1<<attempt) * r.backoff()):
 			}
 		}
 	}
