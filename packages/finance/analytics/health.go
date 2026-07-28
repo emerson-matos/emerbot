@@ -56,8 +56,8 @@ func buildHealth(
 	if totalDays > 0 {
 		// "com movimento" is not padding: the denominator is days with any
 		// entry, while the weekday averages shown alongside count only days
-		// with a counter sale. Two different totals sat next to each other
-		// unlabelled and read like an arithmetic error.
+		// with revenue. Two different totals sat next to each other unlabelled
+		// and read like an arithmetic error.
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
@@ -191,13 +191,13 @@ func healthScore(messages []Insight) int {
 }
 
 // countDays returns how many days closed in the black, and how many days saw
-// any entry at all. A day is in the black when its counter sales beat
-// everything else that moved that day.
+// any entry at all. A day is in the black when its revenue beats everything
+// else that moved that day.
 func countDays(entries []domain.FinancialEntry) (positive, total int) {
 	byDate := map[string]int64{}
 	for _, e := range entries {
 		date := e.TransactionDate.String()
-		if isCounterSale(e) {
+		if isRevenue(e) {
 			byDate[date] += e.Amount
 		} else {
 			byDate[date] -= e.Amount

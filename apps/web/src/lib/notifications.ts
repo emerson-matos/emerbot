@@ -59,10 +59,6 @@ export function useNotifications(): NotificationsResult {
     e => e.Type === 'expense' && e.PaymentStatus === 'pending',
   )
 
-  const vendaBalcaoIncome = entries
-    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
-    .reduce((sum, e) => sum + e.Amount, 0)
-
   const notifications: AppNotification[] = []
 
   const dueTodayTotal = pendingExpenses
@@ -95,9 +91,10 @@ export function useNotifications(): NotificationsResult {
     })
 
   const goal = goalQuery.data?.goal
+  const totalIncome = summaryQuery.data?.TotalIncome ?? 0
   if (
     goal && goal.RevenueTarget > 0 &&
-    vendaBalcaoIncome >= goal.RevenueTarget
+    totalIncome >= goal.RevenueTarget
   ) {
     notifications.push({
       id: 'goal-reached',

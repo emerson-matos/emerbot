@@ -2,8 +2,8 @@ package analytics
 
 import "time"
 
-// buildProjection projects where the month's counter sales land if the days
-// left trade like the same weekdays already have, and prices the gap to the
+// buildProjection projects where the month's revenue lands if the days left
+// trade like the same weekdays already have, and prices the gap to the
 // revenue goal.
 //
 // This used to be computed twice, differently. The dashboard card derived a

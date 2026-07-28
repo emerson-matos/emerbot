@@ -12,7 +12,9 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
-import { useGoal, useMonthlySummary, useMonthlyTrend, useSaveGoalMutation, useEntries } from '../api/queries'
+import { useGoal, useSaveGoalMutation } from '../api/queries'
+import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
+import type { YearMonth } from '@/api/types'
 
 // CSS `capitalize` (text-transform) uppercases every word, which is wrong
 // for a multi-word Portuguese date like "abril de 2026" (→ "Abril De 2026").
@@ -34,34 +36,24 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 
 export default function Goals() {
   const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
-  const months3 = [-2, -1, 0].map(offset =>
-    format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
-  )
+  const currentMonth = format(now, 'yyyy-MM') as YearMonth
 
   const goalQuery = useGoal(currentMonth)
   const goal = goalQuery.data?.goal ?? null
-  const summaryQuery = useMonthlySummary(currentMonth)
   const saveGoal = useSaveGoalMutation(currentMonth)
 
-  const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const monthEnd = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
-  const entriesQuery = useEntries(monthStart, monthEnd)
-  const vendaBalcaoIncome = (entriesQuery.data?.entries ?? [])
-    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
-    .reduce((sum, e) => sum + e.Amount, 0)
+  // The backend assembles goal progress and the trailing 3-month history in
+  // one pass (packages/finance/analytics) — Faturamento here reads the same
+  // "revenue from sales" figure as the Analysis page and the WhatsApp bot,
+  // instead of this page re-deriving its own narrower one from raw entries.
+  const analysisQuery = useMonthlyAnalysis(currentMonth)
+  const analysis = analysisQuery.data ?? null
+  const history = analysis?.history ?? []
 
-  const trendQueries = useMonthlyTrend(months3)
-  const goalQuery0 = useGoal(months3[0])
-  const goalQuery1 = useGoal(months3[1])
-  const goalQuery2 = useGoal(months3[2])
-  const goalQueries = [goalQuery0, goalQuery1, goalQuery2]
-  const goalsByMonth = goalQueries.map(q => q.data?.goal ?? null)
-
-  const progressLoading = summaryQuery.isLoading || goalQuery.isLoading
-  const progressError = summaryQuery.isError || goalQuery.isError
-  const trendLoading = trendQueries.some(q => q.isLoading) || goalQueries.some(q => q.isLoading)
-  const trendError = trendQueries.some(q => q.isError) || goalQueries.some(q => q.isError)
+  const progressLoading = analysisQuery.isLoading || goalQuery.isLoading
+  const progressError = analysisQuery.isError || goalQuery.isError
+  const trendLoading = analysisQuery.isLoading
+  const trendError = analysisQuery.isError
 
   const [revenueInput, setRevenueInput] = useState('')
   const [expenseInput, setExpenseInput] = useState('')
@@ -75,9 +67,8 @@ export default function Goals() {
   }, [goal])
 
 
-  const summary = summaryQuery.data ?? null
-  const actualIncome = vendaBalcaoIncome
-  const actualExpense = summary?.TotalExpense ?? 0
+  const actualIncome = analysis?.goals.revenueActual ?? 0
+  const actualExpense = analysis?.goals.expenseActual ?? 0
 
   const revenueTarget = Math.round(Number(revenueInput) * 100)
   const expenseTarget = Math.round(Number(expenseInput) * 100)
@@ -86,14 +77,9 @@ export default function Goals() {
   const revColor = revPct >= 100 ? 'var(--success)' : 'var(--info)'
   const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 
-  const monthsHit = months3.reduce((count, _, i) => {
-    const g = goalsByMonth[i]
-    const t = trendQueries[i].data
-    return g && t && t.TotalIncome >= g.RevenueTarget ? count + 1 : count
-  }, 0)
-  const loadedIncomes = trendQueries.filter(q => q.isSuccess).map(q => q.data!.TotalIncome)
-  const avgRevenue = loadedIncomes.length
-    ? Math.round(loadedIncomes.reduce((s, v) => s + v, 0) / loadedIncomes.length)
+  const monthsHit = history.filter(h => h.incomeTarget !== null && h.income >= h.incomeTarget).length
+  const avgRevenue = history.length
+    ? Math.round(history.reduce((s, h) => s + h.income, 0) / history.length)
     : 0
 
   return (
@@ -146,7 +132,7 @@ export default function Goals() {
           <KpiCardContent icon={Target} tone="info">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Meses na Meta</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
-              {monthsHit}/{months3.length}
+              {monthsHit}/{history.length}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">faturamento atingido</p>
           </KpiCardContent>
@@ -260,25 +246,19 @@ export default function Goals() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {months3.map((monthStr, i) => {
-                const monthGoal = goalsByMonth[i]
-                const trend = trendQueries[i].data
-                const income = trend?.TotalIncome ?? 0
-                const expense = trend?.TotalExpense ?? 0
-                return (
-                  <TableRow key={monthStr}>
-                    <TableCell>
-                      {capitalizeFirst(format(new Date(monthStr + '-01'), "MMMM 'de' yyyy", { locale: ptBR }))}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatBRL(income)} / {monthGoal ? formatBRL(monthGoal.RevenueTarget) : '—'}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatBRL(expense)} / {monthGoal ? formatBRL(monthGoal.ExpenseTarget) : '—'}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+              {history.map(h => (
+                <TableRow key={h.month}>
+                  <TableCell>
+                    {capitalizeFirst(format(new Date(h.month + '-01'), "MMMM 'de' yyyy", { locale: ptBR }))}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatBRL(h.income)} / {h.incomeTarget !== null ? formatBRL(h.incomeTarget) : '—'}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatBRL(h.expense)} / {h.expenseTarget !== null ? formatBRL(h.expenseTarget) : '—'}
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </CardContent>

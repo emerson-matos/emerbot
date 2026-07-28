@@ -17,10 +17,6 @@ type dayTotals struct {
 }
 
 // aggregateByDay folds entries into per-day totals, ordered oldest-first.
-//
-// Anything that is not a counter sale counts against the day, income included:
-// a supplier refund or a transfer is money moving, not a day's takings, and
-// letting it inflate "best day" would make the highlight meaningless.
 func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 	byDate := map[string]*dayTotals{}
 	for _, e := range entries {
@@ -30,7 +26,7 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 			day = &dayTotals{date: date}
 			byDate[date] = day
 		}
-		if isCounterSale(e) {
+		if isRevenue(e) {
 			day.income += e.Amount
 		} else {
 			day.expense += e.Amount

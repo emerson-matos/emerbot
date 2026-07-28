@@ -6,9 +6,9 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-// weekdayStats averages counter sales per day of the week across the analysed
-// month. The average divides by the number of distinct *dates* that saw a
-// sale, not by the number of entries — three sales on one Tuesday are one
+// weekdayStats averages revenue per day of the week across the analysed
+// month. The average divides by the number of distinct *dates* that saw
+// revenue, not by the number of entries — three sales on one Tuesday are one
 // Tuesday, otherwise a busy day would drag the average down.
 func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat {
 	today := int(now.Weekday())
@@ -23,7 +23,7 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 	}
 
 	for _, e := range entries {
-		if !isCounterSale(e) {
+		if !isRevenue(e) {
 			continue
 		}
 		date := e.TransactionDate.Time()
@@ -51,10 +51,18 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 	return stats
 }
 
-// isCounterSale reports whether an entry is a counter sale (venda_balcao
-// income) — the only revenue the goals, weekday averages and week-over-week
-// pace are measured against, since that is what the pharmacy actually
-// controls day to day.
-func isCounterSale(e domain.FinancialEntry) bool {
-	return e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao"
+// isRevenue reports whether an entry counts as faturamento (revenue) — money
+// earned by selling something, as opposed to money that merely moved, like an
+// expense payment. It is what the goals, projections, weekday averages,
+// week-over-week pace and day highlights are all measured against.
+//
+// Today every income category (venda_balcao, convenio, delivery,
+// outros_receitas) is a sale, so this is simply "is it income". If a
+// non-operational income category is ever added — a loan disbursement, a
+// partner contribution, an investment redemption — it must be excluded here:
+// cash coming in is not the same thing as faturamento, and conflating the two
+// is exactly the "empréstimo não é faturamento" mistake this function exists
+// to prevent.
+func isRevenue(e domain.FinancialEntry) bool {
+	return e.Type == domain.EntryTypeIncome
 }

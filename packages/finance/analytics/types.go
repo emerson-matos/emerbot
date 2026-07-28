@@ -160,8 +160,8 @@ type ExpenseComposition struct {
 }
 
 // GoalProgress tracks the month against its revenue and expense targets.
-// RevenueActual counts only counter sales (venda_balcao), matching how the
-// target is set.
+// RevenueActual is faturamento — revenue from selling something (see
+// isRevenue) — which is what the target is set against.
 type GoalProgress struct {
 	RevenueTarget int64 `json:"revenueTarget"`
 	RevenueActual int64 `json:"revenueActual"`
@@ -185,7 +185,7 @@ type MonthlySnapshot struct {
 	ExpenseTarget *int64 `json:"expenseTarget"`
 }
 
-// WeekComparison measures this week's counter sales against last week's, and
+// WeekComparison measures this week's revenue against last week's, and
 // projects the month from the resulting daily rate.
 type WeekComparison struct {
 	Current  int64 `json:"current"`
@@ -203,7 +203,7 @@ type WeekComparison struct {
 }
 
 // Projection is where the month lands and what it would take to close the gap
-// to the revenue goal. Every amount is counter sales (venda_balcao), matching
+// to the revenue goal. Every amount is faturamento (see isRevenue), matching
 // how the target is set.
 type Projection struct {
 	// Actual is what has come in so far, Remaining what the days left are
@@ -267,8 +267,8 @@ type KPIs struct {
 	Despesa   int64 `json:"despesa"`
 	// DaysRemaining excludes today — it is what is left to trade with.
 	DaysRemaining int `json:"daysRemaining"`
-	// PreviousMonthIncomeUpToDay is last month's counter sales truncated at
-	// today's day number, so "ahead of / behind last month" is a like-for-like
+	// PreviousMonthIncomeUpToDay is last month's revenue truncated at today's
+	// day number, so "ahead of / behind last month" is a like-for-like
 	// comparison instead of a partial month against a whole one.
 	PreviousMonthIncomeUpToDay int64 `json:"previousMonthIncomeUpToDay"`
 }

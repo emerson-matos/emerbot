@@ -7,17 +7,18 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-// goalProgress measures the month against its targets. counterSales rather
-// than the summary's TotalIncome is the revenue figure, because the target is
-// set for what the counter takes — convênio and delivery receipts would
-// otherwise flatter the number.
+// goalProgress measures the month against its targets. revenue is passed in
+// rather than read off the summary's TotalIncome so the caller can share one
+// pass over the entries with everything else in Build that measures revenue —
+// the two must agree, or "Faturamento" and "Receita" tell the user two
+// different numbers for the same month (see isRevenue).
 //
 // Percentages are capped at 100 so a bar cannot overflow its track; the raw
 // amounts stay uncapped for anyone who wants the overshoot.
-func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, counterSales int64) GoalProgress {
+func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, revenue int64) GoalProgress {
 	daysTotal := daysInMonth(now)
 	progress := GoalProgress{
-		RevenueActual: counterSales,
+		RevenueActual: revenue,
 		ExpenseActual: summary.TotalExpense,
 		DaysRemaining: daysTotal - now.Day(),
 		DaysTotal:     daysTotal,
@@ -29,7 +30,7 @@ func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time
 	progress.RevenueTarget = goal.RevenueTarget
 	progress.ExpenseTarget = goal.ExpenseTarget
 	if goal.RevenueTarget > 0 {
-		progress.RevenuePct = min(100, roundToInt(float64(counterSales)/float64(goal.RevenueTarget)*100))
+		progress.RevenuePct = min(100, roundToInt(float64(revenue)/float64(goal.RevenueTarget)*100))
 	}
 	if goal.ExpenseTarget > 0 {
 		progress.ExpensePct = min(100, roundToInt(float64(summary.TotalExpense)/float64(goal.ExpenseTarget)*100))
