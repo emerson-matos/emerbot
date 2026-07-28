@@ -35,7 +35,7 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 		sale(t, "2026-07-14", 150000),
 		expense(t, "2026-07-05", "aluguel", 90000),
 	)
-	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 1000000}); err != nil {
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 1000000}); err != nil {
 		t.Fatalf("save goal: %v", err)
 	}
 
@@ -47,13 +47,13 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 	if got.KPIs.Receita != 350000 || got.KPIs.Despesa != 90000 {
 		t.Errorf("KPIs = %+v, want July's totals", got.KPIs)
 	}
-	// June's revenue, truncated at day 15 — the whole 800000 falls on the
+	// June's income, truncated at day 15 — the whole 800000 falls on the
 	// 10th, so all of it counts.
 	if got.KPIs.PreviousMonthIncomeUpToDay != 800000 {
 		t.Errorf("PreviousMonthIncomeUpToDay = %d, want 800000", got.KPIs.PreviousMonthIncomeUpToDay)
 	}
-	if got.Goals.RevenueTarget != 1000000 {
-		t.Errorf("RevenueTarget = %d, want the stored goal", got.Goals.RevenueTarget)
+	if got.Goals.IncomeTarget != 1000000 {
+		t.Errorf("IncomeTarget = %d, want the stored goal", got.Goals.IncomeTarget)
 	}
 	// May, June and July all carry data, so the window must be fully populated.
 	if len(got.History) != HistoryMonths {

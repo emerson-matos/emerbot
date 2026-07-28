@@ -298,16 +298,32 @@ func resumoMensalTool(store Store) Tool {
 			}
 
 			goal, err := store.GetGoal(ctx, userID, args.Month)
-			if err == nil && (goal.RevenueTarget > 0 || goal.ExpenseTarget > 0) {
-				goalMap := map[string]any{
-					"revenue_target": centavosToReais(goal.RevenueTarget),
-					"expense_target": centavosToReais(goal.ExpenseTarget),
+			if err == nil && (goal.IncomeTarget > 0 || goal.ExpenseTarget > 0) {
+				// The goal is faturamento (venda_balcao + convenio + delivery,
+				// not outros_receitas — see pkgfinance.IsFaturamento), narrower
+				// than the "income" total above, so it needs the raw entries
+				// rather than the pre-aggregated summary.
+				var faturamento int64
+				if goal.IncomeTarget > 0 {
+					from, to, perr := domain.ParseMonth(args.Month)
+					if perr != nil {
+						return nil, perr
+					}
+					monthEntries, lerr := store.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
+					if lerr != nil {
+						return nil, fmt.Errorf("monthly entries: %w", lerr)
+					}
+					faturamento = FaturamentoTotal(monthEntries)
 				}
-				if goal.RevenueTarget > 0 {
-					if summary.TotalIncome <= goal.RevenueTarget {
-						goalMap["revenue_progress_pct"] = float64(summary.TotalIncome*100) / float64(goal.RevenueTarget)
+				goalMap := map[string]any{
+					"faturamento_target": centavosToReais(goal.IncomeTarget),
+					"expense_target":     centavosToReais(goal.ExpenseTarget),
+				}
+				if goal.IncomeTarget > 0 {
+					if faturamento <= goal.IncomeTarget {
+						goalMap["faturamento_progress_pct"] = float64(faturamento*100) / float64(goal.IncomeTarget)
 					} else {
-						goalMap["revenue_progress_pct"] = 100.0
+						goalMap["faturamento_progress_pct"] = 100.0
 					}
 				}
 				expense := summary.TotalExpense
@@ -338,14 +354,14 @@ func definirMetaTool(store Store) Tool {
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
 				"month":            {Type: genai.TypeString, Description: "Mês no formato YYYY-MM (padrão: mês atual)"},
-				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais (ex: 80000.00)"},
+				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais — apenas vendas (balcão, convênio, delivery), não empréstimos ou aportes (ex: 80000.00)"},
 				"teto_despesas":    {Type: genai.TypeNumber, Description: "Teto de despesas em reais (ex: 60000.00)"},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
 			var args struct {
 				Month         string  `json:"month"`
-				RevenueTarget float64 `json:"meta_faturamento"`
+				IncomeTarget  float64 `json:"meta_faturamento"`
 				ExpenseTarget float64 `json:"teto_despesas"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
@@ -363,7 +379,7 @@ func definirMetaTool(store Store) Tool {
 				return nil, err
 			}
 
-			if args.RevenueTarget <= 0 && args.ExpenseTarget <= 0 {
+			if args.IncomeTarget <= 0 && args.ExpenseTarget <= 0 {
 				return nil, fmt.Errorf("informe pelo menos meta_faturamento ou teto_despesas")
 			}
 
@@ -372,19 +388,19 @@ func definirMetaTool(store Store) Tool {
 				Month:  month,
 			}
 
-			if args.RevenueTarget > 0 {
-				goal.RevenueTarget = reaisToCentavos(args.RevenueTarget)
+			if args.IncomeTarget > 0 {
+				goal.IncomeTarget = reaisToCentavos(args.IncomeTarget)
 			}
 			if args.ExpenseTarget > 0 {
 				goal.ExpenseTarget = reaisToCentavos(args.ExpenseTarget)
 			}
 
 			// Merge with existing goal if only one field was provided
-			if args.RevenueTarget <= 0 || args.ExpenseTarget <= 0 {
+			if args.IncomeTarget <= 0 || args.ExpenseTarget <= 0 {
 				existing, err := store.GetGoal(ctx, userID, month)
 				if err == nil {
-					if args.RevenueTarget <= 0 {
-						goal.RevenueTarget = existing.RevenueTarget
+					if args.IncomeTarget <= 0 {
+						goal.IncomeTarget = existing.IncomeTarget
 					}
 					if args.ExpenseTarget <= 0 {
 						goal.ExpenseTarget = existing.ExpenseTarget
@@ -398,7 +414,7 @@ func definirMetaTool(store Store) Tool {
 
 			return map[string]any{
 				"month":            month,
-				"meta_faturamento": centavosToReais(goal.RevenueTarget),
+				"meta_faturamento": centavosToReais(goal.IncomeTarget),
 				"teto_despesas":    centavosToReais(goal.ExpenseTarget),
 				"status":           "saved",
 			}, nil

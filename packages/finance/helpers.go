@@ -95,21 +95,46 @@ func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.F
 	}
 }
 
-// RevenueIncome sums the Amount of entries that are faturamento — revenue
-// earned by selling something, as opposed to money that merely moved.
-//
-// This used to sum only entries in the "venda_balcao" category, on the theory
-// that convênio and delivery receipts would flatter the number the goal is
-// tracked against. In practice that just made "Faturamento" here disagree
-// with "Receita" everywhere else in the app for the same month, since every
-// income category the pharmacy has (venda_balcao, convenio, delivery,
-// outros_receitas) is a sale. If a non-operational income category is ever
-// added — a loan disbursement, a partner contribution — it must be excluded
-// here: cash coming in is not the same thing as faturamento.
-func RevenueIncome(entries []domain.FinancialEntry) int64 {
+// IncomeTotal sums the Amount of every income entry — receita in the broad
+// sense, whatever it came from. See FaturamentoTotal for the narrower figure
+// goals are tracked against.
+func IncomeTotal(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
 		if e.Type == domain.EntryTypeIncome {
+			total += e.Amount
+		}
+	}
+	return total
+}
+
+// outrosReceitasCategory is the one income category that is not unambiguously
+// a sale — the catch-all a person reaches for when nothing else fits, and so
+// the one place a loan disbursement, a partner contribution or an investment
+// redemption is likely to get filed for lack of a better bucket.
+const outrosReceitasCategory = "outros_receitas"
+
+// IsFaturamento reports whether an entry counts toward faturamento — revenue
+// earned by selling something, as opposed to money that merely moved (an
+// expense payment) or cash that came in without a sale behind it. It mirrors
+// packages/finance/analytics.isFaturamento; that package cannot import this
+// one's caller-facing helpers back without a cycle, so the two are kept in
+// sync by hand.
+//
+// venda_balcao, convenio and delivery are unambiguous sales. outros_receitas
+// is excluded on purpose — a goal is "quanto vendemos", and a loan or capital
+// contribution logged under "Outros (Receita)" must not count toward it. That
+// is exactly the "empréstimo não é faturamento" mistake this function exists
+// to prevent.
+func IsFaturamento(e domain.FinancialEntry) bool {
+	return e.Type == domain.EntryTypeIncome && e.Category != outrosReceitasCategory
+}
+
+// FaturamentoTotal sums the Amount of entries that are IsFaturamento.
+func FaturamentoTotal(entries []domain.FinancialEntry) int64 {
+	var total int64
+	for _, e := range entries {
+		if IsFaturamento(e) {
 			total += e.Amount
 		}
 	}

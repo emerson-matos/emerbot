@@ -434,8 +434,8 @@ func TestResumoMensalToolComMetaIncluiProgresso(t *testing.T) {
 		}
 	}
 
-	// Seed goal: R$ 1000 revenue target, R$ 500 expense ceiling
-	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
+	// Seed goal: R$ 1000 faturamento target, R$ 500 expense ceiling
+	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000, ExpenseTarget: 50000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -446,11 +446,11 @@ func TestResumoMensalToolComMetaIncluiProgresso(t *testing.T) {
 	m := out.(map[string]any)
 	g := m["goal"].(map[string]any)
 
-	if g["revenue_target"] != 1000.0 {
-		t.Fatalf("expected revenue_target 1000, got %v", g["revenue_target"])
+	if g["faturamento_target"] != 1000.0 {
+		t.Fatalf("expected faturamento_target 1000, got %v", g["faturamento_target"])
 	}
-	if g["revenue_progress_pct"] != 50.0 {
-		t.Fatalf("expected revenue_progress_pct 50, got %v", g["revenue_progress_pct"])
+	if g["faturamento_progress_pct"] != 50.0 {
+		t.Fatalf("expected faturamento_progress_pct 50, got %v", g["faturamento_progress_pct"])
 	}
 	if g["expense_target"] != 500.0 {
 		t.Fatalf("expected expense_target 500, got %v", g["expense_target"])
@@ -484,14 +484,14 @@ func TestResumoMensalToolSemMetaRetornaGoalNil(t *testing.T) {
 	}
 }
 
-func TestDefinirMetaPersisteRevenueTarget(t *testing.T) {
+func TestDefinirMetaPersisteFaturamentoTarget(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
 	h := handlerFor(t, store, "definir_meta")
 
 	out := callTool(t, h, "u1", map[string]any{
-		"month":            "2026-08",
+		"month":        "2026-08",
 		"meta_faturamento": 50000.0,
 	})
 
@@ -504,8 +504,8 @@ func TestDefinirMetaPersisteRevenueTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if goal.RevenueTarget != reaisToCentavos(50000.0) {
-		t.Fatalf("expected RevenueTarget %d, got %d", reaisToCentavos(50000.0), goal.RevenueTarget)
+	if goal.IncomeTarget != reaisToCentavos(50000.0) {
+		t.Fatalf("expected IncomeTarget %d, got %d", reaisToCentavos(50000.0), goal.IncomeTarget)
 	}
 }
 
@@ -552,8 +552,8 @@ func TestDefinirMetaMergeComExisting(t *testing.T) {
 	store := NewInMemoryStore()
 	ctx := context.Background()
 
-	// Pre-save a goal with only revenue target
-	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-09", RevenueTarget: 100000}); err != nil {
+	// Pre-save a goal with only faturamento target
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-09", IncomeTarget: 100000}); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
 
@@ -591,7 +591,7 @@ func TestDefinirMetaDefaultsToCurrentMonth(t *testing.T) {
 	}
 }
 
-func TestResumoMensalRevenueCappedAt100WhenExceedsTarget(t *testing.T) {
+func TestResumoMensalFaturamentoCappedAt100WhenExceedsTarget(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
@@ -606,7 +606,7 @@ func TestResumoMensalRevenueCappedAt100WhenExceedsTarget(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000}
+	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -615,8 +615,8 @@ func TestResumoMensalRevenueCappedAt100WhenExceedsTarget(t *testing.T) {
 	out := callTool(t, h, "u1", map[string]any{"month": month})
 	g := out.(map[string]any)["goal"].(map[string]any)
 
-	if g["revenue_progress_pct"] != 100.0 {
-		t.Fatalf("expected revenue_progress_pct capped at 100, got %v", g["revenue_progress_pct"])
+	if g["faturamento_progress_pct"] != 100.0 {
+		t.Fatalf("expected faturamento_progress_pct capped at 100, got %v", g["faturamento_progress_pct"])
 	}
 }
 
@@ -635,7 +635,7 @@ func TestResumoMensalExpenseCappedAt100WhenExceedsTarget(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
+	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000, ExpenseTarget: 50000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -664,7 +664,7 @@ func TestResumoMensalOnlyExpenseTargetShowsGoalBlock(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// Only expense target set, no revenue target
+	// Only expense target set, no faturamento target
 	goal := domain.Goal{UserID: "u1", Month: month, ExpenseTarget: 50000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
@@ -680,8 +680,8 @@ func TestResumoMensalOnlyExpenseTargetShowsGoalBlock(t *testing.T) {
 	if g["expense_progress_pct"] != 40.0 {
 		t.Fatalf("expected expense_progress_pct 40, got %v", g["expense_progress_pct"])
 	}
-	if _, ok := g["revenue_progress_pct"]; ok {
-		t.Fatal("expected no revenue_progress_pct when revenue target is 0")
+	if _, ok := g["faturamento_progress_pct"]; ok {
+		t.Fatal("expected no faturamento_progress_pct when faturamento target is 0")
 	}
 }
 
@@ -701,7 +701,7 @@ func TestResumoMensalDefaultsToCurrentMonth(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: expectedMonth, RevenueTarget: 100000}
+	goal := domain.Goal{UserID: "u1", Month: expectedMonth, IncomeTarget: 100000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -722,9 +722,9 @@ func TestDefinirMetaAmbosTargets(t *testing.T) {
 	h := handlerFor(t, store, "definir_meta")
 
 	out := callTool(t, h, "u1", map[string]any{
-		"month":            "2026-10",
-		"meta_faturamento": 80000.0,
-		"teto_despesas":    60000.0,
+		"month":         "2026-10",
+		"meta_faturamento":  80000.0,
+		"teto_despesas": 60000.0,
 	})
 
 	m := out.(map[string]any)
@@ -743,9 +743,9 @@ func TestDefinirMetaRejeitaValorZerado(t *testing.T) {
 	h := handlerFor(t, store, "definir_meta")
 
 	raw, _ := json.Marshal(map[string]any{
-		"month":            "2026-08",
-		"meta_faturamento": 0.0,
-		"teto_despesas":    0.0,
+		"month":         "2026-08",
+		"meta_faturamento":  0.0,
+		"teto_despesas": 0.0,
 	})
 	if _, err := h(context.Background(), "u1", raw); err == nil {
 		t.Fatal("expected error when both targets are zero")

@@ -10,8 +10,15 @@ import (
 const maxCashOutDays = 5
 
 type dayTotals struct {
-	date    string
-	income  int64
+	date string
+	// income is faturamento only (see isFaturamento) — what BestIncome and
+	// WorstIncome are measured against, so a loan or aporte can't manufacture
+	// a "best sales day".
+	income int64
+	// cashIn is every income entry, faturamento or not — what balance is
+	// measured against, since a real cash movement must not be dropped just
+	// because it wasn't a sale.
+	cashIn  int64
 	expense int64
 	balance int64
 }
@@ -26,12 +33,15 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 			day = &dayTotals{date: date}
 			byDate[date] = day
 		}
-		if isRevenue(e) {
+		if isFaturamento(e) {
 			day.income += e.Amount
+		}
+		if e.Type == domain.EntryTypeIncome {
+			day.cashIn += e.Amount
 		} else {
 			day.expense += e.Amount
 		}
-		day.balance = day.income - day.expense
+		day.balance = day.cashIn - day.expense
 	}
 
 	days := make([]dayTotals, 0, len(byDate))
@@ -44,7 +54,7 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 	return days
 }
 
-// buildHighlights picks the best and worst day of the month by revenue and by
+// buildHighlights picks the best and worst day of the month by income and by
 // balance. With no entries at all every slot is the same "Sem dados"
 // placeholder, so the dashboard renders empty cards instead of a zero-value
 // date.

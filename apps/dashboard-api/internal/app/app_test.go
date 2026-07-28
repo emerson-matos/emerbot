@@ -308,7 +308,7 @@ func TestGoals(t *testing.T) {
 	token := mintToken(t, key, testKID, "u1", "demo@user.com", "Demo")
 
 	rec := do(t, app, http.MethodPut, "/goals", token, map[string]any{
-		"month": "2026-07", "revenue_target": 8000000, "expense_target": 6000000,
+		"month": "2026-07", "income_target": 8000000, "expense_target": 6000000,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("save goal: expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -324,8 +324,8 @@ func TestGoals(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode goal response: %v", err)
 	}
-	if resp.Goal == nil || resp.Goal.RevenueTarget != 8000000 {
-		t.Fatalf("expected saved goal with revenue target 8000000, got %+v", resp.Goal)
+	if resp.Goal == nil || resp.Goal.IncomeTarget != 8000000 {
+		t.Fatalf("expected saved goal with income target 8000000, got %+v", resp.Goal)
 	}
 }
 

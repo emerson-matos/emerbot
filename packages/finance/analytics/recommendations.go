@@ -6,7 +6,7 @@ import "fmt"
 // its own, on top of whatever the health insights already said.
 const (
 	expenseSpikePct = 15
-	revenueSlumpPct = 10
+	incomeSlumpPct  = 10
 	// cashRunwayDays — a balance going negative this soon needs acting on now,
 	// not at month end.
 	cashRunwayDays = 7
@@ -33,7 +33,7 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		})
 	}
 
-	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > revenueSlumpPct {
+	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > incomeSlumpPct {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",

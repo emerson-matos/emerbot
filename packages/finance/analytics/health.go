@@ -14,8 +14,8 @@ const (
 	// expenseGrowthPct — expenses growing faster than this, and faster than
 	// income, is worth flagging.
 	expenseGrowthPct = 10
-	// revenueDropPct — income falling more than this against last month.
-	revenueDropPct = -10
+	// incomeDropPct — income falling more than this against last month.
+	incomeDropPct = -10
 	// weekPacePct — the dead band for week-over-week pace, either direction.
 	weekPacePct = 5
 )
@@ -31,7 +31,7 @@ const (
 // insights behind it.
 // The month-over-month insights read `compared`, not the raw summaries: those
 // hold a month in progress against a month that finished, which reads as a
-// collapse in revenue every time the month is young. Everything else here is
+// collapse in income every time the month is young. Everything else here is
 // about the month on its own and uses the full summary.
 func buildHealth(
 	entries []domain.FinancialEntry,
@@ -56,8 +56,8 @@ func buildHealth(
 	if totalDays > 0 {
 		// "com movimento" is not padding: the denominator is days with any
 		// entry, while the weekday averages shown alongside count only days
-		// with revenue. Two different totals sat next to each other unlabelled
-		// and read like an arithmetic error.
+		// with faturamento. Two different totals sat next to each other
+		// unlabelled and read like an arithmetic error.
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
@@ -96,9 +96,9 @@ func buildHealth(
 			})
 		}
 
-		if incomeChange < revenueDropPct {
+		if incomeChange < incomeDropPct {
 			messages = append(messages, Insight{
-				Type:        InsightRevenueDrop,
+				Type:        InsightIncomeDrop,
 				Severity:    SeverityWarning,
 				Title:       "Receitas cairam",
 				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-incomeChange), compared.suffix()),
@@ -191,13 +191,15 @@ func healthScore(messages []Insight) int {
 }
 
 // countDays returns how many days closed in the black, and how many days saw
-// any entry at all. A day is in the black when its revenue beats everything
-// else that moved that day.
+// any entry at all. A day is in the black when everything that came in that
+// day beats everything that went out — a true cash balance, not a sales
+// figure, so every income entry counts here even the ones isFaturamento
+// excludes.
 func countDays(entries []domain.FinancialEntry) (positive, total int) {
 	byDate := map[string]int64{}
 	for _, e := range entries {
 		date := e.TransactionDate.String()
-		if isRevenue(e) {
+		if e.Type == domain.EntryTypeIncome {
 			byDate[date] += e.Amount
 		} else {
 			byDate[date] -= e.Amount

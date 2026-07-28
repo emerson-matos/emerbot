@@ -60,9 +60,9 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     cashOutDays: [],
     expenseComposition: [],
     goals: {
-      revenueTarget: 3600000,
-      revenueActual: 2777500,
-      revenuePct: 77,
+      incomeTarget: 3600000,
+      incomeActual: 2777500,
+      incomePct: 77,
       expenseTarget: 0,
       expenseActual: 2700000,
       expensePct: 0,
@@ -120,7 +120,7 @@ describe("Analysis page", () => {
 
     // The card used to divide the shortfall left after its own projection
     // (R$459,00 here) while the insight above it quoted the shortfall from
-    // real revenue — two daily targets on one screen.
+    // real faturamento — two daily targets on one screen.
     expect(screen.getByText(/Necessário por dia/)).toBeInTheDocument();
     expect(screen.getByText("R$ 1.645,00")).toBeInTheDocument();
     expect(normalizeSpaces(container.textContent ?? "")).not.toContain(

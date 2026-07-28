@@ -217,7 +217,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
         <KpiCardContent icon={Target} tone="info">
           <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Meta</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
-            {goals.revenuePct}%
+            {goals.incomePct}%
           </p>
           <p className="mt-1 text-xs text-muted-foreground">Faturamento</p>
         </KpiCardContent>

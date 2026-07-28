@@ -84,10 +84,14 @@ func (a Analysis) ToolPayload() map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
+		// faturamento_meta/faturamento_atual are the sales goal — venda_balcao +
+		// convenio + delivery, not outros_receitas (see isFaturamento) — which is
+		// narrower than the "receita" figure above by design: a loan or aporte
+		// must not count toward a sales target.
 		"meta": map[string]any{
-			"faturamento_meta":  reais(a.Goals.RevenueTarget),
-			"faturamento_atual": reais(a.Goals.RevenueActual),
-			"faturamento_pct":   a.Goals.RevenuePct,
+			"faturamento_meta":  reais(a.Goals.IncomeTarget),
+			"faturamento_atual": reais(a.Goals.IncomeActual),
+			"faturamento_pct":   a.Goals.IncomePct,
 			"despesa_teto":      reais(a.Goals.ExpenseTarget),
 			"despesa_atual":     reais(a.Goals.ExpenseActual),
 			"despesa_pct":       a.Goals.ExpensePct,

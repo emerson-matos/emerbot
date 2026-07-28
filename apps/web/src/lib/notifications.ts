@@ -3,7 +3,7 @@ import { AlertTriangle, CalendarClock, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { effectiveDate, formatEffectiveDate } from './entries'
-import { useEntries, useGoal, useMonthlySummary } from '../api/queries'
+import { useEntries, useGoal } from '../api/queries'
 
 export type NotificationTone = 'warning' | 'destructive' | 'success' | 'info'
 
@@ -36,7 +36,7 @@ interface NotificationsResult {
 
 // Derives the alert feed entirely on the client from data the dashboard already
 // caches — no dedicated backend. Three sources, matching the design mock:
-//   • a payment due today, • overdue pending expenses, • the revenue goal hit.
+//   • a payment due today, • overdue pending expenses, • the faturamento goal hit.
 // Phase 2 (docs/notifications-phase-2.md) adds server-side WhatsApp delivery.
 export function useNotifications(): NotificationsResult {
   const now = new Date()
@@ -51,7 +51,6 @@ export function useNotifications(): NotificationsResult {
   // packages/finance/store.go), so this single range covers both "vence hoje"
   // and the overdue backlog without extra requests.
   const entriesQuery = useEntries(windowStart, today)
-  const summaryQuery = useMonthlySummary(currentMonth)
   const goalQuery = useGoal(currentMonth)
 
   const entries = entriesQuery.data?.entries ?? []
@@ -91,10 +90,17 @@ export function useNotifications(): NotificationsResult {
     })
 
   const goal = goalQuery.data?.goal
-  const totalIncome = summaryQuery.data?.TotalIncome ?? 0
+  // entries spans the overdue lookback window, several months wide — the goal
+  // alert must count only this month's faturamento (venda_balcao + convenio +
+  // delivery, not outros_receitas): a loan or aporte, or a sale from an
+  // earlier month, must not trigger "meta atingida".
+  const faturamentoThisMonth = entries
+    .filter(e => e.Type === 'income' && e.Category !== 'outros_receitas'
+      && effectiveDate(e)?.slice(0, 7) === currentMonth)
+    .reduce((sum, e) => sum + e.Amount, 0)
   if (
-    goal && goal.RevenueTarget > 0 &&
-    totalIncome >= goal.RevenueTarget
+    goal && goal.IncomeTarget > 0 &&
+    faturamentoThisMonth >= goal.IncomeTarget
   ) {
     notifications.push({
       id: 'goal-reached',
@@ -110,6 +116,6 @@ export function useNotifications(): NotificationsResult {
     notifications,
     hasNotifications: notifications.length > 0,
     isLoading:
-      entriesQuery.isLoading || summaryQuery.isLoading || goalQuery.isLoading,
+      entriesQuery.isLoading || goalQuery.isLoading,
   }
 }

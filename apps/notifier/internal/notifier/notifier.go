@@ -207,7 +207,20 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
-	revenue := pkgfinance.RevenueIncome(entries)
+	// entries spans the overdue lookback window (windowStart..today) — several
+	// months wide — but the goal alert compares against this month's target,
+	// so faturamento must be this month's only, and specifically faturamento
+	// (venda_balcao + convenio + delivery, not outros_receitas — see
+	// pkgfinance.IsFaturamento): a loan or aporte from an earlier month, or one
+	// filed as "Outros (Receita)", must not trigger "meta atingida".
+	monthStart, _, _ := domain.ParseMonth(month) // derived from MonthOf(today), cannot fail
+	var monthEntries []domain.FinancialEntry
+	for _, e := range entries {
+		if !pkgfinance.EffectiveDate(e).Before(monthStart) {
+			monthEntries = append(monthEntries, e)
+		}
+	}
+	faturamento := pkgfinance.FaturamentoTotal(monthEntries)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
@@ -262,7 +275,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, revenue, goal, today)
+		alerts := notifications.Evaluate(prefs, entries, faturamento, goal, today)
 		if len(alerts) == 0 {
 			res.SkippedNoAlerts++
 			log.Info("notifier digest not sent",

@@ -341,7 +341,7 @@ func TestListEntriesIgnoresOtherUsersAndNonEntryItems(t *testing.T) {
 
 	// Goals and categories live in the same partition but carry no GSI2
 	// attributes, so the entries index must never see them.
-	if err := s.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 1}); err != nil {
+	if err := s.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 1}); err != nil {
 		t.Fatalf("save goal: %v", err)
 	}
 	if err := s.SaveCategory(ctx, domain.Category{UserID: "u1", Slug: "mercado", Label: "Mercado"}); err != nil {
@@ -495,7 +495,7 @@ func TestDeleteEntry(t *testing.T) {
 func TestGoalRoundTrip(t *testing.T) {
 	s, _ := newStore(t, 0)
 	ctx := context.Background()
-	goal := domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 500000, ExpenseTarget: 300000}
+	goal := domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 500000, ExpenseTarget: 300000}
 
 	if err := s.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("save goal: %v", err)
