@@ -60,7 +60,7 @@ func commandTutorial(cmd string) string {
 			"Agenda uma receita *a receber* (fica pendente). A data (dd/mm) é opcional.\n" +
 			"Ex: /receber 800 cliente_x 25/07"
 	case "/meta":
-		return "*/meta <receita> <despesa>*\n" +
+		return "*/meta <faturamento> <despesa>*\n" +
 			"Define as metas do mês (valores sem R$).\n" +
 			"Ex: /meta 80000 60000"
 	case "/recorrente":
@@ -206,8 +206,12 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 
 	goal, err := h.store.GetGoal(ctx, userID, yearMonth)
 	if err == nil && goal.IncomeTarget > 0 {
-		incomePct := float64(summary.TotalIncome) / float64(goal.IncomeTarget) * 100
-		msg += fmt.Sprintf("\n🎯 *Meta Receita:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.IncomeTarget), incomePct)
+		faturamento, ferr := monthFaturamento(ctx, h.store, userID, yearMonth)
+		if ferr != nil {
+			return "", fmt.Errorf("resumo faturamento: %w", ferr)
+		}
+		faturamentoPct := float64(faturamento) / float64(goal.IncomeTarget) * 100
+		msg += fmt.Sprintf("\n🎯 *Meta Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(faturamento), money(goal.IncomeTarget), faturamentoPct)
 	}
 	if err == nil && goal.ExpenseTarget > 0 {
 		expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
@@ -234,16 +238,36 @@ func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
 		return "Nenhuma meta definida para este mês.", nil
 	}
 
-	incomePct := float64(summary.TotalIncome) / float64(goal.IncomeTarget) * 100
+	faturamento, err := monthFaturamento(ctx, h.store, userID, yearMonth)
+	if err != nil {
+		return "", fmt.Errorf("goal faturamento: %w", err)
+	}
+	faturamentoPct := float64(faturamento) / float64(goal.IncomeTarget) * 100
 	expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
 
 	msg := "🎯 *Metas — " + now.Format("01/2006") + "*\n\n"
-	msg += fmt.Sprintf("📈 *Receita:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.IncomeTarget), incomePct)
-	msg += progressBar(incomePct)
+	msg += fmt.Sprintf("📈 *Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(faturamento), money(goal.IncomeTarget), faturamentoPct)
+	msg += progressBar(faturamentoPct)
 	msg += fmt.Sprintf("\n📉 *Despesas:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalExpense), money(goal.ExpenseTarget), expPct)
 	msg += progressBar(expPct)
 	msg += "\n\nDigite /resumo para ver o resumo completo."
 	return msg, nil
+}
+
+// monthFaturamento sums the month's faturamento (venda_balcao + convenio +
+// delivery, not outros_receitas — see pkgfinance.IsFaturamento), which is
+// what goals are tracked against and narrower than the "Receitas" total
+// /resumo otherwise reports.
+func monthFaturamento(ctx context.Context, store LedgerStore, userID, yearMonth string) (int64, error) {
+	from, to, err := domain.ParseMonth(yearMonth)
+	if err != nil {
+		return 0, err
+	}
+	entries, err := store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
+	if err != nil {
+		return 0, err
+	}
+	return pkgfinance.FaturamentoTotal(entries), nil
 }
 
 func progressBar(pct float64) string {
@@ -273,7 +297,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 
 	income, err := parseAmount(parts[1])
 	if err != nil {
-		return "Valor de receita inválido. Use números sem R$.\nEx: /meta 80000 60000", nil
+		return "Valor de faturamento inválido. Use números sem R$.\nEx: /meta 80000 60000", nil
 	}
 	exp, err := parseAmount(parts[2])
 	if err != nil {
@@ -292,7 +316,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	}
 
 	msg := "✅ *Meta salva para " + now.Format("01/2006") + "*\n\n"
-	msg += fmt.Sprintf("📈 *Receita:* R$%s\n", money(income))
+	msg += fmt.Sprintf("📈 *Faturamento:* R$%s\n", money(income))
 	msg += fmt.Sprintf("📉 *Teto Despesas:* R$%s\n", money(exp))
 	msg += "\nDigite /goal para ver o progresso."
 	return msg, nil

@@ -296,6 +296,50 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	}
 }
 
+// TestGoalAlertOnlyCountsCurrentMonthFaturamento guards two ways the
+// goal-reached alert used to fire on money that was never a July sale:
+// a May sale big enough to clear July's target on its own (wrong month), and
+// a July loan filed under "Outros (Receita)" (real cash, not faturamento).
+// Neither must trigger "meta atingida" when July's actual sales are zero.
+func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	maySale := domain.FinancialEntry{
+		UserID: shared.FinanceLedgerID, EntryID: "venda-maio", Description: "venda",
+		Amount: 6000000, TransactionDate: domain.NewCalendarDate(day("2026-05-15")),
+		Type: domain.EntryTypeIncome, Category: "venda_balcao",
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(day("2026-05-15")),
+		Source: domain.SourceManual,
+	}
+	julyLoan := domain.FinancialEntry{
+		UserID: shared.FinanceLedgerID, EntryID: "emprestimo-julho", Description: "empréstimo banco",
+		Amount: 6000000, TransactionDate: domain.NewCalendarDate(day("2026-07-05")),
+		Type: domain.EntryTypeIncome, Category: "outros_receitas",
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(day("2026-07-05")),
+		Source: domain.SourceManual,
+	}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyGoal: true},
+		maySale, julyLoan,
+	)
+	if err := s.fin.SaveGoal(ctx, domain.Goal{
+		UserID: shared.FinanceLedgerID, Month: "2026-07", IncomeTarget: 5000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := newNotifier(s, wa).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 0 || len(wa.sent) != 0 {
+		t.Fatalf("neither May's sale nor July's loan may count toward July's faturamento goal, res=%+v sent=%d", res, len(wa.sent))
+	}
+}
+
 // TestRunSendsHumanizedDigestWhenGeneratorSucceeds is the regression test for
 // issue #36: the digest must actually send the model's rewritten text, feeding
 // the generator a non-empty draft plus the system prompt. Before the fix the

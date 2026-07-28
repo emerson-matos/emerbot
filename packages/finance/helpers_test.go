@@ -2,6 +2,8 @@ package finance
 
 import (
 	"testing"
+
+	"github.com/emerson/emerbot/packages/domain"
 )
 
 func TestParseDate(t *testing.T) {
@@ -70,6 +72,42 @@ func TestCentavosToReaisRoundTrip(t *testing.T) {
 		if got := reaisToCentavos(centavosToReais(centavos)); got != centavos {
 			t.Fatalf("round trip of %d centavos gave %d", centavos, got)
 		}
+	}
+}
+
+// TestIsFaturamentoExcludesOutrosReceitas guards the "empréstimo não é
+// faturamento" fix: a loan, aporte or investment redemption logged under the
+// "Outros (Receita)" catch-all must not count as faturamento, even though it
+// is real income (IncomeTotal), because a goal is "quanto vendemos".
+func TestIsFaturamentoExcludesOutrosReceitas(t *testing.T) {
+	sale := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao", Amount: 50000}
+	convenio := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "convenio", Amount: 30000}
+	delivery := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "delivery", Amount: 20000}
+	loan := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Amount: 10000000}
+	expense := domain.FinancialEntry{Type: domain.EntryTypeExpense, Category: "aluguel", Amount: 5000}
+
+	for _, tc := range []struct {
+		name string
+		e    domain.FinancialEntry
+		want bool
+	}{
+		{"counter sale", sale, true},
+		{"convenio", convenio, true},
+		{"delivery", delivery, true},
+		{"outros_receitas (a loan filed here)", loan, false},
+		{"expense", expense, false},
+	} {
+		if got := IsFaturamento(tc.e); got != tc.want {
+			t.Errorf("IsFaturamento(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	entries := []domain.FinancialEntry{sale, convenio, delivery, loan, expense}
+	if got := FaturamentoTotal(entries); got != 100000 {
+		t.Errorf("FaturamentoTotal = %d, want 100000 (sale+convenio+delivery, loan excluded)", got)
+	}
+	if got := IncomeTotal(entries); got != 10100000 {
+		t.Errorf("IncomeTotal = %d, want 10100000 (every income entry, loan included)", got)
 	}
 }
 

@@ -185,6 +185,13 @@ export interface ExpenseComposition {
   percentage: number;
 }
 
+/**
+ * incomeActual/incomeTarget/incomePct are faturamento — venda_balcao +
+ * convenio + delivery, not outros_receitas (see isFaturamento in
+ * packages/finance/analytics) — narrower than the dashboard's "Receita" KPI
+ * on purpose: a loan or aporte filed under "Outros (Receita)" must not count
+ * toward a sales goal.
+ */
 export interface GoalProgress {
   incomeTarget: number;
   incomeActual: number;
@@ -199,6 +206,11 @@ export interface GoalProgress {
 export interface MonthlySnapshot {
   month: YearMonth;
   label: string;
+  // Unlike GoalProgress.incomeActual, this is the stored monthly summary's
+  // total income (receita), not faturamento — the summaries this reads from
+  // were never split by category. A past month with an outros_receitas entry
+  // will show slightly higher here than incomeTarget was actually tracked
+  // against.
   income: number;
   incomeTarget: number | null;
   expense: number;
@@ -216,8 +228,8 @@ export interface WeekComparison {
 
 /**
  * Where the month lands and what it would take to close the gap to the
- * income goal, in receita (money earned by selling something — see isIncome
- * in packages/finance/analytics).
+ * income goal, in faturamento (money earned by selling something — see
+ * isFaturamento in packages/finance/analytics).
  *
  * All of this used to be worked out in the browser from the weekday averages,
  * while the backend told the WhatsApp bot a different projection and priced

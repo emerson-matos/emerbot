@@ -22,10 +22,11 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 export default function GoalCard() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM') as YearMonth
-  // Receita here is the same figure the backend computes for the Analysis
-  // page and the WhatsApp bot (packages/finance/analytics) — this card used
-  // to re-derive its own narrower one (counter sales only) straight from the
-  // entries, which drifted from the number shown everywhere else.
+  // Faturamento (venda_balcao + convenio + delivery, not outros_receitas) is
+  // the same figure the backend computes for the Analysis page and the
+  // WhatsApp bot (packages/finance/analytics) — this card used to re-derive
+  // its own narrower one (counter sales only) straight from the entries,
+  // which drifted from the number shown everywhere else.
   const analysisQuery = useMonthlyAnalysis(currentMonth)
   const goalQuery = useGoal(currentMonth)
   const analysis = analysisQuery.data ?? null
@@ -59,7 +60,7 @@ export default function GoalCard() {
           <div className="space-y-3">
             <div>
               <div className="mb-1 flex justify-between text-xs">
-                <span className="text-muted-foreground">Receita</span>
+                <span className="text-muted-foreground">Faturamento</span>
                 <span className="font-medium tabular-nums">{formatBRL(actualIncome)} / {formatBRL(goal.IncomeTarget)}</span>
               </div>
               <ProgressBar pct={incomePct} color={incomeColor} />

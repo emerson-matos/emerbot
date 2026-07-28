@@ -201,14 +201,14 @@ func TestAgentSetsGoalViaTool(t *testing.T) {
 	store := finance.NewInMemoryStore()
 	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
 		functionCallResponse("definir_meta", map[string]any{
-			"meta_receita":  80000.0,
-			"teto_despesas": 60000.0,
+			"meta_faturamento": 80000.0,
+			"teto_despesas":    60000.0,
 		}),
-		textResponse("✅ Meta de receita de R$80.000,00 e teto de despesas de R$60.000,00 salva."),
+		textResponse("✅ Meta de faturamento de R$80.000,00 e teto de despesas de R$60.000,00 salva."),
 	}}
 	agent := newTestAgent(gen, store)
 
-	reply, err := agent.Process(context.Background(), "u1", userTurn("quero definir meta de 80 mil de receita e 60 mil de teto"), time.Now())
+	reply, err := agent.Process(context.Background(), "u1", userTurn("quero definir meta de 80 mil de faturamento e 60 mil de teto"), time.Now())
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}

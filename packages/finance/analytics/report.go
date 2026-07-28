@@ -75,8 +75,8 @@ func (a Analysis) ToolPayload() map[string]any {
 			"resultado_pct": a.Trends.Resultado.Change,
 		},
 		"semana": map[string]any{
-			"receita_atual":               reais(a.WeekComparison.Current),
-			"receita_semana_passada":      reais(a.WeekComparison.Previous),
+			"faturamento_atual":           reais(a.WeekComparison.Current),
+			"faturamento_semana_passada":  reais(a.WeekComparison.Previous),
 			"mesmo_dia_da_semana_passada": reais(a.WeekComparison.PreviousUpToDay),
 		},
 		// The same projection the dashboard draws. It used to be derived here
@@ -84,13 +84,17 @@ func (a Analysis) ToolPayload() map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
+		// faturamento_meta/faturamento_atual are the sales goal — venda_balcao +
+		// convenio + delivery, not outros_receitas (see isFaturamento) — which is
+		// narrower than the "receita" figure above by design: a loan or aporte
+		// must not count toward a sales target.
 		"meta": map[string]any{
-			"receita_meta":  reais(a.Goals.IncomeTarget),
-			"receita_atual": reais(a.Goals.IncomeActual),
-			"receita_pct":   a.Goals.IncomePct,
-			"despesa_teto":  reais(a.Goals.ExpenseTarget),
-			"despesa_atual": reais(a.Goals.ExpenseActual),
-			"despesa_pct":   a.Goals.ExpensePct,
+			"faturamento_meta":  reais(a.Goals.IncomeTarget),
+			"faturamento_atual": reais(a.Goals.IncomeActual),
+			"faturamento_pct":   a.Goals.IncomePct,
+			"despesa_teto":      reais(a.Goals.ExpenseTarget),
+			"despesa_atual":     reais(a.Goals.ExpenseActual),
+			"despesa_pct":       a.Goals.ExpensePct,
 		},
 		"caixa": map[string]any{
 			"saldo_hoje":            reais(a.CashPosition.CurrentBalance),

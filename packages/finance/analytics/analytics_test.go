@@ -149,6 +149,45 @@ func TestHighlightsPickBestAndWorstDays(t *testing.T) {
 	}
 }
 
+// TestFaturamentoExcludesOutrosReceitasButBalanceDoesNot guards the
+// "empréstimo não é faturamento" fix: a loan someone filed under
+// "Outros (Receita)" must not manufacture a best sales day or inflate the
+// weekday averages, but it is still real cash and must count toward the
+// day's balance highlight.
+func TestFaturamentoExcludesOutrosReceitasButBalanceDoesNot(t *testing.T) {
+	loan := domain.FinancialEntry{
+		TransactionDate: day(t, "2026-07-10"),
+		Amount:          10000000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "outros_receitas",
+	}
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-01", 50000),
+		loan,
+	}
+
+	h := buildHighlights(entries)
+	if h.BestIncome.Date != "2026-07-01" || h.BestIncome.Amount != 50000 {
+		t.Errorf("BestIncome = %+v, want the 2026-07-01 sale, not the loan", h.BestIncome)
+	}
+	if h.BestBalance.Date != "2026-07-10" || h.BestBalance.Amount != 10000000 {
+		t.Errorf("BestBalance = %+v, want the loan's day to still show the cash", h.BestBalance)
+	}
+
+	stats := weekdayStats(entries, at12(t, "2026-07-15"))
+	var total int64
+	for _, s := range stats {
+		total += s.Total
+	}
+	if total != 50000 {
+		t.Errorf("weekday total = %d, want only the sale (50000), loan excluded", total)
+	}
+
+	if got := faturamentoTotal(entries); got != 50000 {
+		t.Errorf("faturamentoTotal = %d, want 50000 (loan excluded)", got)
+	}
+}
+
 func TestCashOutDaysRankedAndCapped(t *testing.T) {
 	var entries []domain.FinancialEntry
 	// Six spending days, each heavier than the last.
@@ -222,7 +261,7 @@ func TestGoalProgress(t *testing.T) {
 			t.Errorf("targets = %+v, want zeroes with no goal set", got)
 		}
 		if got.IncomeActual != 40000 {
-			t.Errorf("IncomeActual = %d, want the income total", got.IncomeActual)
+			t.Errorf("IncomeActual = %d, want the faturamento total", got.IncomeActual)
 		}
 		if got.DaysRemaining != 21 || got.DaysTotal != 31 {
 			t.Errorf("days = %d/%d, want 21/31", got.DaysRemaining, got.DaysTotal)
@@ -488,7 +527,7 @@ func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
 		{"up and closing", improved, onTrack, "Ritmo subiu e fecha a meta"},
 		{"up but short", improved, behind, "Ritmo subiu mas ainda falta"},
 		{"down but closing", declined, onTrack, "Caiu mas a projeção fecha"},
-		{"down and short", declined, behind, "Receita caiu e não bate a meta"},
+		{"down and short", declined, behind, "Faturamento caiu e não bate a meta"},
 		{"flat and closing", stable, onTrack, "Ritmo estável e dentro da projeção"},
 		{"flat and short", stable, behind, "Ritmo estável mas não é suficiente"},
 	}
@@ -746,7 +785,7 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 		t.Errorf("PreviousMonthIncomeUpToDay = %d, want last month truncated at day 15", got.KPIs.PreviousMonthIncomeUpToDay)
 	}
 	if got.Goals.IncomeActual != 450000 {
-		t.Errorf("Goals.IncomeActual = %d, want the income total", got.Goals.IncomeActual)
+		t.Errorf("Goals.IncomeActual = %d, want the faturamento total", got.Goals.IncomeActual)
 	}
 	// July is genuinely *ahead* at the same height of the month: 450.000 by
 	// the 15th against June's 400.000 by its 15th. Comparing against June's

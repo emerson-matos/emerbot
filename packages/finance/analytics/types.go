@@ -160,8 +160,10 @@ type ExpenseComposition struct {
 }
 
 // GoalProgress tracks the month against its income and expense targets.
-// IncomeActual is receita — money earned by selling something (see
-// isIncome) — which is what the target is set against.
+// IncomeActual is faturamento — venda_balcao + convenio + delivery, not
+// outros_receitas (see isFaturamento) — which is what the target is set
+// against. It is narrower than KPIs.Receita on purpose: a loan or aporte
+// filed under "Outros (Receita)" must not count toward a sales goal.
 type GoalProgress struct {
 	IncomeTarget  int64 `json:"incomeTarget"`
 	IncomeActual  int64 `json:"incomeActual"`
@@ -185,7 +187,7 @@ type MonthlySnapshot struct {
 	ExpenseTarget *int64 `json:"expenseTarget"`
 }
 
-// WeekComparison measures this week's income against last week's, and
+// WeekComparison measures this week's faturamento against last week's, and
 // projects the month from the resulting daily rate.
 type WeekComparison struct {
 	Current  int64 `json:"current"`
@@ -203,8 +205,8 @@ type WeekComparison struct {
 }
 
 // Projection is where the month lands and what it would take to close the gap
-// to the income goal. Every amount is receita (see isIncome), matching how
-// the target is set.
+// to the income goal. Every amount is faturamento (see isFaturamento),
+// matching how the target is set.
 type Projection struct {
 	// Actual is what has come in so far, Remaining what the days left are
 	// expected to bring at their weekday averages, Projected the sum.
@@ -267,9 +269,10 @@ type KPIs struct {
 	Despesa   int64 `json:"despesa"`
 	// DaysRemaining excludes today — it is what is left to trade with.
 	DaysRemaining int `json:"daysRemaining"`
-	// PreviousMonthIncomeUpToDay is last month's income truncated at today's
-	// day number, so "ahead of / behind last month" is a like-for-like
-	// comparison instead of a partial month against a whole one.
+	// PreviousMonthIncomeUpToDay is last month's faturamento truncated at
+	// today's day number, so "ahead of / behind last month" is a
+	// like-for-like comparison instead of a partial month against a whole
+	// one — and the same figure Projection.Actual is compared to.
 	PreviousMonthIncomeUpToDay int64 `json:"previousMonthIncomeUpToDay"`
 }
 

@@ -302,7 +302,7 @@ func TestSetGoalTeachesUsageWhenArgsMissing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SetGoal(%q) error: %v", text, err)
 		}
-		if !strings.Contains(msg, "/meta <receita>") {
+		if !strings.Contains(msg, "/meta <faturamento>") {
 			t.Fatalf("SetGoal(%q) expected tutorial, got: %s", text, msg)
 		}
 	}
@@ -336,7 +336,7 @@ func TestSetGoalPersistsTargetsAndGoalReadsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Goal returned error: %v", err)
 	}
-	if !strings.Contains(goalMsg, "Receita") || !strings.Contains(goalMsg, "1%") || !strings.Contains(goalMsg, "R$80.000,00") {
+	if !strings.Contains(goalMsg, "Faturamento") || !strings.Contains(goalMsg, "1%") || !strings.Contains(goalMsg, "R$80.000,00") {
 		t.Fatalf("unexpected goal message: %s", goalMsg)
 	}
 }

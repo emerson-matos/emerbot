@@ -48,14 +48,17 @@ func Build(in Input) Analysis {
 	}
 	currentGoal := at(in.Goals, current)
 
-	income := incomeTotal(in.Entries)
+	// Faturamento (venda_balcao + convenio + delivery) is deliberately
+	// narrower than KPIs.Receita (currentSummary.TotalIncome, which also
+	// counts outros_receitas) — see isFaturamento.
+	faturamento := faturamentoTotal(in.Entries)
 
 	kpis := KPIs{
 		Resultado:                  currentSummary.Balance,
 		Receita:                    currentSummary.TotalIncome,
 		Despesa:                    currentSummary.TotalExpense,
 		DaysRemaining:              daysInMonth(in.Now) - in.Now.Day(),
-		PreviousMonthIncomeUpToDay: incomeUpToDay(in.PreviousEntries, in.Now.Day()),
+		PreviousMonthIncomeUpToDay: faturamentoUpToDay(in.PreviousEntries, in.Now.Day()),
 	}
 
 	var incomeTarget int64
@@ -63,7 +66,7 @@ func Build(in Input) Analysis {
 		incomeTarget = currentGoal.IncomeTarget
 	}
 	week := buildWeekComparison(in.Entries, in.Now, incomeTarget)
-	goals := goalProgress(currentSummary, currentGoal, in.Now, income)
+	goals := goalProgress(currentSummary, currentGoal, in.Now, faturamento)
 	weekdays := weekdayStats(in.Entries, in.Now)
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
@@ -95,9 +98,9 @@ func Build(in Input) Analysis {
 	}
 }
 
-// buildWeekComparison measures income from this Monday through today against
-// the whole of last week, and projects the rest of *this week* from the
-// resulting daily rate. Projecting the month is buildProjection's job, off
+// buildWeekComparison measures faturamento from this Monday through today
+// against the whole of last week, and projects the rest of *this week* from
+// the resulting daily rate. Projecting the month is buildProjection's job, off
 // the weekday averages — this used to do both and the two disagreed.
 //
 // Comparisons are done on "YYYY-MM-DD" strings rather than instants: the week
@@ -128,7 +131,7 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 
 	week := WeekComparison{MonthlyTarget: monthlyTarget}
 	for _, e := range entries {
-		if !isIncome(e) {
+		if !isFaturamento(e) {
 			continue
 		}
 		date := e.TransactionDate.String()
@@ -181,24 +184,24 @@ func MonthRange(month string, count int) []string {
 	return months
 }
 
-// incomeTotal sums income across the given entries.
-func incomeTotal(entries []domain.FinancialEntry) int64 {
+// faturamentoTotal sums faturamento across the given entries.
+func faturamentoTotal(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
-		if isIncome(e) {
+		if isFaturamento(e) {
 			total += e.Amount
 		}
 	}
 	return total
 }
 
-// incomeUpToDay sums income falling on or before the given day of the
-// month — how last month is truncated for a like-for-like comparison with a
-// month still in progress.
-func incomeUpToDay(entries []domain.FinancialEntry, day int) int64 {
+// faturamentoUpToDay sums faturamento falling on or before the given day of
+// the month — how last month is truncated for a like-for-like comparison
+// with a month still in progress.
+func faturamentoUpToDay(entries []domain.FinancialEntry, day int) int64 {
 	var total int64
 	for _, e := range entries {
-		if isIncome(e) && e.TransactionDate.Day() <= day {
+		if isFaturamento(e) && e.TransactionDate.Day() <= day {
 			total += e.Amount
 		}
 	}

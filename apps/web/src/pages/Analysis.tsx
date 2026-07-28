@@ -219,7 +219,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
             {goals.incomePct}%
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">Receita</p>
+          <p className="mt-1 text-xs text-muted-foreground">Faturamento</p>
         </KpiCardContent>
       </KpiCard>
     </div>
@@ -329,7 +329,7 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
       title="Projeção do Mês"
       icon={Target}
       empty={projection.target <= 0
-        ? 'Defina uma meta de receita em Metas para acompanhar a projeção do mês.'
+        ? 'Defina uma meta de faturamento em Metas para acompanhar a projeção do mês.'
         : undefined}
     >
       <>
@@ -361,7 +361,7 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
               no percentage to report, and printing one invented a comparison
               against a month that never traded. */}
           {prevDiff === null ? (
-            <p className="text-sm text-muted-foreground">Sem receita no mês passado para comparar</p>
+            <p className="text-sm text-muted-foreground">Sem faturamento no mês passado para comparar</p>
           ) : (
             <p className={`text-sm ${trendTone(prevDiff)}`}>
               {prevDiff > 0 ? '↑' : '↓'} {Math.abs(prevDiff)}% vs mês passado

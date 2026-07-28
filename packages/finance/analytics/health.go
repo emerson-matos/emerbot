@@ -56,8 +56,8 @@ func buildHealth(
 	if totalDays > 0 {
 		// "com movimento" is not padding: the denominator is days with any
 		// entry, while the weekday averages shown alongside count only days
-		// with income. Two different totals sat next to each other unlabelled
-		// and read like an arithmetic error.
+		// with faturamento. Two different totals sat next to each other
+		// unlabelled and read like an arithmetic error.
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
@@ -140,7 +140,7 @@ func buildHealth(
 
 	if projection.Pacing() {
 		if projection.OnTrack {
-			description := "Receita já superou a meta"
+			description := "Faturamento já superou a meta"
 			if projection.NeededPerDay > 0 {
 				description = fmt.Sprintf("Necessário %s/dia — a projeção passa da meta", formatBRL(projection.NeededPerDay))
 			}
@@ -191,13 +191,15 @@ func healthScore(messages []Insight) int {
 }
 
 // countDays returns how many days closed in the black, and how many days saw
-// any entry at all. A day is in the black when its income beats everything
-// else that moved that day.
+// any entry at all. A day is in the black when everything that came in that
+// day beats everything that went out — a true cash balance, not a sales
+// figure, so every income entry counts here even the ones isFaturamento
+// excludes.
 func countDays(entries []domain.FinancialEntry) (positive, total int) {
 	byDate := map[string]int64{}
 	for _, e := range entries {
 		date := e.TransactionDate.String()
-		if isIncome(e) {
+		if e.Type == domain.EntryTypeIncome {
 			byDate[date] += e.Amount
 		} else {
 			byDate[date] -= e.Amount

@@ -43,7 +43,7 @@ export default function Goals() {
   const saveGoal = useSaveGoalMutation(currentMonth)
 
   // The backend assembles goal progress and the trailing 3-month history in
-  // one pass (packages/finance/analytics) — Receita here reads the same
+  // one pass (packages/finance/analytics) — Faturamento here reads the same
   // figure as the Analysis page and the WhatsApp bot, instead of this page
   // re-deriving its own narrower one from raw entries.
   const analysisQuery = useMonthlyAnalysis(currentMonth)
@@ -98,7 +98,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={TrendingUp} tone="positive">
-            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Progresso Receita</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Progresso Faturamento</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
               {incomePct.toFixed(0)}%
             </p>
@@ -134,7 +134,7 @@ export default function Goals() {
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
               {monthsHit}/{history.length}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">receita atingida</p>
+            <p className="mt-1 text-xs text-muted-foreground">faturamento atingido</p>
           </KpiCardContent>
         </KpiCard>
 
@@ -146,7 +146,7 @@ export default function Goals() {
           className="min-h-26"
         >
           <KpiCardContent icon={BarChart3} tone="primary">
-            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Receita Média</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Faturamento Médio</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.primary }}>
               {formatBRL(avgIncome)}
             </p>
@@ -160,7 +160,7 @@ export default function Goals() {
           <CardContent className="space-y-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
               <TrendingUp className="size-4 text-success" aria-hidden />
-              Meta de Receita
+              Meta de Faturamento
             </h3>
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Progresso</span>
@@ -241,7 +241,7 @@ export default function Goals() {
             <TableHeader>
               <TableRow>
                 <TableHead>Mês</TableHead>
-                <TableHead>Receita</TableHead>
+                <TableHead>Faturamento</TableHead>
                 <TableHead>Despesas</TableHead>
               </TableRow>
             </TableHeader>

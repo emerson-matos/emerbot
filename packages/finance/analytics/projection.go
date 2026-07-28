@@ -2,8 +2,8 @@ package analytics
 
 import "time"
 
-// buildProjection projects where the month's income lands if the days left
-// trade like the same weekdays already have, and prices the gap to the
+// buildProjection projects where the month's faturamento lands if the days
+// left trade like the same weekdays already have, and prices the gap to the
 // income goal.
 //
 // This used to be computed twice, differently. The dashboard card derived a
@@ -16,9 +16,9 @@ import "time"
 // at the same time.
 //
 // It is computed once here. NeededPerDay keeps the second formula — what the
-// days left must each bring to reach the target, measured from real income,
-// not from a projection — because that is the number a person can act on, and
-// every consumer now quotes this one.
+// days left must each bring to reach the target, measured from real
+// faturamento, not from a projection — because that is the number a person
+// can act on, and every consumer now quotes this one.
 func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time) Projection {
 	projection := Projection{
 		Actual:        goals.IncomeActual,

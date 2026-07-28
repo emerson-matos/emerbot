@@ -266,7 +266,7 @@ func resumoMensalTool(store Store) Tool {
 
 	return Tool{
 		Name:        name,
-		Description: "Retorna o resumo financeiro de um mês: receitas, despesas, saldo e progresso das metas (receita e teto de despesas).",
+		Description: "Retorna o resumo financeiro de um mês: receitas, despesas, saldo e progresso das metas (faturamento e teto de despesas).",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -299,15 +299,31 @@ func resumoMensalTool(store Store) Tool {
 
 			goal, err := store.GetGoal(ctx, userID, args.Month)
 			if err == nil && (goal.IncomeTarget > 0 || goal.ExpenseTarget > 0) {
+				// The goal is faturamento (venda_balcao + convenio + delivery,
+				// not outros_receitas — see pkgfinance.IsFaturamento), narrower
+				// than the "income" total above, so it needs the raw entries
+				// rather than the pre-aggregated summary.
+				var faturamento int64
+				if goal.IncomeTarget > 0 {
+					from, to, perr := domain.ParseMonth(args.Month)
+					if perr != nil {
+						return nil, perr
+					}
+					monthEntries, lerr := store.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
+					if lerr != nil {
+						return nil, fmt.Errorf("monthly entries: %w", lerr)
+					}
+					faturamento = FaturamentoTotal(monthEntries)
+				}
 				goalMap := map[string]any{
-					"income_target":  centavosToReais(goal.IncomeTarget),
-					"expense_target": centavosToReais(goal.ExpenseTarget),
+					"faturamento_target": centavosToReais(goal.IncomeTarget),
+					"expense_target":     centavosToReais(goal.ExpenseTarget),
 				}
 				if goal.IncomeTarget > 0 {
-					if summary.TotalIncome <= goal.IncomeTarget {
-						goalMap["income_progress_pct"] = float64(summary.TotalIncome*100) / float64(goal.IncomeTarget)
+					if faturamento <= goal.IncomeTarget {
+						goalMap["faturamento_progress_pct"] = float64(faturamento*100) / float64(goal.IncomeTarget)
 					} else {
-						goalMap["income_progress_pct"] = 100.0
+						goalMap["faturamento_progress_pct"] = 100.0
 					}
 				}
 				expense := summary.TotalExpense
@@ -333,19 +349,19 @@ func definirMetaTool(store Store) Tool {
 
 	return Tool{
 		Name:        name,
-		Description: "Define ou atualiza a meta mensal de receita e/ou teto de despesas. Pelo menos um dos valores deve ser informado.",
+		Description: "Define ou atualiza a meta mensal de faturamento e/ou teto de despesas. Pelo menos um dos valores deve ser informado.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"month":         {Type: genai.TypeString, Description: "Mês no formato YYYY-MM (padrão: mês atual)"},
-				"meta_receita":  {Type: genai.TypeNumber, Description: "Meta de receita em reais (ex: 80000.00)"},
-				"teto_despesas": {Type: genai.TypeNumber, Description: "Teto de despesas em reais (ex: 60000.00)"},
+				"month":            {Type: genai.TypeString, Description: "Mês no formato YYYY-MM (padrão: mês atual)"},
+				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais — apenas vendas (balcão, convênio, delivery), não empréstimos ou aportes (ex: 80000.00)"},
+				"teto_despesas":    {Type: genai.TypeNumber, Description: "Teto de despesas em reais (ex: 60000.00)"},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
 			var args struct {
 				Month         string  `json:"month"`
-				IncomeTarget  float64 `json:"meta_receita"`
+				IncomeTarget  float64 `json:"meta_faturamento"`
 				ExpenseTarget float64 `json:"teto_despesas"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
@@ -364,7 +380,7 @@ func definirMetaTool(store Store) Tool {
 			}
 
 			if args.IncomeTarget <= 0 && args.ExpenseTarget <= 0 {
-				return nil, fmt.Errorf("informe pelo menos meta_receita ou teto_despesas")
+				return nil, fmt.Errorf("informe pelo menos meta_faturamento ou teto_despesas")
 			}
 
 			goal := domain.Goal{
@@ -397,10 +413,10 @@ func definirMetaTool(store Store) Tool {
 			}
 
 			return map[string]any{
-				"month":         month,
-				"meta_receita":  centavosToReais(goal.IncomeTarget),
-				"teto_despesas": centavosToReais(goal.ExpenseTarget),
-				"status":        "saved",
+				"month":            month,
+				"meta_faturamento": centavosToReais(goal.IncomeTarget),
+				"teto_despesas":    centavosToReais(goal.ExpenseTarget),
+				"status":           "saved",
 			}, nil
 		},
 	}
