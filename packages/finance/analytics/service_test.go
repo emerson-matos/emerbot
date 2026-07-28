@@ -47,8 +47,8 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 	if got.KPIs.Receita != 350000 || got.KPIs.Despesa != 90000 {
 		t.Errorf("KPIs = %+v, want July's totals", got.KPIs)
 	}
-	// June's counter sales, truncated at day 15 — the whole 800000 falls on
-	// the 10th, so all of it counts.
+	// June's revenue, truncated at day 15 — the whole 800000 falls on the
+	// 10th, so all of it counts.
 	if got.KPIs.PreviousMonthIncomeUpToDay != 800000 {
 		t.Errorf("PreviousMonthIncomeUpToDay = %d, want 800000", got.KPIs.PreviousMonthIncomeUpToDay)
 	}

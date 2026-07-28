@@ -48,14 +48,14 @@ func Build(in Input) Analysis {
 	}
 	currentGoal := at(in.Goals, current)
 
-	counterSales := counterSalesTotal(in.Entries)
+	revenue := revenueTotal(in.Entries)
 
 	kpis := KPIs{
 		Resultado:                  currentSummary.Balance,
 		Receita:                    currentSummary.TotalIncome,
 		Despesa:                    currentSummary.TotalExpense,
 		DaysRemaining:              daysInMonth(in.Now) - in.Now.Day(),
-		PreviousMonthIncomeUpToDay: counterSalesUpToDay(in.PreviousEntries, in.Now.Day()),
+		PreviousMonthIncomeUpToDay: revenueUpToDay(in.PreviousEntries, in.Now.Day()),
 	}
 
 	var revenueTarget int64
@@ -63,7 +63,7 @@ func Build(in Input) Analysis {
 		revenueTarget = currentGoal.RevenueTarget
 	}
 	week := buildWeekComparison(in.Entries, in.Now, revenueTarget)
-	goals := goalProgress(currentSummary, currentGoal, in.Now, counterSales)
+	goals := goalProgress(currentSummary, currentGoal, in.Now, revenue)
 	weekdays := weekdayStats(in.Entries, in.Now)
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
@@ -95,7 +95,7 @@ func Build(in Input) Analysis {
 	}
 }
 
-// buildWeekComparison measures counter sales from this Monday through today
+// buildWeekComparison measures revenue from this Monday through today
 // against the whole of last week, and projects the rest of *this week* from
 // the resulting daily rate. Projecting the month is buildProjection's job, off
 // the weekday averages — this used to do both and the two disagreed.
@@ -128,7 +128,7 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 
 	week := WeekComparison{MonthlyTarget: monthlyTarget}
 	for _, e := range entries {
-		if !isCounterSale(e) {
+		if !isRevenue(e) {
 			continue
 		}
 		date := e.TransactionDate.String()
@@ -181,24 +181,24 @@ func MonthRange(month string, count int) []string {
 	return months
 }
 
-// counterSalesTotal sums counter sales across the given entries.
-func counterSalesTotal(entries []domain.FinancialEntry) int64 {
+// revenueTotal sums revenue across the given entries.
+func revenueTotal(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
-		if isCounterSale(e) {
+		if isRevenue(e) {
 			total += e.Amount
 		}
 	}
 	return total
 }
 
-// counterSalesUpToDay sums counter sales falling on or before the given day of
-// the month — how last month is truncated for a like-for-like comparison with
-// a month still in progress.
-func counterSalesUpToDay(entries []domain.FinancialEntry, day int) int64 {
+// revenueUpToDay sums revenue falling on or before the given day of the
+// month — how last month is truncated for a like-for-like comparison with a
+// month still in progress.
+func revenueUpToDay(entries []domain.FinancialEntry, day int) int64 {
 	var total int64
 	for _, e := range entries {
-		if isCounterSale(e) && e.TransactionDate.Day() <= day {
+		if isRevenue(e) && e.TransactionDate.Day() <= day {
 			total += e.Amount
 		}
 	}

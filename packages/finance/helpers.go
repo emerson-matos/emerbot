@@ -95,12 +95,21 @@ func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.F
 	}
 }
 
-// VendaBalcaoIncome sums the Amount of entries where Type is income and
-// Category is "venda_balcao".
-func VendaBalcaoIncome(entries []domain.FinancialEntry) int64 {
+// RevenueIncome sums the Amount of entries that are faturamento — revenue
+// earned by selling something, as opposed to money that merely moved.
+//
+// This used to sum only entries in the "venda_balcao" category, on the theory
+// that convênio and delivery receipts would flatter the number the goal is
+// tracked against. In practice that just made "Faturamento" here disagree
+// with "Receita" everywhere else in the app for the same month, since every
+// income category the pharmacy has (venda_balcao, convenio, delivery,
+// outros_receitas) is a sale. If a non-operational income category is ever
+// added — a loan disbursement, a partner contribution — it must be excluded
+// here: cash coming in is not the same thing as faturamento.
+func RevenueIncome(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
-		if e.Type == domain.EntryTypeIncome && e.Category == "venda_balcao" {
+		if e.Type == domain.EntryTypeIncome {
 			total += e.Amount
 		}
 	}

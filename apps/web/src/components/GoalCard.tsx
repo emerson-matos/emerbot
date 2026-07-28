@@ -4,7 +4,9 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatBRL } from '@/lib/format'
-import { useGoal, useMonthlySummary, useEntries } from '../api/queries'
+import { useGoal } from '../api/queries'
+import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
+import type { YearMonth } from '@/api/types'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -19,29 +21,27 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 
 export default function GoalCard() {
   const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
-  const summaryQuery = useMonthlySummary(currentMonth)
+  const currentMonth = format(now, 'yyyy-MM') as YearMonth
+  // Faturamento here is the same "revenue from sales" figure the backend
+  // computes for the Analysis page and the WhatsApp bot (packages/finance/
+  // analytics) — this card used to re-derive its own narrower one (counter
+  // sales only) straight from the entries, which drifted from the number
+  // shown everywhere else.
+  const analysisQuery = useMonthlyAnalysis(currentMonth)
   const goalQuery = useGoal(currentMonth)
-  const summary = summaryQuery.data ?? null
+  const analysis = analysisQuery.data ?? null
   const goal = goalQuery.data?.goal ?? null
 
-  const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const monthEnd = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
-  const entriesQuery = useEntries(monthStart, monthEnd)
-  const vendaBalcaoIncome = (entriesQuery.data?.entries ?? [])
-    .filter(e => e.Type === 'income' && e.Category === 'venda_balcao')
-    .reduce((sum, e) => sum + e.Amount, 0)
-
-  if (summaryQuery.isLoading || goalQuery.isLoading) {
+  if (analysisQuery.isLoading || goalQuery.isLoading) {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><Skeleton className="size-full rounded-xl" /></CardContent></Card>
   }
 
-  if (summaryQuery.isError || goalQuery.isError) {
+  if (analysisQuery.isError || goalQuery.isError) {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><p className="text-xs text-destructive">Erro ao carregar meta do mês</p></CardContent></Card>
   }
 
-  const actualIncome = vendaBalcaoIncome
-  const actualExpense = summary?.TotalExpense ?? 0
+  const actualIncome = analysis?.goals.revenueActual ?? 0
+  const actualExpense = analysis?.goals.expenseActual ?? 0
   const revPct = goal?.RevenueTarget && goal.RevenueTarget > 0
     ? Math.min(100, (actualIncome / goal.RevenueTarget) * 100) : 0
   const expPct = goal?.ExpenseTarget && goal.ExpenseTarget > 0

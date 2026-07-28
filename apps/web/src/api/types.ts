@@ -215,8 +215,9 @@ export interface WeekComparison {
 }
 
 /**
- * Where the month lands and what it would take to close the gap to the revenue
- * goal, in counter sales (venda_balcao).
+ * Where the month lands and what it would take to close the gap to the
+ * revenue goal, in faturamento (revenue from sales — see isRevenue in
+ * packages/finance/analytics).
  *
  * All of this used to be worked out in the browser from the weekday averages,
  * while the backend told the WhatsApp bot a different projection and priced
