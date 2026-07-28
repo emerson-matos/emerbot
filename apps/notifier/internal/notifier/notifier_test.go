@@ -607,3 +607,36 @@ func TestRunPersistsInsightSnapshot(t *testing.T) {
 		t.Error("computedAt is zero")
 	}
 }
+
+// The snapshot feeds the dashboard's GET /analysis, which has nothing to do
+// with WhatsApp. A day where nobody is opted in still has to produce one —
+// otherwise an install where no one enabled WhatsApp leaves the API answering
+// 404 forever.
+func TestRunPersistsInsightSnapshotWithNoEligibleRecipients(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: false, Phone: "5511999999999"},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NotOptedIn != 1 || res.Evaluated != 0 {
+		t.Fatalf("result = %+v, want nobody evaluated", res)
+	}
+	if len(wa.sent) != 0 {
+		t.Errorf("sent %d messages to nobody", len(wa.sent))
+	}
+
+	snap, err := s.fin.GetInsightSnapshot(context.Background(), shared.FinanceLedgerID, runDay.Format("2006-01-02"))
+	if err != nil {
+		t.Fatalf("snapshot not persisted when nobody is opted in: %v", err)
+	}
+	if len(snap.Snapshot) == 0 {
+		t.Error("snapshot is empty")
+	}
+}

@@ -1,7 +1,9 @@
 package finance
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -13,22 +15,36 @@ import (
 	"github.com/emerson/emerbot/packages/shared"
 )
 
+// SnapshotStore is the slice of the finance store these two endpoints use: the
+// four reads analytics.Assemble needs to recompute, plus the snapshot cache
+// itself. Six methods instead of the full eighteen-method finance.Store.
+type SnapshotStore interface {
+	analytics.LedgerReader
+	GetInsightSnapshot(ctx context.Context, userID, date string) (finance.InsightSnapshot, error)
+	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error
+}
+
 // SnapshotHandler serves the cached daily analysis snapshot and supports
 // manual recalculation. The snapshot is persisted by the notifier as a
 // subproduct of its daily digest run.
 type SnapshotHandler struct {
-	store finance.Store
+	store SnapshotStore
 	loc   *time.Location
+	now   func() time.Time
 }
 
 // NewSnapshotHandler builds the handler. loc is the timezone whose calendar
-// day defines "today" for the snapshot key.
-func NewSnapshotHandler(store finance.Store, loc *time.Location) *SnapshotHandler {
+// day defines "today" for the snapshot key. The clock is time.Now; tests can
+// override it via SetClock.
+func NewSnapshotHandler(store SnapshotStore, loc *time.Location) *SnapshotHandler {
 	if loc == nil {
 		loc = time.UTC
 	}
-	return &SnapshotHandler{store: store, loc: loc}
+	return &SnapshotHandler{store: store, loc: loc, now: time.Now}
 }
+
+// SetClock overrides the time source (tests only).
+func (h *SnapshotHandler) SetClock(now func() time.Time) { h.now = now }
 
 // snapshotResponse is the JSON envelope returned by GET /analysis.
 type snapshotResponse struct {
@@ -47,7 +63,7 @@ type comparison struct {
 type healthDelta struct {
 	Previous string `json:"previous"`
 	Current  string `json:"current"`
-	Trend    string `json:"trend"` // "improved", "downgraded", "stable"
+	Trend    string `json:"trend"` // "improved" or "downgraded"
 }
 
 type kpiDeltas struct {
@@ -71,13 +87,18 @@ func (h *SnapshotHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().In(h.loc)
+	now := h.now().In(h.loc)
 	today := now.Format("2006-01-02")
 	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
 
 	snap, err := h.store.GetInsightSnapshot(r.Context(), shared.FinanceLedgerID, today)
+	if errors.Is(err, finance.ErrInsightNotFound) {
+		httpx.Error(w, "snapshot not yet available — run POST /analysis or wait for the daily digest", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		httpx.Error(w, "snapshot not found — wait for the daily digest or POST /analysis to compute", http.StatusNotFound)
+		log.Printf("get insight snapshot: %v", err)
+		httpx.Error(w, "failed to read snapshot", http.StatusInternalServerError)
 		return
 	}
 
@@ -86,9 +107,15 @@ func (h *SnapshotHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ComputedAt: snap.ComputedAt,
 	}
 
-	// Best-effort comparison with yesterday — if missing, no comparison.
-	if prevSnap, err := h.store.GetInsightSnapshot(r.Context(), shared.FinanceLedgerID, yesterday); err == nil {
+	// Best-effort comparison with yesterday — if missing, no comparison. A read
+	// failure is logged rather than surfaced: today's snapshot is the answer,
+	// the delta is garnish, and losing it is not worth failing the request.
+	prevSnap, err := h.store.GetInsightSnapshot(r.Context(), shared.FinanceLedgerID, yesterday)
+	switch {
+	case err == nil:
 		resp.Comparison = buildComparison(today, snap.Snapshot, prevSnap.Snapshot)
+	case !errors.Is(err, finance.ErrInsightNotFound):
+		log.Printf("get yesterday insight snapshot: %v", err)
 	}
 
 	httpx.OK(w, resp)
@@ -102,7 +129,7 @@ func (h *SnapshotHandler) Recalculate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().In(h.loc)
+	now := h.now().In(h.loc)
 	month := now.Format("2006-01")
 
 	analysis, err := analytics.Assemble(r.Context(), h.store, shared.FinanceLedgerID, month, now)
@@ -146,13 +173,12 @@ func buildComparison(date string, current, previous []byte) *comparison {
 
 	c := &comparison{Date: date}
 
-	// Health status delta.
+	// Health status delta. Only emitted when the status actually moved, so
+	// there is no "stable" trend to report: the statuses differ, and the only
+	// question left is which direction.
 	if curr.Health.Status != prev.Health.Status {
-		trend := "stable"
-		switch {
-		case healthRank(curr.Health.Status) > healthRank(prev.Health.Status):
-			trend = "downgraded"
-		case healthRank(curr.Health.Status) < healthRank(prev.Health.Status):
+		trend := "downgraded"
+		if healthRank(curr.Health.Status) < healthRank(prev.Health.Status) {
 			trend = "improved"
 		}
 		c.Health = &healthDelta{
@@ -207,9 +233,8 @@ func healthRank(s analytics.HealthStatus) int {
 		return 1
 	case analytics.HealthCritico:
 		return 2
-	default:
-		return 0
 	}
+	return 0 // unknown status, treat as boa
 }
 
 // pctChange computes the percentage change from prev to curr.

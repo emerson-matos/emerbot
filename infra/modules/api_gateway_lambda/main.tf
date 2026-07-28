@@ -78,6 +78,15 @@ resource "aws_dynamodb_table" "financial_entries" {
     read_capacity   = 7
     write_capacity  = 7
   }
+
+  # Expira os snapshots diários de análise (SK = INSIGHT#, ver
+  # packages/finance/dynamodb_insights.go) 30 dias depois de calculados. Só
+  # esses itens gravam ExpiresAt; lançamentos, metas e categorias não têm o
+  # atributo e por isso nunca são coletados pelo TTL.
+  ttl {
+    attribute_name = "ExpiresAt"
+    enabled        = true
+  }
 }
 
 # WhatsApp customer-service window: one item per phone, auto-expired by TTL

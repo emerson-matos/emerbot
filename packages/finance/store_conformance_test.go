@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -410,10 +411,12 @@ func TestStoresAgreeOnInsightSnapshot(t *testing.T) {
 		now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 		snapshot := []byte(`{"month":"2026-07","health":{"status":"boa"}}`)
 
-		// Get on missing returns error.
+		// Get on missing returns the sentinel — the HTTP layer answers 404 for
+		// this and 500 for anything else, so both stores have to agree on which
+		// error a missing snapshot is.
 		_, err := s.GetInsightSnapshot(ctx, "u1", "2026-07-20")
-		if err == nil {
-			t.Fatal("get missing snapshot: want error, got nil")
+		if !errors.Is(err, ErrInsightNotFound) {
+			t.Fatalf("get missing snapshot: err = %v, want ErrInsightNotFound", err)
 		}
 
 		// Save and get roundtrip.
@@ -433,8 +436,8 @@ func TestStoresAgreeOnInsightSnapshot(t *testing.T) {
 
 		// Different date returns not found.
 		_, err = s.GetInsightSnapshot(ctx, "u1", "2026-07-21")
-		if err == nil {
-			t.Fatal("get different date: want error, got nil")
+		if !errors.Is(err, ErrInsightNotFound) {
+			t.Fatalf("get different date: err = %v, want ErrInsightNotFound", err)
 		}
 
 		// Overwrite same date.
