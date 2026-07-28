@@ -296,6 +296,43 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	}
 }
 
+// TestGoalAlertOnlyCountsCurrentMonthRevenue guards against the goal-reached
+// alert summing revenue across the whole overdue lookback window (several
+// months) instead of just the month the goal was set for. A May sale big
+// enough to clear July's target on its own must not fire "meta atingida" in
+// July, when July itself has no revenue at all.
+func TestGoalAlertOnlyCountsCurrentMonthRevenue(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	maySale := domain.FinancialEntry{
+		UserID: shared.FinanceLedgerID, EntryID: "venda-maio", Description: "venda",
+		Amount: 6000000, TransactionDate: domain.NewCalendarDate(day("2026-05-15")),
+		Type: domain.EntryTypeIncome, Category: "venda_balcao",
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(day("2026-05-15")),
+		Source: domain.SourceManual,
+	}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyGoal: true},
+		maySale,
+	)
+	if err := s.fin.SaveGoal(ctx, domain.Goal{
+		UserID: shared.FinanceLedgerID, Month: "2026-07", RevenueTarget: 5000000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := newNotifier(s, wa).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 0 || len(wa.sent) != 0 {
+		t.Fatalf("May's revenue must not count toward July's goal, res=%+v sent=%d", res, len(wa.sent))
+	}
+}
+
 // TestRunSendsHumanizedDigestWhenGeneratorSucceeds is the regression test for
 // issue #36: the digest must actually send the model's rewritten text, feeding
 // the generator a non-empty draft plus the system prompt. Before the fix the

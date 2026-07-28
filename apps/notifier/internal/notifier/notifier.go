@@ -207,7 +207,19 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
-	vbIncome := pkgfinance.VendaBalcaoIncome(entries)
+	// entries spans the overdue lookback window (windowStart..today) — several
+	// months wide — but the goal alert compares against this month's target,
+	// so vbIncome must be this month's counter sales only. Counting revenue
+	// from earlier months here made the alert fire (or stay silent) off a
+	// total nobody's target was ever set against.
+	monthStart, _, _ := domain.ParseMonth(month) // derived from MonthOf(today), cannot fail
+	var monthEntries []domain.FinancialEntry
+	for _, e := range entries {
+		if !pkgfinance.EffectiveDate(e).Before(monthStart) {
+			monthEntries = append(monthEntries, e)
+		}
+	}
+	vbIncome := pkgfinance.VendaBalcaoIncome(monthEntries)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
