@@ -51,7 +51,7 @@ func sameDay(a, b time.Time) bool {
 // Evaluate returns the alerts that apply for `today`, filtered by `prefs` — a
 // disabled alert type is skipped. `entries` should cover at least the overdue
 // look-back window through today; `income` is the current month's total income
-// and `goal` its target (a zero RevenueTarget disables the goal alert).
+// and `goal` its target (a zero IncomeTarget disables the goal alert).
 func Evaluate(
 	prefs domain.NotificationPrefs,
 	entries []domain.FinancialEntry,
@@ -108,10 +108,10 @@ func Evaluate(
 		}
 	}
 
-	if prefs.NotifyGoal && goal.RevenueTarget > 0 && income >= goal.RevenueTarget {
+	if prefs.NotifyGoal && goal.IncomeTarget > 0 && income >= goal.IncomeTarget {
 		alerts = append(alerts, Alert{
 			Kind: KindGoal,
-			Text: "Meta de faturamento atingida!",
+			Text: "Meta de receita atingida!",
 		})
 	}
 

@@ -26,7 +26,7 @@ type InsightType string
 
 const (
 	InsightExpenseGrowth     InsightType = "expense_growth"
-	InsightRevenueDrop       InsightType = "revenue_drop"
+	InsightIncomeDrop        InsightType = "income_drop"
 	InsightLowCashFlow       InsightType = "low_cash_flow"
 	InsightGoalBehind        InsightType = "goal_behind"
 	InsightGoodPerformance   InsightType = "good_performance"
@@ -128,7 +128,7 @@ type DayHighlight struct {
 // guessing at the label.
 const NoDataDate = "—"
 
-// Highlights are the best and worst days of the month, by revenue and by
+// Highlights are the best and worst days of the month, by income and by
 // balance.
 type Highlights struct {
 	BestIncome   DayHighlight `json:"bestIncome"`
@@ -159,13 +159,13 @@ type ExpenseComposition struct {
 	Percentage   int    `json:"percentage"`
 }
 
-// GoalProgress tracks the month against its revenue and expense targets.
-// RevenueActual is faturamento — revenue from selling something (see
-// isRevenue) — which is what the target is set against.
+// GoalProgress tracks the month against its income and expense targets.
+// IncomeActual is receita — money earned by selling something (see
+// isIncome) — which is what the target is set against.
 type GoalProgress struct {
-	RevenueTarget int64 `json:"revenueTarget"`
-	RevenueActual int64 `json:"revenueActual"`
-	RevenuePct    int   `json:"revenuePct"`
+	IncomeTarget  int64 `json:"incomeTarget"`
+	IncomeActual  int64 `json:"incomeActual"`
+	IncomePct     int   `json:"incomePct"`
 	ExpenseTarget int64 `json:"expenseTarget"`
 	ExpenseActual int64 `json:"expenseActual"`
 	ExpensePct    int   `json:"expensePct"`
@@ -185,7 +185,7 @@ type MonthlySnapshot struct {
 	ExpenseTarget *int64 `json:"expenseTarget"`
 }
 
-// WeekComparison measures this week's revenue against last week's, and
+// WeekComparison measures this week's income against last week's, and
 // projects the month from the resulting daily rate.
 type WeekComparison struct {
 	Current  int64 `json:"current"`
@@ -203,8 +203,8 @@ type WeekComparison struct {
 }
 
 // Projection is where the month lands and what it would take to close the gap
-// to the revenue goal. Every amount is faturamento (see isRevenue), matching
-// how the target is set.
+// to the income goal. Every amount is receita (see isIncome), matching how
+// the target is set.
 type Projection struct {
 	// Actual is what has come in so far, Remaining what the days left are
 	// expected to bring at their weekday averages, Projected the sum.
@@ -267,7 +267,7 @@ type KPIs struct {
 	Despesa   int64 `json:"despesa"`
 	// DaysRemaining excludes today — it is what is left to trade with.
 	DaysRemaining int `json:"daysRemaining"`
-	// PreviousMonthIncomeUpToDay is last month's revenue truncated at today's
+	// PreviousMonthIncomeUpToDay is last month's income truncated at today's
 	// day number, so "ahead of / behind last month" is a like-for-like
 	// comparison instead of a partial month against a whole one.
 	PreviousMonthIncomeUpToDay int64 `json:"previousMonthIncomeUpToDay"`

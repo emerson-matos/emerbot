@@ -61,7 +61,7 @@ export interface CashFlowPoint {
 export interface Goal {
   UserID: string;
   Month: string;
-  RevenueTarget: number;
+  IncomeTarget: number;
   ExpenseTarget: number;
 }
 
@@ -99,7 +99,7 @@ export type FinancialHealthStatus =
 
 export const InsightType = {
   ExpenseGrowth: "expense_growth",
-  RevenueDrop: "revenue_drop",
+  IncomeDrop: "income_drop",
   LowCashFlow: "low_cash_flow",
   GoalBehind: "goal_behind",
   GoodPerformance: "good_performance",
@@ -186,9 +186,9 @@ export interface ExpenseComposition {
 }
 
 export interface GoalProgress {
-  revenueTarget: number;
-  revenueActual: number;
-  revenuePct: number;
+  incomeTarget: number;
+  incomeActual: number;
+  incomePct: number;
   expenseTarget: number;
   expenseActual: number;
   expensePct: number;
@@ -216,12 +216,12 @@ export interface WeekComparison {
 
 /**
  * Where the month lands and what it would take to close the gap to the
- * revenue goal, in faturamento (revenue from sales — see isRevenue in
- * packages/finance/analytics).
+ * income goal, in receita (money earned by selling something — see isIncome
+ * in packages/finance/analytics).
  *
  * All of this used to be worked out in the browser from the weekday averages,
  * while the backend told the WhatsApp bot a different projection and priced
- * the daily ask off real revenue rather than off the projection. The page
+ * the daily ask off real income rather than off the projection. The page
  * therefore printed two different "necessário por dia" figures within one
  * screen. It is computed once in Go now; render these fields, don't re-derive
  * them.

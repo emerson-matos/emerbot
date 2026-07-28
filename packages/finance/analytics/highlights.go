@@ -26,7 +26,7 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 			day = &dayTotals{date: date}
 			byDate[date] = day
 		}
-		if isRevenue(e) {
+		if isIncome(e) {
 			day.income += e.Amount
 		} else {
 			day.expense += e.Amount
@@ -44,7 +44,7 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 	return days
 }
 
-// buildHighlights picks the best and worst day of the month by revenue and by
+// buildHighlights picks the best and worst day of the month by income and by
 // balance. With no entries at all every slot is the same "Sem dados"
 // placeholder, so the dashboard renders empty cards instead of a zero-value
 // date.

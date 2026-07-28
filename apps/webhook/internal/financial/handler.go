@@ -60,7 +60,7 @@ func commandTutorial(cmd string) string {
 			"Agenda uma receita *a receber* (fica pendente). A data (dd/mm) é opcional.\n" +
 			"Ex: /receber 800 cliente_x 25/07"
 	case "/meta":
-		return "*/meta <faturamento> <despesa>*\n" +
+		return "*/meta <receita> <despesa>*\n" +
 			"Define as metas do mês (valores sem R$).\n" +
 			"Ex: /meta 80000 60000"
 	case "/recorrente":
@@ -205,9 +205,9 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 	msg += fmt.Sprintf("💵 *Saldo:* R$%s\n", money(summary.Balance))
 
 	goal, err := h.store.GetGoal(ctx, userID, yearMonth)
-	if err == nil && goal.RevenueTarget > 0 {
-		revPct := float64(summary.TotalIncome) / float64(goal.RevenueTarget) * 100
-		msg += fmt.Sprintf("\n🎯 *Meta Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.RevenueTarget), revPct)
+	if err == nil && goal.IncomeTarget > 0 {
+		incomePct := float64(summary.TotalIncome) / float64(goal.IncomeTarget) * 100
+		msg += fmt.Sprintf("\n🎯 *Meta Receita:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.IncomeTarget), incomePct)
 	}
 	if err == nil && goal.ExpenseTarget > 0 {
 		expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
@@ -234,12 +234,12 @@ func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
 		return "Nenhuma meta definida para este mês.", nil
 	}
 
-	revPct := float64(summary.TotalIncome) / float64(goal.RevenueTarget) * 100
+	incomePct := float64(summary.TotalIncome) / float64(goal.IncomeTarget) * 100
 	expPct := float64(summary.TotalExpense) / float64(goal.ExpenseTarget) * 100
 
 	msg := "🎯 *Metas — " + now.Format("01/2006") + "*\n\n"
-	msg += fmt.Sprintf("📈 *Faturamento:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.RevenueTarget), revPct)
-	msg += progressBar(revPct)
+	msg += fmt.Sprintf("📈 *Receita:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalIncome), money(goal.IncomeTarget), incomePct)
+	msg += progressBar(incomePct)
 	msg += fmt.Sprintf("\n📉 *Despesas:* R$%s / R$%s (*%.0f%%*)\n", money(summary.TotalExpense), money(goal.ExpenseTarget), expPct)
 	msg += progressBar(expPct)
 	msg += "\n\nDigite /resumo para ver o resumo completo."
@@ -271,9 +271,9 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 		return commandTutorial("/meta"), nil
 	}
 
-	rev, err := parseAmount(parts[1])
+	income, err := parseAmount(parts[1])
 	if err != nil {
-		return "Valor de faturamento inválido. Use números sem R$.\nEx: /meta 80000 60000", nil
+		return "Valor de receita inválido. Use números sem R$.\nEx: /meta 80000 60000", nil
 	}
 	exp, err := parseAmount(parts[2])
 	if err != nil {
@@ -284,7 +284,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	goal := domain.Goal{
 		UserID:        userID,
 		Month:         domain.MonthOf(now),
-		RevenueTarget: rev,
+		IncomeTarget:  income,
 		ExpenseTarget: exp,
 	}
 	if err := h.store.SaveGoal(ctx, goal); err != nil {
@@ -292,7 +292,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 	}
 
 	msg := "✅ *Meta salva para " + now.Format("01/2006") + "*\n\n"
-	msg += fmt.Sprintf("📈 *Faturamento:* R$%s\n", money(rev))
+	msg += fmt.Sprintf("📈 *Receita:* R$%s\n", money(income))
 	msg += fmt.Sprintf("📉 *Teto Despesas:* R$%s\n", money(exp))
 	msg += "\nDigite /goal para ver o progresso."
 	return msg, nil

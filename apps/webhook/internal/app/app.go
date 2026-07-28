@@ -106,7 +106,7 @@ var commandHelp = []struct{ usage, desc string }{
 	{"/recorrente <pagar|receber> <valor> <categoria> <periodo> <n> [data] [descrição]", "cria uma série de N lançamentos pendentes (ex: aluguel mensal por 12 meses)"},
 	{"/resumo", "resumo financeiro do mês"},
 	{"/goal", "progresso das metas do mês"},
-	{"/meta <faturamento> <despesa>", "define as metas do mês"},
+	{"/meta <receita> <despesa>", "define as metas do mês"},
 	{"/help", "mostra esta ajuda"},
 }
 

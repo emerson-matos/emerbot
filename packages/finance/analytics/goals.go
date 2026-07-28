@@ -7,18 +7,18 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-// goalProgress measures the month against its targets. revenue is passed in
+// goalProgress measures the month against its targets. income is passed in
 // rather than read off the summary's TotalIncome so the caller can share one
-// pass over the entries with everything else in Build that measures revenue —
-// the two must agree, or "Faturamento" and "Receita" tell the user two
-// different numbers for the same month (see isRevenue).
+// pass over the entries with everything else in Build that measures income —
+// the two must agree, or two places on the same screen would tell the user
+// different numbers for the same month (see isIncome).
 //
 // Percentages are capped at 100 so a bar cannot overflow its track; the raw
 // amounts stay uncapped for anyone who wants the overshoot.
-func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, revenue int64) GoalProgress {
+func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, income int64) GoalProgress {
 	daysTotal := daysInMonth(now)
 	progress := GoalProgress{
-		RevenueActual: revenue,
+		IncomeActual:  income,
 		ExpenseActual: summary.TotalExpense,
 		DaysRemaining: daysTotal - now.Day(),
 		DaysTotal:     daysTotal,
@@ -27,10 +27,10 @@ func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time
 		return progress
 	}
 
-	progress.RevenueTarget = goal.RevenueTarget
+	progress.IncomeTarget = goal.IncomeTarget
 	progress.ExpenseTarget = goal.ExpenseTarget
-	if goal.RevenueTarget > 0 {
-		progress.RevenuePct = min(100, roundToInt(float64(revenue)/float64(goal.RevenueTarget)*100))
+	if goal.IncomeTarget > 0 {
+		progress.IncomePct = min(100, roundToInt(float64(income)/float64(goal.IncomeTarget)*100))
 	}
 	if goal.ExpenseTarget > 0 {
 		progress.ExpensePct = min(100, roundToInt(float64(summary.TotalExpense)/float64(goal.ExpenseTarget)*100))
@@ -54,8 +54,8 @@ func buildHistory(months []string, summaries []*pkgfinance.MonthlySummary, goals
 			snapshot.Expense = summaries[i].TotalExpense
 		}
 		if i < len(goals) && goals[i] != nil {
-			revenue, expense := goals[i].RevenueTarget, goals[i].ExpenseTarget
-			snapshot.IncomeTarget = &revenue
+			income, expense := goals[i].IncomeTarget, goals[i].ExpenseTarget
+			snapshot.IncomeTarget = &income
 			snapshot.ExpenseTarget = &expense
 		}
 		out = append(out, snapshot)

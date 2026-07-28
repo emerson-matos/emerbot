@@ -144,11 +144,11 @@ func (e FinancialEntry) Validate() error {
 	return nil
 }
 
-// Goal represents a monthly financial target (faturamento/teto de despesa).
+// Goal represents a monthly financial target (receita/teto de despesa).
 type Goal struct {
 	UserID        string
 	Month         string
-	RevenueTarget int64
+	IncomeTarget  int64
 	ExpenseTarget int64
 }
 

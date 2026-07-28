@@ -6,7 +6,7 @@ import "fmt"
 // its own, on top of whatever the health insights already said.
 const (
 	expenseSpikePct = 15
-	revenueSlumpPct = 10
+	incomeSlumpPct  = 10
 	// cashRunwayDays — a balance going negative this soon needs acting on now,
 	// not at month end.
 	cashRunwayDays = 7
@@ -33,7 +33,7 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		})
 	}
 
-	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > revenueSlumpPct {
+	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > incomeSlumpPct {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",
@@ -90,7 +90,7 @@ func weeklyPaceRecommendation(week WeekComparison, projection Projection) Recomm
 		return Recommendation{
 			Severity: RecSuccess,
 			Title:    "Ritmo subiu e fecha a meta",
-			Message:  "O faturamento desta semana está acima da anterior. Mantenha esse ritmo para sustentar a projeção do mês.",
+			Message:  "A receita desta semana está acima da anterior. Mantenha esse ritmo para sustentar a projeção do mês.",
 		}
 	case improved:
 		return Recommendation{
@@ -105,15 +105,15 @@ func weeklyPaceRecommendation(week WeekComparison, projection Projection) Recomm
 		return Recommendation{
 			Severity: RecWarning,
 			Title:    "Caiu mas a projeção fecha",
-			Message:  "O faturamento desta semana está abaixo da anterior, mas a projeção do mês ainda está dentro da meta. Recupere o ritmo.",
+			Message:  "A receita desta semana está abaixo da anterior, mas a projeção do mês ainda está dentro da meta. Recupere o ritmo.",
 		}
 	case behind:
 		return Recommendation{
 			Severity: RecDanger,
-			Title:    "Faturamento caiu e não bate a meta",
+			Title:    "Receita caiu e não bate a meta",
 			Message: needed(
 				"Precisa de %s/dia nos próximos %s para atingir a meta do mês.",
-				"Faturamento caiu mas já superou a meta do mês.",
+				"Receita caiu mas já superou a meta do mês.",
 			),
 		}
 	case projection.OnTrack:

@@ -6,9 +6,9 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-// weekdayStats averages revenue per day of the week across the analysed
+// weekdayStats averages income per day of the week across the analysed
 // month. The average divides by the number of distinct *dates* that saw
-// revenue, not by the number of entries — three sales on one Tuesday are one
+// income, not by the number of entries — three sales on one Tuesday are one
 // Tuesday, otherwise a busy day would drag the average down.
 func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat {
 	today := int(now.Weekday())
@@ -23,7 +23,7 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 	}
 
 	for _, e := range entries {
-		if !isRevenue(e) {
+		if !isIncome(e) {
 			continue
 		}
 		date := e.TransactionDate.Time()
@@ -51,8 +51,8 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 	return stats
 }
 
-// isRevenue reports whether an entry counts as faturamento (revenue) — money
-// earned by selling something, as opposed to money that merely moved, like an
+// isIncome reports whether an entry counts as receita (income) — money earned
+// by selling something, as opposed to money that merely moved, like an
 // expense payment. It is what the goals, projections, weekday averages,
 // week-over-week pace and day highlights are all measured against.
 //
@@ -60,9 +60,9 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 // outros_receitas) is a sale, so this is simply "is it income". If a
 // non-operational income category is ever added — a loan disbursement, a
 // partner contribution, an investment redemption — it must be excluded here:
-// cash coming in is not the same thing as faturamento, and conflating the two
-// is exactly the "empréstimo não é faturamento" mistake this function exists
-// to prevent.
-func isRevenue(e domain.FinancialEntry) bool {
+// cash coming in is not the same thing as receita, and conflating the two is
+// exactly the "empréstimo não é faturamento" mistake this function exists to
+// prevent.
+func isIncome(e domain.FinancialEntry) bool {
 	return e.Type == domain.EntryTypeIncome
 }

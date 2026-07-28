@@ -36,7 +36,7 @@ interface NotificationsResult {
 
 // Derives the alert feed entirely on the client from data the dashboard already
 // caches — no dedicated backend. Three sources, matching the design mock:
-//   • a payment due today, • overdue pending expenses, • the revenue goal hit.
+//   • a payment due today, • overdue pending expenses, • the income goal hit.
 // Phase 2 (docs/notifications-phase-2.md) adds server-side WhatsApp delivery.
 export function useNotifications(): NotificationsResult {
   const now = new Date()
@@ -93,14 +93,14 @@ export function useNotifications(): NotificationsResult {
   const goal = goalQuery.data?.goal
   const totalIncome = summaryQuery.data?.TotalIncome ?? 0
   if (
-    goal && goal.RevenueTarget > 0 &&
-    totalIncome >= goal.RevenueTarget
+    goal && goal.IncomeTarget > 0 &&
+    totalIncome >= goal.IncomeTarget
   ) {
     notifications.push({
       id: 'goal-reached',
       icon: Trophy,
       tone: 'success',
-      text: 'Meta de faturamento atingida!',
+      text: 'Meta de receita atingida!',
       time: 'Este mês',
       link: '/analise',
     })

@@ -344,7 +344,7 @@ func TestStoresAgreeOnGoalsAndCategories(t *testing.T) {
 		if _, err := s.GetGoal(ctx, "u1", "2026-07"); err == nil {
 			t.Fatal("expected an error for a month with no goal")
 		}
-		goal := domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 5000, ExpenseTarget: 3000}
+		goal := domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 5000, ExpenseTarget: 3000}
 		if err := s.SaveGoal(ctx, goal); err != nil {
 			t.Fatalf("save goal: %v", err)
 		}

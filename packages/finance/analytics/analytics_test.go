@@ -218,11 +218,11 @@ func TestGoalProgress(t *testing.T) {
 
 	t.Run("without a goal", func(t *testing.T) {
 		got := goalProgress(sum, nil, now, 40000)
-		if got.RevenueTarget != 0 || got.RevenuePct != 0 {
+		if got.IncomeTarget != 0 || got.IncomePct != 0 {
 			t.Errorf("targets = %+v, want zeroes with no goal set", got)
 		}
-		if got.RevenueActual != 40000 {
-			t.Errorf("RevenueActual = %d, want the counter-sales total", got.RevenueActual)
+		if got.IncomeActual != 40000 {
+			t.Errorf("IncomeActual = %d, want the income total", got.IncomeActual)
 		}
 		if got.DaysRemaining != 21 || got.DaysTotal != 31 {
 			t.Errorf("days = %d/%d, want 21/31", got.DaysRemaining, got.DaysTotal)
@@ -230,10 +230,10 @@ func TestGoalProgress(t *testing.T) {
 	})
 
 	t.Run("percentages cap at 100", func(t *testing.T) {
-		goal := &domain.Goal{RevenueTarget: 20000, ExpenseTarget: 60000}
+		goal := &domain.Goal{IncomeTarget: 20000, ExpenseTarget: 60000}
 		got := goalProgress(sum, goal, now, 40000)
-		if got.RevenuePct != 100 {
-			t.Errorf("RevenuePct = %d, want it capped at 100", got.RevenuePct)
+		if got.IncomePct != 100 {
+			t.Errorf("IncomePct = %d, want it capped at 100", got.IncomePct)
 		}
 		if got.ExpensePct != 50 {
 			t.Errorf("ExpensePct = %d, want 50", got.ExpensePct)
@@ -245,7 +245,7 @@ func TestBuildHistoryKeepsMonthsAligned(t *testing.T) {
 	months := []string{"2026-05", "2026-06", "2026-07"}
 	// June has no data at all — it must stay in place as a zero bar.
 	summaries := []*pkgfinance.MonthlySummary{summary(1000, 500), nil, summary(3000, 2000)}
-	goals := []*domain.Goal{nil, nil, {RevenueTarget: 5000, ExpenseTarget: 4000}}
+	goals := []*domain.Goal{nil, nil, {IncomeTarget: 5000, ExpenseTarget: 4000}}
 
 	got := buildHistory(months, summaries, goals)
 
@@ -393,7 +393,7 @@ func TestHealthStatusEscalates(t *testing.T) {
 	}
 }
 
-func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
+func TestHealthFlagsIncomeDropAndExpenseGrowth(t *testing.T) {
 	current := pkgfinance.MonthlySummary{TotalIncome: 80000, TotalExpense: 60000, Balance: 20000}
 	// Two closed months, so the comparison is whole-against-whole.
 	compared := comparison{
@@ -408,9 +408,9 @@ func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 		byType[m.Type] = m
 	}
 
-	drop, ok := byType[InsightRevenueDrop]
+	drop, ok := byType[InsightIncomeDrop]
 	if !ok {
-		t.Fatalf("expected a revenue-drop insight, got %+v", health.Messages)
+		t.Fatalf("expected an income-drop insight, got %+v", health.Messages)
 	}
 	if drop.Description != "20% abaixo do mês passado" {
 		t.Errorf("description = %q, want the drop as a positive percentage", drop.Description)
@@ -488,7 +488,7 @@ func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
 		{"up and closing", improved, onTrack, "Ritmo subiu e fecha a meta"},
 		{"up but short", improved, behind, "Ritmo subiu mas ainda falta"},
 		{"down but closing", declined, onTrack, "Caiu mas a projeção fecha"},
-		{"down and short", declined, behind, "Faturamento caiu e não bate a meta"},
+		{"down and short", declined, behind, "Receita caiu e não bate a meta"},
 		{"flat and closing", stable, onTrack, "Ritmo estável e dentro da projeção"},
 		{"flat and short", stable, behind, "Ritmo estável mas não é suficiente"},
 	}
@@ -537,7 +537,7 @@ func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 		{Day: 6, Avg: 100000},
 	}
 	goals := GoalProgress{
-		RevenueTarget: 3600000, RevenueActual: 2777500,
+		IncomeTarget: 3600000, IncomeActual: 2777500,
 		DaysTotal: 31, DaysRemaining: 5,
 	}
 
@@ -566,7 +566,7 @@ func TestProjectionStillJudgesTheLastDayOfTheMonth(t *testing.T) {
 	// 31 July: nothing left to project into, but the month either reached its
 	// target or it did not, and the card has to say which.
 	now := at12(t, "2026-07-31")
-	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}
+	goals := GoalProgress{IncomeTarget: 1000000, IncomeActual: 900000, DaysTotal: 31}
 
 	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now)
 
@@ -589,7 +589,7 @@ func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
 	now := at12(t, "2026-07-26")
 	weekdays := []WeekdayStat{{Day: 1, Avg: 100000}}
 
-	got := buildProjection(weekdays, GoalProgress{RevenueActual: 50000, DaysRemaining: 5}, now)
+	got := buildProjection(weekdays, GoalProgress{IncomeActual: 50000, DaysRemaining: 5}, now)
 
 	if got.Pacing() {
 		t.Error("Pacing = true, want false with no target")
@@ -728,7 +728,7 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 		Summaries: []*pkgfinance.MonthlySummary{
 			summary(100000, 50000), summary(1300000, 400000), summary(450000, 300000),
 		},
-		Goals:          []*domain.Goal{nil, nil, {RevenueTarget: 1000000, ExpenseTarget: 500000}},
+		Goals:          []*domain.Goal{nil, nil, {IncomeTarget: 1000000, ExpenseTarget: 500000}},
 		CashFlowPoints: []pkgfinance.CashFlowPoint{{Date: "2026-07-15", RunningBalance: 150000}},
 		Now:            now,
 	})
@@ -745,8 +745,8 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	if got.KPIs.PreviousMonthIncomeUpToDay != 400000 {
 		t.Errorf("PreviousMonthIncomeUpToDay = %d, want last month truncated at day 15", got.KPIs.PreviousMonthIncomeUpToDay)
 	}
-	if got.Goals.RevenueActual != 450000 {
-		t.Errorf("Goals.RevenueActual = %d, want the counter-sales total", got.Goals.RevenueActual)
+	if got.Goals.IncomeActual != 450000 {
+		t.Errorf("Goals.IncomeActual = %d, want the income total", got.Goals.IncomeActual)
 	}
 	// July is genuinely *ahead* at the same height of the month: 450.000 by
 	// the 15th against June's 400.000 by its 15th. Comparing against June's
@@ -770,7 +770,7 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 // insight, in the recommendation and on the projection card — and the bot
 // reads it back a fourth. They were computed separately and disagreed: the
 // card divided the shortfall left *after* its own projection, everyone else
-// divided the shortfall from real revenue, and the page told the user two
+// divided the shortfall from real income, and the page told the user two
 // different daily targets at once.
 func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	now := at12(t, "2026-07-15")
@@ -783,7 +783,7 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 		Month:     "2026-07",
 		Entries:   entries,
 		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(300000, 0)},
-		Goals:     []*domain.Goal{nil, nil, {RevenueTarget: 2000000}},
+		Goals:     []*domain.Goal{nil, nil, {IncomeTarget: 2000000}},
 		Now:       now,
 	})
 
@@ -1002,8 +1002,8 @@ func TestPartialMonthNoLongerReadsAsACollapse(t *testing.T) {
 		}
 	}
 	for _, m := range got.Health.Messages {
-		if m.Type == InsightRevenueDrop {
-			t.Errorf("still flagging a revenue drop: %+v", m)
+		if m.Type == InsightIncomeDrop {
+			t.Errorf("still flagging an income drop: %+v", m)
 		}
 	}
 }
@@ -1031,12 +1031,12 @@ func TestPartialMonthStillReportsARealDrop(t *testing.T) {
 	}
 	var dropped *Insight
 	for i, m := range got.Health.Messages {
-		if m.Type == InsightRevenueDrop {
+		if m.Type == InsightIncomeDrop {
 			dropped = &got.Health.Messages[i]
 		}
 	}
 	if dropped == nil {
-		t.Fatalf("expected a revenue-drop insight, got %+v", got.Health.Messages)
+		t.Fatalf("expected an income-drop insight, got %+v", got.Health.Messages)
 	}
 	if want := "50% abaixo do mês passado (até o dia 10)"; dropped.Description != want {
 		t.Errorf("description = %q, want %q — the window has to be stated", dropped.Description, want)

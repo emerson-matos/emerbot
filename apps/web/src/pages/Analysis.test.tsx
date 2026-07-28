@@ -60,9 +60,9 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     cashOutDays: [],
     expenseComposition: [],
     goals: {
-      revenueTarget: 3600000,
-      revenueActual: 2777500,
-      revenuePct: 77,
+      incomeTarget: 3600000,
+      incomeActual: 2777500,
+      incomePct: 77,
       expenseTarget: 0,
       expenseActual: 2700000,
       expensePct: 0,
@@ -90,7 +90,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     recommendations: [
       {
         severity: "danger",
-        title: "Faturamento caiu e não bate a meta",
+        title: "Receita caiu e não bate a meta",
         message:
           "Precisa de R$ 1.645,00/dia nos próximos 5 dias para atingir a meta do mês.",
       },
@@ -120,7 +120,7 @@ describe("Analysis page", () => {
 
     // The card used to divide the shortfall left after its own projection
     // (R$459,00 here) while the insight above it quoted the shortfall from
-    // real revenue — two daily targets on one screen.
+    // real income — two daily targets on one screen.
     expect(screen.getByText(/Necessário por dia/)).toBeInTheDocument();
     expect(screen.getByText("R$ 1.645,00")).toBeInTheDocument();
     expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
@@ -141,7 +141,7 @@ describe("Analysis page", () => {
     // It captions the week-comparison card; the recommendation list carries
     // the rest. Rendering both put the same sentence on screen twice.
     expect(
-      screen.getAllByText("Faturamento caiu e não bate a meta"),
+      screen.getAllByText("Receita caiu e não bate a meta"),
     ).toHaveLength(1);
     expect(screen.getByText("Despesas acima do normal")).toBeInTheDocument();
   });
@@ -197,7 +197,7 @@ describe("Analysis page", () => {
     ]) {
       expect(screen.getByText(title)).toBeInTheDocument();
     }
-    expect(screen.getByText(/Defina uma meta de faturamento/)).toBeInTheDocument();
+    expect(screen.getByText(/Defina uma meta de receita/)).toBeInTheDocument();
     expect(screen.getByText(/Nada a ajustar por enquanto/)).toBeInTheDocument();
   });
 
@@ -212,7 +212,7 @@ describe("Analysis page", () => {
     const { container } = renderWith(data);
 
     expect(
-      screen.getByText("Sem faturamento no mês passado para comparar"),
+      screen.getByText("Sem receita no mês passado para comparar"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Sem vendas na semana passada para comparar"),

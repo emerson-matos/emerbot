@@ -75,8 +75,8 @@ func (a Analysis) ToolPayload() map[string]any {
 			"resultado_pct": a.Trends.Resultado.Change,
 		},
 		"semana": map[string]any{
-			"faturamento_atual":           reais(a.WeekComparison.Current),
-			"faturamento_semana_passada":  reais(a.WeekComparison.Previous),
+			"receita_atual":               reais(a.WeekComparison.Current),
+			"receita_semana_passada":      reais(a.WeekComparison.Previous),
 			"mesmo_dia_da_semana_passada": reais(a.WeekComparison.PreviousUpToDay),
 		},
 		// The same projection the dashboard draws. It used to be derived here
@@ -85,12 +85,12 @@ func (a Analysis) ToolPayload() map[string]any {
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
 		"meta": map[string]any{
-			"faturamento_meta":  reais(a.Goals.RevenueTarget),
-			"faturamento_atual": reais(a.Goals.RevenueActual),
-			"faturamento_pct":   a.Goals.RevenuePct,
-			"despesa_teto":      reais(a.Goals.ExpenseTarget),
-			"despesa_atual":     reais(a.Goals.ExpenseActual),
-			"despesa_pct":       a.Goals.ExpensePct,
+			"receita_meta":  reais(a.Goals.IncomeTarget),
+			"receita_atual": reais(a.Goals.IncomeActual),
+			"receita_pct":   a.Goals.IncomePct,
+			"despesa_teto":  reais(a.Goals.ExpenseTarget),
+			"despesa_atual": reais(a.Goals.ExpenseActual),
+			"despesa_pct":   a.Goals.ExpensePct,
 		},
 		"caixa": map[string]any{
 			"saldo_hoje":            reais(a.CashPosition.CurrentBalance),

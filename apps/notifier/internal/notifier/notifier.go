@@ -207,7 +207,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
-	revenue := pkgfinance.RevenueIncome(entries)
+	income := pkgfinance.IncomeTotal(entries)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
@@ -262,7 +262,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, revenue, goal, today)
+		alerts := notifications.Evaluate(prefs, entries, income, goal, today)
 		if len(alerts) == 0 {
 			res.SkippedNoAlerts++
 			log.Info("notifier digest not sent",

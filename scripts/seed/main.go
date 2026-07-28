@@ -165,13 +165,13 @@ func seedMonthGoal(ctx context.Context, store pkgfinance.Store, userID string, b
 	goal := domain.Goal{
 		UserID:        userID,
 		Month:         base.Format("2006-01"),
-		RevenueTarget: 80000000, // R$ 80.000,00
+		IncomeTarget:  80000000, // R$ 80.000,00
 		ExpenseTarget: 60000000, // R$ 60.000,00
 	}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		log.Printf("warn: seed goal: %v", err)
 	} else {
-		log.Printf("goal set for %s: faturamento=R$%.0f teto=R$%.0f", goal.Month, float64(goal.RevenueTarget)/100, float64(goal.ExpenseTarget)/100)
+		log.Printf("goal set for %s: receita=R$%.0f teto=R$%.0f", goal.Month, float64(goal.IncomeTarget)/100, float64(goal.ExpenseTarget)/100)
 	}
 }
 

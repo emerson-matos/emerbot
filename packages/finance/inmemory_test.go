@@ -113,7 +113,7 @@ func TestInMemoryStoreGoalAndCategoryLifecycle(t *testing.T) {
 	store := NewInMemoryStore()
 	ctx := context.Background()
 
-	goal := domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 100000, ExpenseTarget: 40000}
+	goal := domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 100000, ExpenseTarget: 40000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
