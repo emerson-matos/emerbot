@@ -15,7 +15,7 @@ import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
 import type { PaymentGroupData } from '../components/payments/PaymentGroup'
 import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
-import { formatSignedBRL } from '@/lib/format'
+import { formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
 import type { Entry } from '../api/types'
 
@@ -55,6 +55,16 @@ export default function Transactions() {
   const [status, setStatus] = useState<StatusFilter>('all')
   const [category, setCategory] = useState('all')
   const [month, setMonth] = useState('all')
+  const [minAmount, setMinAmount] = useState('')
+  const [maxAmount, setMaxAmount] = useState('')
+
+  // Amounts are compared in centavos, the unit the API stores. An unparseable
+  // field parses to null and simply doesn't constrain the list — the input is
+  // flagged instead, so a typo never looks like "no results".
+  const minCents = parseAmountToCents(minAmount)
+  const maxCents = parseAmountToCents(maxAmount)
+  const minInvalid = minAmount.trim() !== '' && minCents === null
+  const maxInvalid = maxAmount.trim() !== '' && maxCents === null
 
   const pages = useMemo(() => data?.pages ?? [], [data])
   const currentMonthKey = format(new Date(), 'yyyy-MM')
@@ -69,9 +79,11 @@ export default function Transactions() {
     } else if (status !== 'all' && e.PaymentStatus !== status) return false
     if (category !== 'all' && e.Category !== category) return false
     if (month !== 'all' && (effectiveDate(e) ?? '').slice(0, 7) !== month) return false
+    if (minCents !== null && e.Amount < minCents) return false
+    if (maxCents !== null && e.Amount > maxCents) return false
     if (search !== '' && !e.Description.toLowerCase().includes(search.toLowerCase())) return false
     return true
-  }, [type, status, category, month, search, todayISO])
+  }, [type, status, category, month, search, minCents, maxCents, todayISO])
 
   const categoryOptions = useMemo(() => {
     const list = type === 'all' ? allCategories : categoriesByType(allCategories, type)
@@ -84,7 +96,8 @@ export default function Transactions() {
     return [...set].filter(Boolean).sort().reverse()
   }, [allEntries])
 
-  const hasActiveFilters = search !== '' || type !== 'all' || status !== 'all' || category !== 'all' || month !== 'all'
+  const hasActiveFilters = search !== '' || type !== 'all' || status !== 'all' || category !== 'all'
+    || month !== 'all' || minAmount !== '' || maxAmount !== ''
 
   function clearFilters() {
     setSearch('')
@@ -92,6 +105,8 @@ export default function Transactions() {
     setStatus('all')
     setCategory('all')
     setMonth('all')
+    setMinAmount('')
+    setMaxAmount('')
   }
 
   const groups: PaymentGroupData[] = useMemo(() => {
@@ -223,6 +238,27 @@ export default function Transactions() {
               ))}
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-2">
+            <Input
+              value={minAmount}
+              onChange={e => setMinAmount(e.target.value)}
+              inputMode="decimal"
+              aria-label="Valor mínimo"
+              aria-invalid={minInvalid}
+              placeholder="Valor mín."
+              className="w-full sm:w-32"
+            />
+            <span className="shrink-0 text-sm text-muted-foreground">até</span>
+            <Input
+              value={maxAmount}
+              onChange={e => setMaxAmount(e.target.value)}
+              inputMode="decimal"
+              aria-label="Valor máximo"
+              aria-invalid={maxInvalid}
+              placeholder="Valor máx."
+              className="w-full sm:w-32"
+            />
+          </div>
         </CardContent>
       </Card>
 
