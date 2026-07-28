@@ -22,6 +22,9 @@ const (
 	notifPrefsSK   = "NOTIFPREFS"
 	notifLogPrefix = "NOTIFLOG#"
 
+	// insightSKPrefix prefixes one snapshot item per day per user.
+	insightSKPrefix = "INSIGHT#"
+
 	// gsi2IndexName is the GSI (hash: GSI2PK, range: GSI2SK, declared in
 	// infra/modules/api_gateway_lambda/main.tf) that ListEntries queries by
 	// effectiveDate. Only entryItem sets GSI2PK/GSI2SK, so this index never

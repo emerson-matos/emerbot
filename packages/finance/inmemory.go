@@ -19,6 +19,7 @@ type InMemoryStore struct {
 	goals      map[string]domain.Goal              // key: userID+month
 	notifPrefs map[string]domain.NotificationPrefs // key: userID
 	notifLog   map[string]struct{}                 // key: userID+"#"+key
+	insights   map[string]InsightSnapshot          // key: userID+"#"+date
 }
 
 func NewInMemoryStore() *InMemoryStore {
@@ -28,6 +29,7 @@ func NewInMemoryStore() *InMemoryStore {
 		goals:      make(map[string]domain.Goal),
 		notifPrefs: make(map[string]domain.NotificationPrefs),
 		notifLog:   make(map[string]struct{}),
+		insights:   make(map[string]InsightSnapshot),
 	}
 }
 
@@ -35,6 +37,7 @@ func entryKey(userID, entryID string) string { return userID + "#" + entryID }
 func catKey(userID, slug string) string      { return userID + "#" + slug }
 func goalKey(userID, month string) string    { return userID + "#" + month }
 func notifLogKey(userID, key string) string  { return userID + "#" + key }
+func insightKey(userID, date string) string  { return userID + "#" + date }
 
 // --- Entries ---
 
@@ -256,4 +259,26 @@ func (s *InMemoryStore) RecordNotificationSent(_ context.Context, userID, key st
 	defer s.mu.Unlock()
 	s.notifLog[notifLogKey(userID, key)] = struct{}{}
 	return nil
+}
+
+// --- Insight snapshots ---
+
+func (s *InMemoryStore) SaveInsightSnapshot(_ context.Context, userID, date string, snapshot []byte, computedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.insights[insightKey(userID, date)] = InsightSnapshot{
+		Snapshot:   snapshot,
+		ComputedAt: computedAt,
+	}
+	return nil
+}
+
+func (s *InMemoryStore) GetInsightSnapshot(_ context.Context, userID, date string) (InsightSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snap, ok := s.insights[insightKey(userID, date)]
+	if !ok {
+		return InsightSnapshot{}, fmt.Errorf("insight snapshot not found for %s/%s", userID, date)
+	}
+	return snap, nil
 }

@@ -389,7 +389,7 @@ locals {
   dashboard_protected_routes = toset([
     "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
-    "GET /analysis/monthly",
+    "GET /analysis/monthly", "GET /analysis", "POST /analysis",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     "GET /notifications/preferences", "PUT /notifications/preferences",
     "GET /payments/sales", "GET /payments/receivables", "GET /payments/forecast",

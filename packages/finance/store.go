@@ -76,6 +76,14 @@ type CashFlowPoint struct {
 	RunningBalance   int64  // cumulative balance up to and including this date
 }
 
+// InsightSnapshot is a cached daily analysis persisted by the notifier as a
+// subproduct of its daily digest run. The dashboard-api reads it instead of
+// recomputing on every request.
+type InsightSnapshot struct {
+	Snapshot   []byte    // JSON-serialized analytics.Analysis
+	ComputedAt time.Time // when the analysis was computed
+}
+
 // Store defines all persistence operations for financial data.
 type Store interface {
 	// Entries
@@ -119,4 +127,9 @@ type Store interface {
 	// alert to the same user twice. key is caller-defined (e.g. "2026-07-20").
 	NotificationSent(ctx context.Context, userID, key string) (bool, error)
 	RecordNotificationSent(ctx context.Context, userID, key string, sentAt time.Time) error
+
+	// Insight snapshots — daily cache of the analysis, persisted by the
+	// notifier as a subproduct of its digest run. date is "YYYY-MM-DD".
+	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error
+	GetInsightSnapshot(ctx context.Context, userID, date string) (InsightSnapshot, error)
 }
