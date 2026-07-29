@@ -34,13 +34,13 @@ func TestClampLimit(t *testing.T) {
 	// Tool args come from LLM output, so an absent, negative or absurd limit
 	// must land on a sane bound rather than reaching the store as-is.
 	cases := map[int]int{
-		0:    20,  // unset
-		-5:   20,  // nonsense
-		1:    1,   //
-		50:   50,  //
-		100:  100, // exactly the cap
-		101:  100, // over the cap
-		9999: 100,
+		0:    defaultEntryLimit, // unset
+		-5:   defaultEntryLimit, // nonsense
+		1:    1,                 //
+		50:   50,                //
+		200:  maxEntryLimit,     // exactly the cap
+		201:  maxEntryLimit,     // over the cap
+		9999: maxEntryLimit,
 	}
 	for in, want := range cases {
 		if got := clampLimit(in); got != want {

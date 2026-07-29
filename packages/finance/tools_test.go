@@ -3,6 +3,7 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -36,6 +37,22 @@ func callTool(t *testing.T, h ToolFunc, userID string, args map[string]any) any 
 		t.Fatalf("tool returned error: %v", err)
 	}
 	return out
+}
+
+// entriesOf unwraps the listing envelope the list/search tools return. The
+// envelope carries the totals and the truncation flag alongside the rows; a
+// test that only cares about the rows reaches through it here.
+func entriesOf(t *testing.T, out any) []map[string]any {
+	t.Helper()
+	env, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected listing envelope, got %T", out)
+	}
+	rows, ok := env["entries"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected entries slice, got %T", env["entries"])
+	}
+	return rows
 }
 
 func TestCreateEntryToolPersistsExpense(t *testing.T) {
@@ -240,10 +257,7 @@ func TestSearchEntriesToolFiltersByDescription(t *testing.T) {
 	// Case-insensitive substring match on the in-memory store.
 	out := callTool(t, h, "u1", map[string]any{"query": "aluguel"})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected slice result, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 match, got %d: %+v", len(results), results)
 	}
@@ -276,10 +290,7 @@ func TestListDueEntriesToolDefaultsToPending(t *testing.T) {
 	h := handlerFor(t, store, "list_due_entries")
 	out := callTool(t, h, "u1", map[string]any{})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected slice result, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) != 1 || results[0]["status"] != string(domain.PaymentStatusPending) {
 		t.Fatalf("expected only the pending entry, got %+v", results)
 	}
@@ -491,7 +502,7 @@ func TestDefinirMetaPersisteFaturamentoTarget(t *testing.T) {
 	h := handlerFor(t, store, "definir_meta")
 
 	out := callTool(t, h, "u1", map[string]any{
-		"month":        "2026-08",
+		"month":            "2026-08",
 		"meta_faturamento": 50000.0,
 	})
 
@@ -722,9 +733,9 @@ func TestDefinirMetaAmbosTargets(t *testing.T) {
 	h := handlerFor(t, store, "definir_meta")
 
 	out := callTool(t, h, "u1", map[string]any{
-		"month":         "2026-10",
-		"meta_faturamento":  80000.0,
-		"teto_despesas": 60000.0,
+		"month":            "2026-10",
+		"meta_faturamento": 80000.0,
+		"teto_despesas":    60000.0,
 	})
 
 	m := out.(map[string]any)
@@ -743,9 +754,9 @@ func TestDefinirMetaRejeitaValorZerado(t *testing.T) {
 	h := handlerFor(t, store, "definir_meta")
 
 	raw, _ := json.Marshal(map[string]any{
-		"month":         "2026-08",
-		"meta_faturamento":  0.0,
-		"teto_despesas": 0.0,
+		"month":            "2026-08",
+		"meta_faturamento": 0.0,
+		"teto_despesas":    0.0,
 	})
 	if _, err := h(context.Background(), "u1", raw); err == nil {
 		t.Fatal("expected error when both targets are zero")
@@ -789,10 +800,7 @@ func TestSearchEntriesByDescription(t *testing.T) {
 	h := handlerFor(t, store, "search_entries")
 	out := callTool(t, h, "ledger", map[string]any{"query": "aluguel"})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) == 0 {
 		t.Fatal("search_entries returned 0 results for query 'aluguel'")
 	}
@@ -805,10 +813,7 @@ func TestSearchEntriesByDescription(t *testing.T) {
 
 	// Without query returns all entries.
 	outAll := callTool(t, h, "ledger", map[string]any{})
-	all, ok := outAll.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", outAll)
-	}
+	all := entriesOf(t, outAll)
 	if len(all) != 2 {
 		t.Fatalf("expected 2 entries with no query filter, got %d", len(all))
 	}
@@ -837,10 +842,7 @@ func TestSearchEntriesByDescriptionCaseInsensitive(t *testing.T) {
 	h := handlerFor(t, store, "search_entries")
 	out := callTool(t, h, "ledger", map[string]any{"query": "ALUGUEL"})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) == 0 {
 		t.Fatal("search_entries returned 0 results for query 'ALUGUEL' (upper)")
 	}
@@ -883,10 +885,7 @@ func TestSearchEntriesByCategory(t *testing.T) {
 	h := handlerFor(t, store, "search_entries")
 	out := callTool(t, h, "ledger", map[string]any{"category": "aluguel"})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result for category 'aluguel', got %d", len(results))
 	}
@@ -937,14 +936,271 @@ func TestSearchEntriesByPeriod(t *testing.T) {
 		"to":   to.Format("2006-01-02"),
 	})
 
-	results, ok := out.([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", out)
-	}
+	results := entriesOf(t, out)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result for last month, got %d", len(results))
 	}
 	if results[0]["description"] != "Aluguel mês passado" {
 		t.Fatalf("expected 'Aluguel mês passado', got %v", results[0]["description"])
+	}
+}
+
+// seedPendingBills stores one pending bill per day of August 2026, alternating
+// categories, so a listing over the whole month exceeds the default page.
+func seedPendingBills(t *testing.T, store Store, userID string, days int) (total int64) {
+	t.Helper()
+	for day := 1; day <= days; day++ {
+		due := domain.NewCalendarDate(time.Date(2026, 8, day, 0, 0, 0, 0, time.UTC))
+		amount := int64(10_000 + day)
+		category := "fornecedor_medicamentos"
+		if day%3 == 0 {
+			category = "emprestimo"
+		}
+		if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
+			UserID: userID, EntryID: domain.EntryID(fmt.Sprintf("b%02d", day)),
+			TransactionDate: due, Amount: amount, Category: category,
+			Type: domain.EntryTypeExpense, Description: fmt.Sprintf("Boleto %d", day),
+			DueDate: &due, PaymentStatus: domain.PaymentStatusPending,
+			Source: domain.SourceManual,
+		}); err != nil {
+			t.Fatalf("seed day %d: %v", day, err)
+		}
+		total += amount
+	}
+	return total
+}
+
+// The regression this whole envelope exists for: asked for a full month of
+// contas a pagar, the tool used to return the most recent 20 and nothing else,
+// so the model summed a third of August and reported it as the month's total.
+//
+// A named period is its own bound — the whole month comes back, and an
+// explicit limit does not get to cut it.
+func TestListDueEntriesReturnsThePeriodWholeIgnoringLimit(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 60) // spills past August, so the window really filters
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{
+		"from":  "2026-08-01",
+		"to":    "2026-08-31",
+		"limit": 10, // would have cut the month to 10 rows
+	})
+
+	env, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected listing envelope, got %T", out)
+	}
+	// August has 31 days, so exactly the first 31 seeded bills fall in the window.
+	if got := len(entriesOf(t, out)); got != 31 {
+		t.Fatalf("expected the whole month (31 rows), got %d — limit must not cut a period", got)
+	}
+	if env["truncated"] != false {
+		t.Fatal("nothing was omitted, truncated must be false")
+	}
+	var inAugust int64
+	for day := 1; day <= 31; day++ {
+		inAugust += int64(10_000 + day)
+	}
+	if got := env["total_expense"]; got != centavosToReais(inAugust) {
+		t.Fatalf("total_expense = %v, want %v — the total must cover the period",
+			got, centavosToReais(inAugust))
+	}
+	if env["total_matching"] != 31 {
+		t.Fatalf("total_matching = %v, want 31", env["total_matching"])
+	}
+}
+
+// The backstop is not a page size: it only fires past maxRangeEntries, and
+// when it does it announces itself instead of dropping rows quietly.
+func TestListDueEntriesBackstopAnnouncesItself(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	var total int64
+	// One day, many bills: comfortably past the backstop inside a single month.
+	due := domain.NewCalendarDate(time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC))
+	for i := range maxRangeEntries + 7 {
+		amount := int64(100 + i)
+		total += amount
+		if err := store.SaveEntry(ctx, domain.FinancialEntry{
+			UserID: "u1", EntryID: domain.EntryID(fmt.Sprintf("b%04d", i)),
+			TransactionDate: due, Amount: amount, Category: "fornecedor_medicamentos",
+			Type: domain.EntryTypeExpense, Description: "Boleto",
+			DueDate: &due, PaymentStatus: domain.PaymentStatusPending,
+			Source: domain.SourceManual,
+		}); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2026-08-01", "to": "2026-08-31"})
+	env := out.(map[string]any)
+
+	if got := len(entriesOf(t, out)); got != maxRangeEntries {
+		t.Fatalf("expected %d rows at the backstop, got %d", maxRangeEntries, got)
+	}
+	if env["truncated"] != true {
+		t.Fatal("the backstop must declare the cut, never swallow it")
+	}
+	if env["omitted"] != 7 {
+		t.Fatalf("omitted = %v, want 7", env["omitted"])
+	}
+	if _, ok := env["warning"]; !ok {
+		t.Fatal("a truncated result must carry a warning the model can relay")
+	}
+	// Even at the backstop the total still covers everything.
+	if env["total_expense"] != centavosToReais(total) {
+		t.Fatalf("total_expense = %v, want %v", env["total_expense"], centavosToReais(total))
+	}
+}
+
+func TestListDueEntriesGroupsByCategory(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2026-08-01", "to": "2026-08-31"})
+	env := out.(map[string]any)
+
+	cats, ok := env["by_category"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected by_category slice, got %T", env["by_category"])
+	}
+	if len(cats) != 2 {
+		t.Fatalf("expected 2 categories, got %d: %+v", len(cats), cats)
+	}
+	// Largest first, and labelled — the model should not have to translate slugs.
+	if cats[0]["category"] != "fornecedor_medicamentos" {
+		t.Fatalf("expected the largest category first, got %+v", cats[0])
+	}
+	if cats[0]["label"] != "Fornecedor de Medicamentos" {
+		t.Fatalf("expected a human label, got %v", cats[0]["label"])
+	}
+
+	// The per-category totals must add back up to the period total.
+	var sum float64
+	for _, c := range cats {
+		sum += c["total"].(float64)
+	}
+	if sum != env["total_expense"] {
+		t.Fatalf("by_category sums to %v but total_expense is %v", sum, env["total_expense"])
+	}
+}
+
+// A whole month has to come back with no limit argument at all — the default
+// path is what the bot actually exercises.
+func TestListDueEntriesFullMonthWithNoLimitArgument(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2026-08-01", "to": "2026-08-31"})
+	env := out.(map[string]any)
+
+	if got := len(entriesOf(t, out)); got != 31 {
+		t.Fatalf("expected all 31 bills in the detail list, got %d", got)
+	}
+	if env["truncated"] != false {
+		t.Fatal("nothing was omitted, truncated must be false")
+	}
+	if _, ok := env["warning"]; ok {
+		t.Fatal("no warning belongs on a complete result")
+	}
+}
+
+// The first day of the range must survive: the old code ordered most-recent
+// first and cut the tail, which is exactly how 01/08–20/08 disappeared.
+func TestListDueEntriesKeepsTheStartOfThePeriod(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2026-08-01", "to": "2026-08-31"})
+
+	seen := make(map[string]bool)
+	for _, r := range entriesOf(t, out) {
+		seen[r["due_date"].(string)] = true
+	}
+	for _, day := range []string{"2026-08-01", "2026-08-15", "2026-08-31"} {
+		if !seen[day] {
+			t.Fatalf("entry due %s missing from the listing", day)
+		}
+	}
+}
+
+// Without a period there is nothing honest to sum over, so the tool must say
+// so rather than hand back a total computed from one page.
+func TestListingWithoutPeriodReportsNoTotals(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"limit": 5})
+	env := out.(map[string]any)
+
+	if env["totals_available"] != false {
+		t.Fatal("an unbounded listing must not claim totals")
+	}
+	if _, ok := env["total_expense"]; ok {
+		t.Fatal("a partial total is worse than no total — it must be absent")
+	}
+	if env["truncated"] != true {
+		t.Fatal("truncated must be true when more entries exist")
+	}
+}
+
+// An absurd window (a hallucinated century) falls back to the paged path
+// instead of reading the whole ledger to total it.
+func TestListingRefusesToAggregateAnAbsurdSpan(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2000-01-01", "to": "2100-12-31"})
+	env := out.(map[string]any)
+
+	if env["totals_available"] != false {
+		t.Fatal("a 100-year span must not be aggregated")
+	}
+}
+
+func TestSearchEntriesCarriesTotalsForAPeriod(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	seedPendingBills(t, store, "u1", 31)
+
+	h := handlerFor(t, store, "search_entries")
+	out := callTool(t, h, "u1", map[string]any{
+		"from":     "2026-08-01",
+		"to":       "2026-08-31",
+		"category": "emprestimo",
+	})
+	env := out.(map[string]any)
+
+	if env["totals_available"] != true {
+		t.Fatal("search over a period must carry totals too")
+	}
+	var want int64
+	for day := 3; day <= 31; day += 3 {
+		want += int64(10_000 + day)
+	}
+	if env["total_expense"] != centavosToReais(want) {
+		t.Fatalf("total_expense = %v, want %v", env["total_expense"], centavosToReais(want))
 	}
 }

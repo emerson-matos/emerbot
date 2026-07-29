@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -449,6 +450,52 @@ func TestStoresAgreeOnInsightSnapshot(t *testing.T) {
 		}
 		if string(got.Snapshot) != string(newSnap) {
 			t.Errorf("snapshot after overwrite = %s, want %s", got.Snapshot, newSnap)
+		}
+	})
+}
+
+// The listing tools total a period by reading it whole; the two stores reach
+// that period differently (a GSI2SK BETWEEN condition vs. an in-memory scan),
+// so the month's total is exactly the kind of answer that could drift between
+// them. It is the answer the bot puts in front of the user, so it is pinned
+// against both.
+func TestStoresAgreeOnListDueEntriesTotals(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		var want int64
+		for d := 1; d <= 31; d++ {
+			amount := int64(10_000 + d)
+			want += amount
+			// Registered in July, due in August: the bills the pharmacy is
+			// asking about are pending ones, keyed by DueDate.
+			e := entry(t, fmt.Sprintf("ago-%02d", d), "2026-07-20", amount,
+				withDue(t, fmt.Sprintf("2026-08-%02d", d)))
+			if err := s.SaveEntry(ctx, e); err != nil {
+				t.Fatalf("seed day %d: %v", d, err)
+			}
+		}
+
+		h := handlerFor(t, s, "list_due_entries")
+		out := callTool(t, h, "u1", map[string]any{
+			"from":  "2026-08-01",
+			"to":    "2026-08-31",
+			"limit": 5, // a period is its own bound; this must not cut it
+		})
+		env, ok := out.(map[string]any)
+		if !ok {
+			t.Fatalf("expected listing envelope, got %T", out)
+		}
+		if got := len(entriesOf(t, out)); got != 31 {
+			t.Fatalf("expected the whole month from both stores, got %d rows", got)
+		}
+		if env["truncated"] != false {
+			t.Fatal("a period that fits must not report a cut")
+		}
+		if env["total_matching"] != 31 {
+			t.Fatalf("total_matching = %v, want 31", env["total_matching"])
+		}
+		if env["total_expense"] != centavosToReais(want) {
+			t.Fatalf("total_expense = %v, want %v", env["total_expense"], centavosToReais(want))
 		}
 	})
 }

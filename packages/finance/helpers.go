@@ -1,6 +1,7 @@
 package finance
 
 import (
+	"sort"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -141,14 +142,67 @@ func FaturamentoTotal(entries []domain.FinancialEntry) int64 {
 	return total
 }
 
+// defaultEntryLimit / maxEntryLimit bound how many rows a listing tool hands
+// back to the model. The default used to be 20, which silently cut a normal
+// month of contas a pagar in half — see listing() for why the cut is now
+// visible, and why these are sized to fit a whole month of a small pharmacy's
+// bills rather than a screenful.
+const (
+	defaultEntryLimit = 50
+	maxEntryLimit     = 200
+)
+
 func clampLimit(n int) int {
 	if n <= 0 {
-		return 20
+		return defaultEntryLimit
 	}
-	if n > 100 {
-		return 100
+	if n > maxEntryLimit {
+		return maxEntryLimit
 	}
 	return n
+}
+
+// categoryLabels maps category slug → human label, so a tool result can name
+// "fornecedor_medicamentos" as "Fornecedor de Medicamentos" instead of leaving
+// the model to invent a translation.
+func categoryLabels() map[string]string {
+	cats := domain.DefaultCategories("")
+	labels := make(map[string]string, len(cats))
+	for _, c := range cats {
+		labels[c.Slug] = c.Label
+	}
+	return labels
+}
+
+// foldByCategory totals entries per category, largest total first. It is the
+// one definition of "agrupado por categoria", shared by CategorySummary and by
+// the listing tools' by_category block.
+func foldByCategory(entries []domain.FinancialEntry) []CategorySummary {
+	labels := categoryLabels()
+	totals := make(map[string]*CategorySummary)
+	for _, e := range entries {
+		if _, ok := totals[e.Category]; !ok {
+			totals[e.Category] = &CategorySummary{
+				Category: e.Category,
+				Label:    labels[e.Category],
+				Type:     e.Type,
+			}
+		}
+		totals[e.Category].Total += e.Amount
+		totals[e.Category].Count++
+	}
+
+	result := make([]CategorySummary, 0, len(totals))
+	for _, v := range totals {
+		result = append(result, *v)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Total != result[j].Total {
+			return result[i].Total > result[j].Total
+		}
+		return result[i].Category < result[j].Category
+	})
+	return result
 }
 
 // reaisToCentavos converts a reais amount to integer centavos, rounding to the
