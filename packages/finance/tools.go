@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -422,21 +423,149 @@ func definirMetaTool(store Store) Tool {
 	}
 }
 
+// --- listing envelope, shared by list_due_entries and search_entries ---
+
+// maxAggregateSpanDays bounds the window a listing tool will read in full to
+// compute exact totals. A month, a quarter, even a year is fine — this exists
+// only so a hallucinated "from 2000-01-01 to 2100-12-31" cannot turn one
+// question into a full-partition read.
+const maxAggregateSpanDays = 366
+
+// listing runs filter and packages the outcome so a truncated page can never
+// be mistaken for the whole period.
+//
+// The bug this exists to prevent: the tools used to return a bare array capped
+// at 20 rows, ordered most-recent-first. Asked "quanto temos que pagar de
+// 01/08 a 31/08", the model got the last 20 bills of August, no indication
+// that anything was missing, and dutifully added them up — reporting a total
+// that silently omitted the first third of the month. A wrong total that looks
+// right is worse than an error, so:
+//
+//   - when the period is bounded, the totals are computed over *every* matching
+//     entry, not over the returned page, so the sum is right even if the
+//     detail list is trimmed;
+//   - the model never has to add anything up itself — total_expense,
+//     total_income and by_category come pre-computed;
+//   - when rows are omitted, truncated/omitted/warning say so out loud, and
+//     the prompt requires the model to relay that.
+//
+// An unbounded query cannot be totalled honestly (there is no period to sum
+// over without reading the whole ledger), so it returns rows only, and reports
+// totals_available=false rather than a partial sum.
+func listing(ctx context.Context, store EntryLister, userID string, filter EntryFilter, toolName string) (map[string]any, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultEntryLimit
+	}
+	bounded := filter.From != nil && filter.To != nil &&
+		filter.To.Sub(*filter.From) <= maxAggregateSpanDays*24*time.Hour
+
+	query := filter
+	if bounded {
+		// Read the whole window: the totals have to cover it, and a bounded
+		// window is a bounded read.
+		query.Limit = 0
+	} else {
+		// One past the limit, purely to detect that more exist.
+		query.Limit = limit + 1
+	}
+
+	matched, err := store.ListEntries(ctx, userID, query)
+	if err != nil {
+		return nil, fmt.Errorf("list entries: %w", err)
+	}
+
+	shown := matched
+	truncated := len(matched) > limit
+	if truncated {
+		shown = matched[:limit]
+	}
+
+	result := map[string]any{
+		"entries":   entriesToMaps(shown),
+		"count":     len(shown),
+		"truncated": truncated,
+	}
+	if filter.From != nil && filter.To != nil {
+		result["period"] = map[string]any{
+			"from": filter.From.Format("2006-01-02"),
+			"to":   filter.To.Format("2006-01-02"),
+		}
+	}
+
+	if bounded {
+		var income, expense int64
+		for _, e := range matched {
+			if e.Type == domain.EntryTypeIncome {
+				income += e.Amount
+			} else {
+				expense += e.Amount
+			}
+		}
+		byCategory := foldByCategory(matched)
+		cats := make([]map[string]any, 0, len(byCategory))
+		for _, c := range byCategory {
+			cats = append(cats, map[string]any{
+				"category": c.Category,
+				"label":    c.Label,
+				"type":     string(c.Type),
+				"total":    centavosToReais(c.Total),
+				"count":    c.Count,
+			})
+		}
+		result["totals_available"] = true
+		result["total_matching"] = len(matched)
+		result["total_expense"] = centavosToReais(expense)
+		result["total_income"] = centavosToReais(income)
+		result["by_category"] = cats
+	} else {
+		result["totals_available"] = false
+		result["note"] = "Sem período (from e to), não há como somar: informe as datas " +
+			"para receber total_expense, total_income e by_category já calculados."
+	}
+
+	if truncated {
+		omitted := len(matched) - len(shown)
+		result["omitted"] = omitted
+		if bounded {
+			result["warning"] = fmt.Sprintf(
+				"Lista incompleta: %d de %d lançamentos aparecem em 'entries' (%d omitidos). "+
+					"Os totais acima cobrem TODOS os %d — use-os. Avise o usuário que o "+
+					"detalhamento está parcial.",
+				len(shown), len(matched), omitted, len(matched))
+		} else {
+			result["warning"] = "Lista incompleta e sem totais: informe from e to, ou aumente limit."
+		}
+		// Surfaces in CloudWatch, so a "the bot's total looks wrong" report can
+		// be checked against the logs instead of guessed at.
+		log.Printf("finance tool %s: truncated result for user %s: showing %d of %d entries (bounded=%t)",
+			toolName, userID, len(shown), len(matched), bounded)
+	}
+
+	return result, nil
+}
+
 // --- list_due_entries ---
 
 func listDueEntriesTool(store Store) Tool {
 	const name = "list_due_entries"
 
 	return Tool{
-		Name:        name,
-		Description: "Lista contas a pagar ou receber em um período de datas.",
+		Name: name,
+		Description: "Lista contas a pagar ou receber em um período de datas. " +
+			"Informando from e to, retorna também os totais já somados do período " +
+			"(total_expense, total_income) e o agrupamento por categoria " +
+			"(by_category) — use esses números, não some os lançamentos à mão.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
 				"from":   {Type: genai.TypeString, Description: "Data inicial YYYY-MM-DD"},
 				"to":     {Type: genai.TypeString, Description: "Data final YYYY-MM-DD"},
 				"status": {Type: genai.TypeString, Enum: []string{"pending", "paid"}},
-				"limit":  {Type: genai.TypeInteger, Description: "Máximo de resultados (padrão: 20)"},
+				"limit": {Type: genai.TypeInteger, Description: fmt.Sprintf(
+					"Máximo de lançamentos detalhados (padrão: %d, máximo: %d). "+
+						"Os totais do período não dependem deste limite.",
+					defaultEntryLimit, maxEntryLimit)},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
@@ -466,11 +595,7 @@ func listDueEntriesTool(store Store) Tool {
 				filter.Status = domain.PaymentStatusPending
 			}
 
-			entries, err := store.ListEntries(ctx, userID, filter)
-			if err != nil {
-				return nil, fmt.Errorf("list entries: %w", err)
-			}
-			return entriesToMaps(entries), nil
+			return listing(ctx, store, userID, filter, name)
 		},
 	}
 }
@@ -481,8 +606,11 @@ func searchEntriesTool(store Store) Tool {
 	const name = "search_entries"
 
 	return Tool{
-		Name:        name,
-		Description: "Busca lançamentos por descrição, categoria ou período.",
+		Name: name,
+		Description: "Busca lançamentos por descrição, categoria ou período. " +
+			"Informando from e to, retorna também os totais já somados do período " +
+			"(total_expense, total_income) e o agrupamento por categoria " +
+			"(by_category) — use esses números, não some os lançamentos à mão.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -490,7 +618,10 @@ func searchEntriesTool(store Store) Tool {
 				"category": {Type: genai.TypeString, Description: "Filtrar por categoria"},
 				"from":     {Type: genai.TypeString, Description: "Data inicial YYYY-MM-DD"},
 				"to":       {Type: genai.TypeString, Description: "Data final YYYY-MM-DD"},
-				"limit":    {Type: genai.TypeInteger, Description: "Máximo de resultados (padrão: 20)"},
+				"limit": {Type: genai.TypeInteger, Description: fmt.Sprintf(
+					"Máximo de lançamentos detalhados (padrão: %d, máximo: %d). "+
+						"Os totais do período não dependem deste limite.",
+					defaultEntryLimit, maxEntryLimit)},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
@@ -517,11 +648,7 @@ func searchEntriesTool(store Store) Tool {
 				filter.To = &d
 			}
 
-			entries, err := store.ListEntries(ctx, userID, filter)
-			if err != nil {
-				return nil, fmt.Errorf("search entries: %w", err)
-			}
-			return entriesToMaps(entries), nil
+			return listing(ctx, store, userID, filter, name)
 		},
 	}
 }
