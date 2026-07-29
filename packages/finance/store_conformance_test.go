@@ -479,20 +479,23 @@ func TestStoresAgreeOnListDueEntriesTotals(t *testing.T) {
 		out := callTool(t, h, "u1", map[string]any{
 			"from":  "2026-08-01",
 			"to":    "2026-08-31",
-			"limit": 5,
+			"limit": 5, // a period is its own bound; this must not cut it
 		})
 		env, ok := out.(map[string]any)
 		if !ok {
 			t.Fatalf("expected listing envelope, got %T", out)
+		}
+		if got := len(entriesOf(t, out)); got != 31 {
+			t.Fatalf("expected the whole month from both stores, got %d rows", got)
+		}
+		if env["truncated"] != false {
+			t.Fatal("a period that fits must not report a cut")
 		}
 		if env["total_matching"] != 31 {
 			t.Fatalf("total_matching = %v, want 31", env["total_matching"])
 		}
 		if env["total_expense"] != centavosToReais(want) {
 			t.Fatalf("total_expense = %v, want %v", env["total_expense"], centavosToReais(want))
-		}
-		if env["truncated"] != true {
-			t.Fatal("5 of 31 rows is truncated and must say so")
 		}
 	})
 }

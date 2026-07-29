@@ -973,7 +973,10 @@ func seedPendingBills(t *testing.T, store Store, userID string, days int) (total
 // The regression this whole envelope exists for: asked for a full month of
 // contas a pagar, the tool used to return the most recent 20 and nothing else,
 // so the model summed a third of August and reported it as the month's total.
-func TestListDueEntriesTotalsCoverWholePeriodNotJustThePage(t *testing.T) {
+//
+// A named period is its own bound — the whole month comes back, and an
+// explicit limit does not get to cut it.
+func TestListDueEntriesReturnsThePeriodWholeIgnoringLimit(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
@@ -983,36 +986,76 @@ func TestListDueEntriesTotalsCoverWholePeriodNotJustThePage(t *testing.T) {
 	out := callTool(t, h, "u1", map[string]any{
 		"from":  "2026-08-01",
 		"to":    "2026-08-31",
-		"limit": 10, // force truncation of the detail list
+		"limit": 10, // would have cut the month to 10 rows
 	})
 
 	env, ok := out.(map[string]any)
 	if !ok {
 		t.Fatalf("expected listing envelope, got %T", out)
 	}
-	if got := len(entriesOf(t, out)); got != 10 {
-		t.Fatalf("expected 10 detail rows, got %d", got)
+	// August has 31 days, so exactly the first 31 seeded bills fall in the window.
+	if got := len(entriesOf(t, out)); got != 31 {
+		t.Fatalf("expected the whole month (31 rows), got %d — limit must not cut a period", got)
 	}
-	// August has 31 days, so only the first 31 seeded bills fall in the window.
+	if env["truncated"] != false {
+		t.Fatal("nothing was omitted, truncated must be false")
+	}
 	var inAugust int64
 	for day := 1; day <= 31; day++ {
 		inAugust += int64(10_000 + day)
 	}
 	if got := env["total_expense"]; got != centavosToReais(inAugust) {
-		t.Fatalf("total_expense = %v, want %v — the total must cover the period, not the page",
+		t.Fatalf("total_expense = %v, want %v — the total must cover the period",
 			got, centavosToReais(inAugust))
 	}
 	if env["total_matching"] != 31 {
 		t.Fatalf("total_matching = %v, want 31", env["total_matching"])
 	}
-	if env["truncated"] != true {
-		t.Fatal("truncated must be true when rows are omitted — a silent cut is the bug")
+}
+
+// The backstop is not a page size: it only fires past maxRangeEntries, and
+// when it does it announces itself instead of dropping rows quietly.
+func TestListDueEntriesBackstopAnnouncesItself(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	var total int64
+	// One day, many bills: comfortably past the backstop inside a single month.
+	due := domain.NewCalendarDate(time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC))
+	for i := range maxRangeEntries + 7 {
+		amount := int64(100 + i)
+		total += amount
+		if err := store.SaveEntry(ctx, domain.FinancialEntry{
+			UserID: "u1", EntryID: domain.EntryID(fmt.Sprintf("b%04d", i)),
+			TransactionDate: due, Amount: amount, Category: "fornecedor_medicamentos",
+			Type: domain.EntryTypeExpense, Description: "Boleto",
+			DueDate: &due, PaymentStatus: domain.PaymentStatusPending,
+			Source: domain.SourceManual,
+		}); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
 	}
-	if env["omitted"] != 21 {
-		t.Fatalf("omitted = %v, want 21", env["omitted"])
+
+	h := handlerFor(t, store, "list_due_entries")
+	out := callTool(t, h, "u1", map[string]any{"from": "2026-08-01", "to": "2026-08-31"})
+	env := out.(map[string]any)
+
+	if got := len(entriesOf(t, out)); got != maxRangeEntries {
+		t.Fatalf("expected %d rows at the backstop, got %d", maxRangeEntries, got)
+	}
+	if env["truncated"] != true {
+		t.Fatal("the backstop must declare the cut, never swallow it")
+	}
+	if env["omitted"] != 7 {
+		t.Fatalf("omitted = %v, want 7", env["omitted"])
 	}
 	if _, ok := env["warning"]; !ok {
 		t.Fatal("a truncated result must carry a warning the model can relay")
+	}
+	// Even at the backstop the total still covers everything.
+	if env["total_expense"] != centavosToReais(total) {
+		t.Fatalf("total_expense = %v, want %v", env["total_expense"], centavosToReais(total))
 	}
 }
 
@@ -1051,9 +1094,9 @@ func TestListDueEntriesGroupsByCategory(t *testing.T) {
 	}
 }
 
-// A whole month of a small pharmacy's bills has to fit without the caller
-// having to know to pass a limit — the default is what the bot actually uses.
-func TestListDueEntriesDefaultLimitFitsAFullMonth(t *testing.T) {
+// A whole month has to come back with no limit argument at all — the default
+// path is what the bot actually exercises.
+func TestListDueEntriesFullMonthWithNoLimitArgument(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()

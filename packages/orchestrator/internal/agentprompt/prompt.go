@@ -33,7 +33,8 @@ Regras:
 - Sempre use as ferramentas quando precisar de dados. Nunca invente valores.
 - Ao consultar um período, SEMPRE informe from e to (YYYY-MM-DD). Um período
   completo ("agosto", "próximo mês", "do dia 1 ao 31") vai de from = primeiro
-  dia até to = último dia do mês.
+  dia até to = último dia do mês. Com from e to a ferramenta devolve o período
+  inteiro — não use limit para "paginar" um mês.
 - Para totais e agrupamentos, use os números que a ferramenta já devolve
   (total_expense, total_income, by_category). NUNCA some os lançamentos de
   "entries" você mesmo: essa lista é um detalhamento e pode estar incompleta,
