@@ -7,21 +7,17 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-// goalProgress measures the month against its targets. faturamento is passed
-// in rather than read off the summary's TotalIncome — despite the field being
-// called IncomeActual, it is faturamento (venda_balcao + convenio + delivery,
-// see isFaturamento), not the summary's broader total, because the goal is a
-// sales target: a loan or aporte filed under outros_receitas must not count
-// toward it. Sharing one pass over the entries with everything else in Build
-// that measures faturamento keeps the two from disagreeing about the same
+// goalProgress measures the month against its targets. The revenue figure is
+// passed in rather than re-derived so that every faturamento number in one
+// Analysis comes from the same place and they cannot disagree about the same
 // month.
 //
 // Percentages are capped at 100 so a bar cannot overflow its track; the raw
 // amounts stay uncapped for anyone who wants the overshoot.
-func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, faturamento int64) GoalProgress {
+func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, revenue int64) GoalProgress {
 	daysTotal := daysInMonth(now)
 	progress := GoalProgress{
-		IncomeActual:  faturamento,
+		RevenueActual: revenue,
 		ExpenseActual: summary.TotalExpense,
 		DaysRemaining: daysTotal - now.Day(),
 		DaysTotal:     daysTotal,
@@ -30,10 +26,10 @@ func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time
 		return progress
 	}
 
-	progress.IncomeTarget = goal.IncomeTarget
+	progress.RevenueTarget = goal.RevenueTarget
 	progress.ExpenseTarget = goal.ExpenseTarget
-	if goal.IncomeTarget > 0 {
-		progress.IncomePct = min(100, roundToInt(float64(faturamento)/float64(goal.IncomeTarget)*100))
+	if goal.RevenueTarget > 0 {
+		progress.RevenuePct = min(100, roundToInt(float64(revenue)/float64(goal.RevenueTarget)*100))
 	}
 	if goal.ExpenseTarget > 0 {
 		progress.ExpensePct = min(100, roundToInt(float64(summary.TotalExpense)/float64(goal.ExpenseTarget)*100))
@@ -46,12 +42,11 @@ func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time
 // month with no data is a nil hole, never a dropped slot, since collapsing it
 // would shift every other month onto the wrong label.
 //
-// snapshot.Income is the stored summary's TotalIncome — receita, not
-// faturamento (see isFaturamento) — because the summaries this reads are
-// pre-aggregated per month and were never split by category. A past month
-// with an outros_receitas entry will show a slightly higher Income here than
-// its IncomeTarget was actually tracked against; only the *current* month's
-// GoalProgress.IncomeActual (goalProgress, above) is guaranteed faturamento.
+// snapshot.Revenue is faturamento, the same figure RevenueTarget is tracked
+// against, so a bar and its target line finally measure the same thing. They
+// used to disagree: the summaries were not split by origin, so this read the
+// broad income total against a sales target — a past month with a loan in it
+// looked closer to its goal than it was.
 func buildHistory(months []string, summaries []*pkgfinance.MonthlySummary, goals []*domain.Goal) []MonthlySnapshot {
 	out := make([]MonthlySnapshot, 0, len(months))
 	for i, month := range months {
@@ -60,12 +55,12 @@ func buildHistory(months []string, summaries []*pkgfinance.MonthlySummary, goals
 			snapshot.Label = monthYearLabel(t)
 		}
 		if i < len(summaries) && summaries[i] != nil {
-			snapshot.Income = summaries[i].TotalIncome
+			snapshot.Revenue = summaries[i].TotalRevenue
 			snapshot.Expense = summaries[i].TotalExpense
 		}
 		if i < len(goals) && goals[i] != nil {
-			income, expense := goals[i].IncomeTarget, goals[i].ExpenseTarget
-			snapshot.IncomeTarget = &income
+			revenue, expense := goals[i].RevenueTarget, goals[i].ExpenseTarget
+			snapshot.RevenueTarget = &revenue
 			snapshot.ExpenseTarget = &expense
 		}
 		out = append(out, snapshot)

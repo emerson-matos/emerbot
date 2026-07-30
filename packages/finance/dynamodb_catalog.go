@@ -21,10 +21,11 @@ type goalItem struct {
 	SK     string `dynamodbav:"SK"`
 	UserID string `dynamodbav:"UserID"`
 	Month  string `dynamodbav:"Month"`
-	// The dynamodbav tag stays "RevenueTarget" — it's the stored attribute name
-	// on every goal already written; renaming it would orphan existing data
-	// without a migration. Only the Go-side name changes.
-	IncomeTarget  int64 `dynamodbav:"RevenueTarget"`
+	// Go field and stored attribute agree again: the goal's target is a
+	// faturamento target (see domain.Goal), which is what "Revenue" means
+	// throughout this codebase. It was briefly called IncomeTarget in Go while
+	// the tag stayed "RevenueTarget"; that split is gone.
+	RevenueTarget int64 `dynamodbav:"RevenueTarget"`
 	ExpenseTarget int64 `dynamodbav:"ExpenseTarget"`
 }
 
@@ -44,7 +45,7 @@ func (s *DynamoDBStore) SaveGoal(ctx context.Context, goal domain.Goal) error {
 		SK:            goalPrefix + goal.Month,
 		UserID:        goal.UserID,
 		Month:         goal.Month,
-		IncomeTarget:  goal.IncomeTarget,
+		RevenueTarget: goal.RevenueTarget,
 		ExpenseTarget: goal.ExpenseTarget,
 	}
 	av, err := attributevalue.MarshalMap(item)
@@ -79,7 +80,7 @@ func (s *DynamoDBStore) GetGoal(ctx context.Context, userID, month string) (doma
 	return domain.Goal{
 		UserID:        item.UserID,
 		Month:         item.Month,
-		IncomeTarget:  item.IncomeTarget,
+		RevenueTarget: item.RevenueTarget,
 		ExpenseTarget: item.ExpenseTarget,
 	}, nil
 }

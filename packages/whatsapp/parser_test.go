@@ -76,8 +76,17 @@ func TestRegexParserUsesDefaultCategoryAndHumanDescription(t *testing.T) {
 	if entry.Type != domain.EntryTypeIncome || entry.Category != "outros_receitas" {
 		t.Fatalf("unexpected entry: %+v", entry)
 	}
-	if entry.Description != "Outros" {
+	// The label comes from domain.DefaultCategories now. This used to read
+	// "Outros" from a second, hand-maintained copy of the slug→label map that
+	// had drifted from the domain's "Outros (Receita)".
+	if entry.Description != "Outros (Receita)" {
 		t.Fatalf("expected human default description, got %q", entry.Description)
+	}
+	// A bare /receita is a sale. It used to land on outros_receitas, which the
+	// old category rule read as "not faturamento" — so the pharmacy's simplest
+	// possible command did not count toward its own sales goal.
+	if entry.Origin != domain.OriginVenda {
+		t.Fatalf("origin = %q, want venda: a /receita is a sale", entry.Origin)
 	}
 }
 

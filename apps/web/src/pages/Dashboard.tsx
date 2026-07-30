@@ -1,6 +1,6 @@
 import { format } from 'date-fns'
 import {
-  Wallet, TrendingUp, TrendingDown, Clock,
+  Wallet, TrendingUp, TrendingDown, Clock, Banknote,
 } from 'lucide-react'
 import {
   useMonthlySummary, useCashFlow, useEntries, useMarkPaidMutation, useDeleteEntryMutation,
@@ -46,7 +46,7 @@ function BalanceCard() {
   const currentMonth = format(now, 'yyyy-MM')
   const summaryQuery = useMonthlySummary(currentMonth)
   const summary = summaryQuery.data ?? null
-  const balance = summary?.Balance ?? 0
+  const balance = summary?.ExpectedBalance ?? 0
   const balanceTone = balance >= 0 ? 'positive' : 'negative'
 
   return (
@@ -58,17 +58,21 @@ function BalanceCard() {
       className="min-h-26"
     >
       <KpiCardContent icon={Wallet} tone={balanceTone}>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Saldo do Mês</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Saldo Previsto</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar[balanceTone] }}>
           {formatBRL(balance)}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">Receitas − Despesas</p>
+        <p className="mt-1 text-xs text-muted-foreground">Entradas − despesas previstas</p>
       </KpiCardContent>
     </KpiCard>
   )
 }
 
-function TotalReceivable() {
+// Faturamento and entradas de caixa are two cards rather than one "Receitas"
+// total because they answer different questions and routinely disagree: a loan
+// is cash and not a sale, an unpaid crediário sale is a sale and not yet cash.
+// One number labelled "Receitas" hid both facts.
+function RevenueTotal() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM')
   const summaryQuery = useMonthlySummary(currentMonth)
@@ -79,15 +83,40 @@ function TotalReceivable() {
       tone="positive"
       isLoading={summaryQuery.isLoading}
       isError={summaryQuery.isError}
-      errorMessage="Erro ao carregar receitas"
+      errorMessage="Erro ao carregar faturamento"
       className="min-h-26"
     >
       <KpiCardContent icon={TrendingUp} tone="positive">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Total Receitas</p>
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Faturamento</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
-          {formatBRL(summary?.TotalIncome ?? 0)}
+          {formatBRL(summary?.TotalRevenue ?? 0)}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">Este mês</p>
+        <p className="mt-1 text-xs text-muted-foreground">Vendas deste mês</p>
+      </KpiCardContent>
+    </KpiCard>
+  )
+}
+
+function CashInTotal() {
+  const now = new Date()
+  const currentMonth = format(now, 'yyyy-MM')
+  const summaryQuery = useMonthlySummary(currentMonth)
+  const summary = summaryQuery.data ?? null
+
+  return (
+    <KpiCard
+      tone="info"
+      isLoading={summaryQuery.isLoading}
+      isError={summaryQuery.isError}
+      errorMessage="Erro ao carregar entradas de caixa"
+      className="min-h-26"
+    >
+      <KpiCardContent icon={Banknote} tone="info">
+        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Entradas de Caixa</p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
+          {formatBRL(summary?.TotalCashIn ?? 0)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">Todo dinheiro recebido</p>
       </KpiCardContent>
     </KpiCard>
   )
@@ -147,9 +176,10 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <BalanceCard />
-        <TotalReceivable />
+        <RevenueTotal />
+        <CashInTotal />
         <ExpenseTotal />
+        <BalanceCard />
         <Receivables />
       </div>
 

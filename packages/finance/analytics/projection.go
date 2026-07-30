@@ -21,9 +21,9 @@ import "time"
 // can act on, and every consumer now quotes this one.
 func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time) Projection {
 	projection := Projection{
-		Actual:        goals.IncomeActual,
-		Projected:     goals.IncomeActual,
-		Target:        goals.IncomeTarget,
+		Actual:        goals.RevenueActual,
+		Projected:     goals.RevenueActual,
+		Target:        goals.RevenueTarget,
 		DaysRemaining: goals.DaysRemaining,
 	}
 

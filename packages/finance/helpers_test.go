@@ -75,39 +75,82 @@ func TestCentavosToReaisRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIsFaturamentoExcludesOutrosReceitas guards the "empréstimo não é
-// faturamento" fix: a loan, aporte or investment redemption logged under the
-// "Outros (Receita)" catch-all must not count as faturamento, even though it
-// is real income (IncomeTotal), because a goal is "quanto vendemos".
-func TestIsFaturamentoExcludesOutrosReceitas(t *testing.T) {
-	sale := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao", Amount: 50000}
-	convenio := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "convenio", Amount: 30000}
-	delivery := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "delivery", Amount: 20000}
-	loan := domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Amount: 10000000}
-	expense := domain.FinancialEntry{Type: domain.EntryTypeExpense, Category: "aluguel", Amount: 5000}
+// TestRevenueAndCashInDiverge guards the "empréstimo não é faturamento" rule at
+// the level the totals see it: a loan is real money in, and must show up in
+// entradas de caixa without touching faturamento.
+//
+// It also pins the second, less obvious direction of the split: an unpaid sale
+// is faturamento but is *not* cash. The two figures differ both ways, and a
+// change that makes them agree here has broken one of them.
+func TestRevenueAndCashInDiverge(t *testing.T) {
+	day := date(t, "2026-07-10")
+	paid := func(e domain.FinancialEntry) domain.FinancialEntry {
+		e.PaymentStatus = domain.PaymentStatusPaid
+		e.PaymentDate = &day
+		return e
+	}
 
+	sale := paid(domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginVenda, Amount: 50000})
+	convenio := paid(domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "convenio", Origin: domain.OriginVenda, Amount: 30000})
+	loan := paid(domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Origin: domain.OriginEmprestimo, Amount: 10000000})
+	aporte := paid(domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Origin: domain.OriginAporteSocio, Amount: 700000})
+	unpaidSale := domain.FinancialEntry{
+		Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginVenda,
+		Amount: 20000, PaymentStatus: domain.PaymentStatusPending,
+	}
+	expense := paid(domain.FinancialEntry{Type: domain.EntryTypeExpense, Category: "aluguel", Amount: 5000})
+
+	entries := []domain.FinancialEntry{sale, convenio, loan, aporte, unpaidSale, expense}
+
+	// 50000 + 30000 + 20000 — the unpaid sale counts, the loan and aporte don't.
+	if got, want := RevenueTotal(entries), int64(100000); got != want {
+		t.Errorf("RevenueTotal = %d, want %d (sales only, paid or not)", got, want)
+	}
+	// 50000 + 30000 + 10000000 + 700000 — the loan and aporte count, the unpaid
+	// sale doesn't.
+	if got, want := CashInTotal(entries), int64(10780000); got != want {
+		t.Errorf("CashInTotal = %d, want %d (every inflow received, sale or not)", got, want)
+	}
+}
+
+// TestIsRevenueMigrationShim pins the fallback that keeps faturamento identical
+// for entries written before Origin existed. Delete this test in the same
+// commit that deletes the shim in domain.IsRevenue — not before.
+func TestIsRevenueMigrationShim(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		e    domain.FinancialEntry
 		want bool
 	}{
-		{"counter sale", sale, true},
-		{"convenio", convenio, true},
-		{"delivery", delivery, true},
-		{"outros_receitas (a loan filed here)", loan, false},
-		{"expense", expense, false},
+		{
+			"legacy sale category, no origin",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao"},
+			true,
+		},
+		{
+			"legacy outros_receitas, no origin — the old 'not a sale' marker",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas"},
+			false,
+		},
+		{
+			"origin wins over category: a loan filed under venda_balcao",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginEmprestimo},
+			false,
+		},
+		{
+			"origin wins over category: a sale filed under outros_receitas",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Origin: domain.OriginVenda},
+			true,
+		},
+		{
+			"an expense is never revenue",
+			domain.FinancialEntry{Type: domain.EntryTypeExpense, Category: "aluguel"},
+			false,
+		},
 	} {
-		if got := IsFaturamento(tc.e); got != tc.want {
-			t.Errorf("IsFaturamento(%s) = %v, want %v", tc.name, got, tc.want)
+		if got := domain.IsRevenue(tc.e); got != tc.want {
+			t.Errorf("IsRevenue(%s) = %v, want %v", tc.name, got, tc.want)
 		}
-	}
-
-	entries := []domain.FinancialEntry{sale, convenio, delivery, loan, expense}
-	if got := FaturamentoTotal(entries); got != 100000 {
-		t.Errorf("FaturamentoTotal = %d, want 100000 (sale+convenio+delivery, loan excluded)", got)
-	}
-	if got := IncomeTotal(entries); got != 10100000 {
-		t.Errorf("IncomeTotal = %d, want 10100000 (every income entry, loan included)", got)
 	}
 }
 

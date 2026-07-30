@@ -65,14 +65,19 @@ func (a Analysis) ToolPayload() map[string]any {
 			"status":   string(a.Health.Status),
 			"messages": insightMessages(a.Health.Messages),
 		},
-		"receita":               reais(a.KPIs.Receita),
+		// faturamento is what was sold; entradas_de_caixa is everything that
+		// arrived, loans and aportes included. They are different numbers on
+		// purpose and the model must not present either as the other — the
+		// system prompt spells that out.
+		"faturamento":           reais(a.KPIs.Faturamento),
+		"entradas_de_caixa":     reais(a.KPIs.EntradasCaixa),
 		"despesa":               reais(a.KPIs.Despesa),
 		"resultado":             reais(a.KPIs.Resultado),
 		"dias_restantes_no_mes": a.KPIs.DaysRemaining,
 		"tendencia": map[string]any{
-			"receita_pct":   a.Trends.Receita.Change,
-			"despesa_pct":   a.Trends.Despesa.Change,
-			"resultado_pct": a.Trends.Resultado.Change,
+			"faturamento_pct": a.Trends.Faturamento.Change,
+			"despesa_pct":     a.Trends.Despesa.Change,
+			"resultado_pct":   a.Trends.Resultado.Change,
 		},
 		"semana": map[string]any{
 			"faturamento_atual":           reais(a.WeekComparison.Current),
@@ -84,14 +89,13 @@ func (a Analysis) ToolPayload() map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
-		// faturamento_meta/faturamento_atual are the sales goal — venda_balcao +
-		// convenio + delivery, not outros_receitas (see isFaturamento) — which is
-		// narrower than the "receita" figure above by design: a loan or aporte
-		// must not count toward a sales target.
+		// The goal is a sales target, so it is measured against faturamento —
+		// see domain.IsRevenue. It can differ from "faturamento" above only in
+		// that the goal is capped at 100%.
 		"meta": map[string]any{
-			"faturamento_meta":  reais(a.Goals.IncomeTarget),
-			"faturamento_atual": reais(a.Goals.IncomeActual),
-			"faturamento_pct":   a.Goals.IncomePct,
+			"faturamento_meta":  reais(a.Goals.RevenueTarget),
+			"faturamento_atual": reais(a.Goals.RevenueActual),
+			"faturamento_pct":   a.Goals.RevenuePct,
 			"despesa_teto":      reais(a.Goals.ExpenseTarget),
 			"despesa_atual":     reais(a.Goals.ExpenseActual),
 			"despesa_pct":       a.Goals.ExpensePct,

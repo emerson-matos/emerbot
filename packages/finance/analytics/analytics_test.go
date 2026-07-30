@@ -29,6 +29,7 @@ func sale(t *testing.T, date string, amount int64) domain.FinancialEntry {
 		Amount:          amount,
 		Type:            domain.EntryTypeIncome,
 		Category:        "venda_balcao",
+		Origin:          domain.OriginVenda,
 	}
 }
 
@@ -51,8 +52,17 @@ func at12(t *testing.T, date string) time.Time {
 	return parsed.Add(12 * time.Hour)
 }
 
+// summary builds a month where every inflow is a paid sale — the common case
+// the analytics assertions are written against. Tests that need faturamento and
+// entradas de caixa to diverge set the fields directly.
 func summary(income, expense int64) *pkgfinance.MonthlySummary {
-	return &pkgfinance.MonthlySummary{TotalIncome: income, TotalExpense: expense, Balance: income - expense}
+	return &pkgfinance.MonthlySummary{
+		TotalRevenue:    income,
+		TotalCashIn:     income,
+		TotalExpectedIn: income,
+		TotalExpense:    expense,
+		ExpectedBalance: income - expense,
+	}
 }
 
 func TestBuildTrend(t *testing.T) {
@@ -114,7 +124,7 @@ func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 }
 
 func TestHighlightsWithoutEntries(t *testing.T) {
-	h := buildHighlights(nil)
+	h := buildHighlights(nil, nil)
 	if h.BestIncome.Label != "Sem dados" || h.WorstBalance.Date != "—" {
 		t.Errorf("empty highlights = %+v, want the Sem dados placeholder in every slot", h)
 	}
@@ -129,7 +139,7 @@ func TestHighlightsPickBestAndWorstDays(t *testing.T) {
 		expense(t, "2026-07-03", "aluguel", 90000),
 	}
 
-	h := buildHighlights(entries)
+	h := buildHighlights(entries, entries)
 
 	if h.BestIncome.Date != "2026-07-01" || h.BestIncome.Amount != 50000 {
 		t.Errorf("BestIncome = %+v, want 2026-07-01 / 50000", h.BestIncome)
@@ -149,24 +159,29 @@ func TestHighlightsPickBestAndWorstDays(t *testing.T) {
 	}
 }
 
-// TestFaturamentoExcludesOutrosReceitasButBalanceDoesNot guards the
-// "empréstimo não é faturamento" fix: a loan someone filed under
-// "Outros (Receita)" must not manufacture a best sales day or inflate the
-// weekday averages, but it is still real cash and must count toward the
-// day's balance highlight.
-func TestFaturamentoExcludesOutrosReceitasButBalanceDoesNot(t *testing.T) {
+// TestALoanIsNotASalesDayButIsStillCash guards the "empréstimo não é
+// faturamento" rule where it is easiest to get wrong: a loan must not
+// manufacture a best *sales* day or inflate the weekday averages, but it is
+// real money and must still count toward the day's *balance* highlight. The
+// two highlights read two different accumulators for exactly this reason.
+//
+// The loan carries a sales category on purpose — the origin decides, not the
+// category. That is the whole point of the field: the old rule looked at
+// "outros_receitas" and so a loan filed anywhere else counted as revenue.
+func TestALoanIsNotASalesDayButIsStillCash(t *testing.T) {
 	loan := domain.FinancialEntry{
 		TransactionDate: day(t, "2026-07-10"),
 		Amount:          10000000,
 		Type:            domain.EntryTypeIncome,
-		Category:        "outros_receitas",
+		Category:        "venda_balcao",
+		Origin:          domain.OriginEmprestimo,
 	}
 	entries := []domain.FinancialEntry{
 		sale(t, "2026-07-01", 50000),
 		loan,
 	}
 
-	h := buildHighlights(entries)
+	h := buildHighlights(entries, entries)
 	if h.BestIncome.Date != "2026-07-01" || h.BestIncome.Amount != 50000 {
 		t.Errorf("BestIncome = %+v, want the 2026-07-01 sale, not the loan", h.BestIncome)
 	}
@@ -182,9 +197,44 @@ func TestFaturamentoExcludesOutrosReceitasButBalanceDoesNot(t *testing.T) {
 	if total != 50000 {
 		t.Errorf("weekday total = %d, want only the sale (50000), loan excluded", total)
 	}
+}
 
-	if got := faturamentoTotal(entries); got != 50000 {
-		t.Errorf("faturamentoTotal = %d, want 50000 (loan excluded)", got)
+// TestTrendsSeparateFaturamentoFromResultado is the bug the reviewer caught:
+// monthTotals used to hold one income figure, and balance was built from it, so
+// narrowing income to sales would have turned Resultado into
+// "sales minus every expense" — reporting a loss for a month an aporte covered.
+func TestTrendsSeparateFaturamentoFromResultado(t *testing.T) {
+	now := at12(t, "2026-07-31")
+	aporte := func(date string, amount int64) domain.FinancialEntry {
+		return domain.FinancialEntry{
+			TransactionDate: day(t, date),
+			Amount:          amount,
+			Type:            domain.EntryTypeIncome,
+			Category:        "outros_receitas",
+			Origin:          domain.OriginAporteSocio,
+		}
+	}
+
+	// July sold less than June, but an aporte more than covered the expenses.
+	july := []domain.FinancialEntry{sale(t, "2026-07-05", 40000), aporte("2026-07-06", 200000), expense(t, "2026-07-07", "aluguel", 60000)}
+	june := []domain.FinancialEntry{sale(t, "2026-06-05", 100000), expense(t, "2026-06-07", "aluguel", 60000)}
+
+	c := buildComparison("2026-07", july, june, july, june, now)
+	trends := buildTrends(c)
+
+	// Faturamento fell 60% — the aporte does not hide that.
+	if trends.Faturamento.Direction != TrendDown {
+		t.Errorf("Faturamento direction = %q, want down: sales went 100000 -> 40000", trends.Faturamento.Direction)
+	}
+	if trends.Faturamento.Current != 40000 {
+		t.Errorf("Faturamento current = %d, want 40000 (sales only)", trends.Faturamento.Current)
+	}
+	// Resultado rose, because the aporte is real money that really did land.
+	if trends.Resultado.Current != 180000 {
+		t.Errorf("Resultado current = %d, want 180000 (240000 in - 60000 out)", trends.Resultado.Current)
+	}
+	if trends.Resultado.Direction != TrendUp {
+		t.Errorf("Resultado direction = %q, want up: 40000 -> 180000", trends.Resultado.Direction)
 	}
 }
 
@@ -253,15 +303,15 @@ func TestCategoryLabelFallsBackToTitleCase(t *testing.T) {
 
 func TestGoalProgress(t *testing.T) {
 	now := at12(t, "2026-07-10") // July has 31 days
-	sum := pkgfinance.MonthlySummary{TotalIncome: 50000, TotalExpense: 30000}
+	sum := pkgfinance.MonthlySummary{TotalRevenue: 40000, TotalExpectedIn: 50000, TotalExpense: 30000}
 
 	t.Run("without a goal", func(t *testing.T) {
 		got := goalProgress(sum, nil, now, 40000)
-		if got.IncomeTarget != 0 || got.IncomePct != 0 {
+		if got.RevenueTarget != 0 || got.RevenuePct != 0 {
 			t.Errorf("targets = %+v, want zeroes with no goal set", got)
 		}
-		if got.IncomeActual != 40000 {
-			t.Errorf("IncomeActual = %d, want the faturamento total", got.IncomeActual)
+		if got.RevenueActual != 40000 {
+			t.Errorf("RevenueActual = %d, want the faturamento total", got.RevenueActual)
 		}
 		if got.DaysRemaining != 21 || got.DaysTotal != 31 {
 			t.Errorf("days = %d/%d, want 21/31", got.DaysRemaining, got.DaysTotal)
@@ -269,10 +319,10 @@ func TestGoalProgress(t *testing.T) {
 	})
 
 	t.Run("percentages cap at 100", func(t *testing.T) {
-		goal := &domain.Goal{IncomeTarget: 20000, ExpenseTarget: 60000}
+		goal := &domain.Goal{RevenueTarget: 20000, ExpenseTarget: 60000}
 		got := goalProgress(sum, goal, now, 40000)
-		if got.IncomePct != 100 {
-			t.Errorf("IncomePct = %d, want it capped at 100", got.IncomePct)
+		if got.RevenuePct != 100 {
+			t.Errorf("IncomePct = %d, want it capped at 100", got.RevenuePct)
 		}
 		if got.ExpensePct != 50 {
 			t.Errorf("ExpensePct = %d, want 50", got.ExpensePct)
@@ -284,21 +334,21 @@ func TestBuildHistoryKeepsMonthsAligned(t *testing.T) {
 	months := []string{"2026-05", "2026-06", "2026-07"}
 	// June has no data at all — it must stay in place as a zero bar.
 	summaries := []*pkgfinance.MonthlySummary{summary(1000, 500), nil, summary(3000, 2000)}
-	goals := []*domain.Goal{nil, nil, {IncomeTarget: 5000, ExpenseTarget: 4000}}
+	goals := []*domain.Goal{nil, nil, {RevenueTarget: 5000, ExpenseTarget: 4000}}
 
 	got := buildHistory(months, summaries, goals)
 
 	if len(got) != 3 {
 		t.Fatalf("got %d snapshots, want 3", len(got))
 	}
-	if got[1].Month != "2026-06" || got[1].Income != 0 {
+	if got[1].Month != "2026-06" || got[1].Revenue != 0 {
 		t.Errorf("middle month = %+v, want an empty 2026-06 in place", got[1])
 	}
-	if got[0].IncomeTarget != nil {
-		t.Errorf("IncomeTarget = %v, want nil for a month with no goal", *got[0].IncomeTarget)
+	if got[0].RevenueTarget != nil {
+		t.Errorf("IncomeTarget = %v, want nil for a month with no goal", *got[0].RevenueTarget)
 	}
-	if got[2].IncomeTarget == nil || *got[2].IncomeTarget != 5000 {
-		t.Errorf("last IncomeTarget = %v, want 5000", got[2].IncomeTarget)
+	if got[2].RevenueTarget == nil || *got[2].RevenueTarget != 5000 {
+		t.Errorf("last IncomeTarget = %v, want 5000", got[2].RevenueTarget)
 	}
 	if got[2].Label != "jul. de 2026" {
 		t.Errorf("Label = %q, want %q", got[2].Label, "jul. de 2026")
@@ -432,12 +482,14 @@ func TestHealthStatusEscalates(t *testing.T) {
 	}
 }
 
-func TestHealthFlagsIncomeDropAndExpenseGrowth(t *testing.T) {
-	current := pkgfinance.MonthlySummary{TotalIncome: 80000, TotalExpense: 60000, Balance: 20000}
-	// Two closed months, so the comparison is whole-against-whole.
+func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
+	current := pkgfinance.MonthlySummary{TotalRevenue: 80000, TotalExpectedIn: 80000, TotalExpense: 60000, ExpectedBalance: 20000}
+	// Two closed months, so the comparison is whole-against-whole. Both insights
+	// read the revenue side: they are performance readings, so borrowed money
+	// must not soften either one.
 	compared := comparison{
-		current:  monthTotals{income: 80000, expense: 60000, balance: 20000},
-		previous: monthTotals{income: 100000, expense: 40000, balance: 60000},
+		current:  monthTotals{revenue: 80000, income: 80000, expense: 60000, balance: 20000},
+		previous: monthTotals{revenue: 100000, income: 100000, expense: 40000, balance: 60000},
 	}
 
 	health := buildHealth(nil, current, compared, WeekComparison{}, Projection{})
@@ -447,7 +499,7 @@ func TestHealthFlagsIncomeDropAndExpenseGrowth(t *testing.T) {
 		byType[m.Type] = m
 	}
 
-	drop, ok := byType[InsightIncomeDrop]
+	drop, ok := byType[InsightRevenueDrop]
 	if !ok {
 		t.Fatalf("expected an income-drop insight, got %+v", health.Messages)
 	}
@@ -549,8 +601,8 @@ func TestRecommendationsNeedARealBaseline(t *testing.T) {
 	// is no percentage over nothing. A month whose predecessor never traded
 	// must not be told its expenses "cresceram 100%" against it.
 	trends := Trends{
-		Receita: buildTrend(0, 0),
-		Despesa: buildTrend(140000, 0),
+		Faturamento: buildTrend(0, 0),
+		Despesa:     buildTrend(140000, 0),
 	}
 	if trends.Despesa.Change != 100 || trends.Despesa.Direction != TrendUp {
 		t.Fatalf("precondition: buildTrend(140000, 0) = %+v, want the 100%% fallback", trends.Despesa)
@@ -576,7 +628,7 @@ func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 		{Day: 6, Avg: 100000},
 	}
 	goals := GoalProgress{
-		IncomeTarget: 3600000, IncomeActual: 2777500,
+		RevenueTarget: 3600000, RevenueActual: 2777500,
 		DaysTotal: 31, DaysRemaining: 5,
 	}
 
@@ -605,7 +657,7 @@ func TestProjectionStillJudgesTheLastDayOfTheMonth(t *testing.T) {
 	// 31 July: nothing left to project into, but the month either reached its
 	// target or it did not, and the card has to say which.
 	now := at12(t, "2026-07-31")
-	goals := GoalProgress{IncomeTarget: 1000000, IncomeActual: 900000, DaysTotal: 31}
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}
 
 	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now)
 
@@ -628,7 +680,7 @@ func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
 	now := at12(t, "2026-07-26")
 	weekdays := []WeekdayStat{{Day: 1, Avg: 100000}}
 
-	got := buildProjection(weekdays, GoalProgress{IncomeActual: 50000, DaysRemaining: 5}, now)
+	got := buildProjection(weekdays, GoalProgress{RevenueActual: 50000, DaysRemaining: 5}, now)
 
 	if got.Pacing() {
 		t.Error("Pacing = true, want false with no target")
@@ -686,8 +738,8 @@ func TestRecommendationsWithoutAGoal(t *testing.T) {
 
 func TestRecommendationsFlagTrendsAndRunway(t *testing.T) {
 	trends := Trends{
-		Receita: MonthTrend{Current: 75000, Previous: 100000, Change: -25, Direction: TrendDown},
-		Despesa: MonthTrend{Current: 140000, Previous: 100000, Change: 40, Direction: TrendUp},
+		Faturamento: MonthTrend{Current: 75000, Previous: 100000, Change: -25, Direction: TrendDown},
+		Despesa:     MonthTrend{Current: 140000, Previous: 100000, Change: 40, Direction: TrendUp},
 	}
 	oneDay := 1
 	cash := CashPosition{DaysUntilNegative: &oneDay}
@@ -764,10 +816,15 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 		Month:           "2026-07",
 		Entries:         entries,
 		PreviousEntries: previous,
+		// The fixtures are all same-day settled sales, so the transaction-basis
+		// read returns the same rows. A test that needs the two bases to differ
+		// passes different slices — see TestCrediarioCountsInTheMonthItWasSold.
+		RevenueEntries:         entries,
+		PreviousRevenueEntries: previous,
 		Summaries: []*pkgfinance.MonthlySummary{
 			summary(100000, 50000), summary(1300000, 400000), summary(450000, 300000),
 		},
-		Goals:          []*domain.Goal{nil, nil, {IncomeTarget: 1000000, ExpenseTarget: 500000}},
+		Goals:          []*domain.Goal{nil, nil, {RevenueTarget: 1000000, ExpenseTarget: 500000}},
 		CashFlowPoints: []pkgfinance.CashFlowPoint{{Date: "2026-07-15", RunningBalance: 150000}},
 		Now:            now,
 	})
@@ -775,24 +832,24 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	if got.Month != "2026-07" {
 		t.Errorf("Month = %q", got.Month)
 	}
-	if got.KPIs.Receita != 450000 || got.KPIs.Despesa != 300000 || got.KPIs.Resultado != 150000 {
+	if got.KPIs.Faturamento != 450000 || got.KPIs.Despesa != 300000 || got.KPIs.Resultado != 150000 {
 		t.Errorf("KPIs = %+v, want the analysed month's summary", got.KPIs)
 	}
 	if got.KPIs.DaysRemaining != 16 {
 		t.Errorf("DaysRemaining = %d, want 16", got.KPIs.DaysRemaining)
 	}
-	if got.KPIs.PreviousMonthIncomeUpToDay != 400000 {
-		t.Errorf("PreviousMonthIncomeUpToDay = %d, want last month truncated at day 15", got.KPIs.PreviousMonthIncomeUpToDay)
+	if got.KPIs.PreviousMonthRevenueUpToDay != 400000 {
+		t.Errorf("PreviousMonthRevenueUpToDay = %d, want last month truncated at day 15", got.KPIs.PreviousMonthRevenueUpToDay)
 	}
-	if got.Goals.IncomeActual != 450000 {
-		t.Errorf("Goals.IncomeActual = %d, want the faturamento total", got.Goals.IncomeActual)
+	if got.Goals.RevenueActual != 450000 {
+		t.Errorf("Goals.RevenueActual = %d, want the faturamento total", got.Goals.RevenueActual)
 	}
 	// July is genuinely *ahead* at the same height of the month: 450.000 by
 	// the 15th against June's 400.000 by its 15th. Comparing against June's
 	// closed 1.300.000 would call that a collapse, which is the whole point
 	// of measuring both months to the same day.
-	if got.Trends.Receita.Direction != TrendUp {
-		t.Errorf("Receita trend = %+v, want up", got.Trends.Receita)
+	if got.Trends.Faturamento.Direction != TrendUp {
+		t.Errorf("Receita trend = %+v, want up", got.Trends.Faturamento)
 	}
 	if len(got.History) != HistoryMonths || got.History[0].Month != "2026-05" {
 		t.Errorf("History = %+v, want a trailing three-month window", got.History)
@@ -819,11 +876,12 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	}
 
 	got := Build(Input{
-		Month:     "2026-07",
-		Entries:   entries,
-		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(300000, 0)},
-		Goals:     []*domain.Goal{nil, nil, {IncomeTarget: 2000000}},
-		Now:       now,
+		Month:          "2026-07",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(300000, 0)},
+		Goals:          []*domain.Goal{nil, nil, {RevenueTarget: 2000000}},
+		Now:            now,
 	})
 
 	if got.Projection.NeededPerDay <= 0 {
@@ -918,16 +976,17 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 
 func TestToolPayloadUsesReais(t *testing.T) {
 	analysis := Build(Input{
-		Month:     "2026-07",
-		Entries:   []domain.FinancialEntry{sale(t, "2026-07-01", 123456)},
-		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(123456, 0)},
-		Now:       at12(t, "2026-07-15"),
+		Month:          "2026-07",
+		Entries:        []domain.FinancialEntry{sale(t, "2026-07-01", 123456)},
+		RevenueEntries: []domain.FinancialEntry{sale(t, "2026-07-01", 123456)},
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(123456, 0)},
+		Now:            at12(t, "2026-07-15"),
 	})
 
 	payload := analysis.ToolPayload()
 
-	if payload["receita"] != 1234.56 {
-		t.Errorf("receita = %v, want reais not centavos", payload["receita"])
+	if payload["faturamento"] != 1234.56 {
+		t.Errorf("faturamento = %v, want reais not centavos", payload["faturamento"])
 	}
 	if payload["month"] != "2026-07" {
 		t.Errorf("month = %v", payload["month"])
@@ -951,7 +1010,7 @@ func TestComparisonMeasuresBothMonthsAtTheSameHeight(t *testing.T) {
 		sale(t, "2026-06-25", 900000), // the rest of a closed month
 	}
 
-	got := buildComparison("2026-07", current, previous, now)
+	got := buildComparison("2026-07", current, previous, current, previous, now)
 
 	if got.throughDay != 10 {
 		t.Errorf("throughDay = %d, want 10", got.throughDay)
@@ -971,7 +1030,7 @@ func TestComparisonUsesWholeMonthsForAClosedMonth(t *testing.T) {
 	june := []domain.FinancialEntry{sale(t, "2026-06-05", 50000), sale(t, "2026-06-25", 90000)}
 	may := []domain.FinancialEntry{sale(t, "2026-05-28", 70000)}
 
-	got := buildComparison("2026-06", june, may, now)
+	got := buildComparison("2026-06", june, may, june, may, now)
 
 	if got.throughDay != 0 {
 		t.Errorf("throughDay = %d, want 0 for a closed month", got.throughDay)
@@ -1017,18 +1076,20 @@ func TestPartialMonthNoLongerReadsAsACollapse(t *testing.T) {
 	}
 
 	got := Build(Input{
-		Month:           "2026-07",
-		Entries:         current,
-		PreviousEntries: previous,
+		Month:                  "2026-07",
+		Entries:                current,
+		PreviousEntries:        previous,
+		RevenueEntries:         current,
+		PreviousRevenueEntries: previous,
 		Summaries: []*pkgfinance.MonthlySummary{
 			nil, summary(300000, 0), summary(100000, 0),
 		},
 		Now: now,
 	})
 
-	if got.Trends.Receita.Direction != TrendStable || got.Trends.Receita.Change != 0 {
+	if got.Trends.Faturamento.Direction != TrendStable || got.Trends.Faturamento.Change != 0 {
 		t.Errorf("Receita trend = %+v, want stable at 0%% — same pace, same height of month",
-			got.Trends.Receita)
+			got.Trends.Faturamento)
 	}
 	if got.Trends.ComparedThroughDay != 10 {
 		t.Errorf("ComparedThroughDay = %d, want 10 so the UI can label the window",
@@ -1041,7 +1102,7 @@ func TestPartialMonthNoLongerReadsAsACollapse(t *testing.T) {
 		}
 	}
 	for _, m := range got.Health.Messages {
-		if m.Type == InsightIncomeDrop {
+		if m.Type == InsightRevenueDrop {
 			t.Errorf("still flagging an income drop: %+v", m)
 		}
 	}
@@ -1058,19 +1119,21 @@ func TestPartialMonthStillReportsARealDrop(t *testing.T) {
 	}
 
 	got := Build(Input{
-		Month:           "2026-07",
-		Entries:         current,
-		PreviousEntries: previous,
-		Summaries:       []*pkgfinance.MonthlySummary{nil, summary(100000, 0), summary(50000, 0)},
-		Now:             now,
+		Month:                  "2026-07",
+		Entries:                current,
+		PreviousEntries:        previous,
+		RevenueEntries:         current,
+		PreviousRevenueEntries: previous,
+		Summaries:              []*pkgfinance.MonthlySummary{nil, summary(100000, 0), summary(50000, 0)},
+		Now:                    now,
 	})
 
-	if got.Trends.Receita.Direction != TrendDown || got.Trends.Receita.Change != -50 {
-		t.Errorf("Receita trend = %+v, want down 50%%", got.Trends.Receita)
+	if got.Trends.Faturamento.Direction != TrendDown || got.Trends.Faturamento.Change != -50 {
+		t.Errorf("Receita trend = %+v, want down 50%%", got.Trends.Faturamento)
 	}
 	var dropped *Insight
 	for i, m := range got.Health.Messages {
-		if m.Type == InsightIncomeDrop {
+		if m.Type == InsightRevenueDrop {
 			dropped = &got.Health.Messages[i]
 		}
 	}

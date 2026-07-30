@@ -224,7 +224,7 @@ func TestAgentSetsGoalViaTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if goal.IncomeTarget != 8000000 || goal.ExpenseTarget != 6000000 {
+	if goal.RevenueTarget != 8000000 || goal.ExpenseTarget != 6000000 {
 		t.Fatalf("unexpected goal: %+v", goal)
 	}
 }

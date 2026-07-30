@@ -32,6 +32,10 @@ type recurrenceRequest struct {
 	Occurrences int
 	StartDate   time.Time
 	Description string
+	// Origin is set for income series: /recorrente receber schedules future
+	// sales (a crediário instalment plan), so each occurrence is faturamento on
+	// its own transaction date. Empty on expense series.
+	Origin domain.IncomeOrigin
 }
 
 func parseRecorrente(text string) (recurrenceRequest, error) {
@@ -54,8 +58,10 @@ func parseRecorrente(text string) (recurrenceRequest, error) {
 	}
 
 	entryType := domain.EntryTypeExpense
+	origin := domain.IncomeOrigin("")
 	if verb == "receber" {
 		entryType = domain.EntryTypeIncome
+		origin = domain.OriginVenda
 	}
 
 	rest := strings.TrimSpace(m[6])
@@ -85,6 +91,7 @@ func parseRecorrente(text string) (recurrenceRequest, error) {
 		Occurrences: n,
 		StartDate:   start,
 		Description: desc,
+		Origin:      origin,
 	}, nil
 }
 

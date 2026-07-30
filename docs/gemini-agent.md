@@ -402,7 +402,7 @@ func monthSummaryTool(handlers map[string]func(context.Context, string, json.Raw
 
     decl := &genai.FunctionDeclaration{
         Name:        name,
-        Description: "Retorna o resumo financeiro de um mês: receitas, despesas e saldo.",
+        Description: "Retorna o resumo financeiro de um mês: faturamento (só vendas), entradas de caixa, despesas e saldo.",
         Parameters: &genai.Schema{
             Type: genai.TypeObject,
             Properties: map[string]*genai.Schema{

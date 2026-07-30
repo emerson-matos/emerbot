@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { effectiveDate, formatEffectiveDate } from './entries'
 import { useEntries, useGoal } from '../api/queries'
+import type { Entry } from '../api/types'
 
 export type NotificationTone = 'warning' | 'destructive' | 'success' | 'info'
 
@@ -91,16 +92,26 @@ export function useNotifications(): NotificationsResult {
 
   const goal = goalQuery.data?.goal
   // entries spans the overdue lookback window, several months wide — the goal
-  // alert must count only this month's faturamento (venda_balcao + convenio +
-  // delivery, not outros_receitas): a loan or aporte, or a sale from an
-  // earlier month, must not trigger "meta atingida".
+  // alert must count only this month's faturamento: a loan or aporte, or a sale
+  // from an earlier month, must not trigger "meta atingida".
+  //
+  // A sale is decided by Origin, not by category. The Origin === undefined arm
+  // is the same migration shim as domain.IsRevenue: entries written before the
+  // field existed fall back to the old category rule. Delete it together with
+  // the Go one, once scripts/migrate-origin has run.
+  //
+  // Bucketed by the transaction date, not the effective date: a sale belongs to
+  // the month it was made, so a crediário sale counts toward this month's goal
+  // even though it is due next month.
+  const isSale = (e: Entry) =>
+    e.Type === 'income'
+    && (e.Origin === undefined || e.Origin === '' ? e.Category !== 'outros_receitas' : e.Origin === 'venda')
   const faturamentoThisMonth = entries
-    .filter(e => e.Type === 'income' && e.Category !== 'outros_receitas'
-      && effectiveDate(e)?.slice(0, 7) === currentMonth)
+    .filter(e => isSale(e) && e.TransactionDate.slice(0, 7) === currentMonth)
     .reduce((sum, e) => sum + e.Amount, 0)
   if (
-    goal && goal.IncomeTarget > 0 &&
-    faturamentoThisMonth >= goal.IncomeTarget
+    goal && goal.RevenueTarget > 0 &&
+    faturamentoThisMonth >= goal.RevenueTarget
   ) {
     notifications.push({
       id: 'goal-reached',

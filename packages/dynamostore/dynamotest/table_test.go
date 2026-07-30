@@ -576,3 +576,44 @@ func assertSKs(t *testing.T, out *dynamodb.QueryOutput, want []string) {
 		t.Fatalf("Count = %d, want %d", out.Count, len(got))
 	}
 }
+
+// TestPutRejectsEmptyIndexKey is the guard for a bug class this fake used to
+// hide: a struct tag missing `omitempty` marshals an unset key attribute to an
+// empty string, real DynamoDB rejects that, and the fake used to accept it —
+// even returning the item from index queries, since it only checked presence.
+// The result was a green test suite and a ValidationException on every write.
+func TestPutRejectsEmptyIndexKey(t *testing.T) {
+	tbl := New(Config{
+		Name: "t",
+		Key:  Key{Hash: "PK", Range: "SK"},
+		GSIs: map[string]Key{"GSI1": {Hash: "GSI1PK", Range: "GSI1SK"}},
+	})
+
+	_, err := tbl.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("t"),
+		Item: map[string]types.AttributeValue{
+			"PK":     &types.AttributeValueMemberS{Value: "USER#1"},
+			"SK":     &types.AttributeValueMemberS{Value: "ENTRY#1"},
+			"GSI1PK": &types.AttributeValueMemberS{Value: ""},
+			"GSI1SK": &types.AttributeValueMemberS{Value: ""},
+		},
+	})
+	if err == nil {
+		t.Fatal("PutItem accepted an empty string in an index key attribute; DynamoDB would reject it")
+	}
+	if !strings.Contains(err.Error(), "GSI1PK") {
+		t.Errorf("error should name the offending attribute, got: %v", err)
+	}
+
+	// Omitting the attributes entirely is the correct way to build a sparse
+	// index, and must still work.
+	if _, err := tbl.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("t"),
+		Item: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: "USER#1"},
+			"SK": &types.AttributeValueMemberS{Value: "ENTRY#2"},
+		},
+	}); err != nil {
+		t.Fatalf("PutItem rejected an item that is legitimately absent from the index: %v", err)
+	}
+}

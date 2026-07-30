@@ -33,12 +33,12 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		})
 	}
 
-	if hasBaseline(trends.Receita) && trends.Receita.Direction == TrendDown && abs(trends.Receita.Change) > incomeSlumpPct {
+	if hasBaseline(trends.Faturamento) && trends.Faturamento.Direction == TrendDown && abs(trends.Faturamento.Change) > incomeSlumpPct {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",
 			Message: fmt.Sprintf("%d%% abaixo do mês passado. Identifique causas e aja rapidamente.",
-				abs(trends.Receita.Change)),
+				abs(trends.Faturamento.Change)),
 		})
 	}
 

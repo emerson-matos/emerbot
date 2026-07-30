@@ -382,8 +382,13 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resumo returned error: %v", err)
 	}
-	if !strings.Contains(msg, "Receitas:* R$900,00") {
-		t.Fatalf("expected income in summary, got %s", msg)
+	// Both figures are named, so the screen never shows one number that could be
+	// read as either.
+	if !strings.Contains(msg, "Faturamento (vendas):* R$900,00") {
+		t.Fatalf("expected faturamento in summary, got %s", msg)
+	}
+	if !strings.Contains(msg, "Entradas de caixa:* R$900,00") {
+		t.Fatalf("expected entradas de caixa in summary, got %s", msg)
 	}
 	if !strings.Contains(msg, "A vencer amanhã:* R$70,00 (1 conta(s))") {
 		t.Fatalf("expected pending due summary, got %s", msg)

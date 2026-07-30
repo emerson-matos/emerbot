@@ -11,37 +11,48 @@ const maxCashOutDays = 5
 
 type dayTotals struct {
 	date string
-	// income is faturamento only (see isFaturamento) — what BestIncome and
+	// revenue is faturamento only (see domain.IsRevenue) — what BestIncome and
 	// WorstIncome are measured against, so a loan or aporte can't manufacture
 	// a "best sales day".
-	income int64
-	// cashIn is every income entry, faturamento or not — what balance is
-	// measured against, since a real cash movement must not be dropped just
-	// because it wasn't a sale.
+	revenue int64
+	// cashIn is every inflow, sale or not — what balance is measured against,
+	// since a real cash movement must not be dropped just because it wasn't a
+	// sale.
 	cashIn  int64
 	expense int64
 	balance int64
 }
 
 // aggregateByDay folds entries into per-day totals, ordered oldest-first.
-func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
+//
+// It takes two slices because the two figures are measured on two different
+// bases: revenueEntries on the transaction basis (a sale belongs to the day it
+// was made) and entries on the effective-date basis (everything else). Passing
+// the same slice twice would silently put an unpaid crediário sale on the wrong
+// day.
+func aggregateByDay(entries, revenueEntries []domain.FinancialEntry) []dayTotals {
 	byDate := map[string]*dayTotals{}
-	for _, e := range entries {
-		date := e.TransactionDate.String()
-		day, ok := byDate[date]
+	day := func(date string) *dayTotals {
+		d, ok := byDate[date]
 		if !ok {
-			day = &dayTotals{date: date}
-			byDate[date] = day
+			d = &dayTotals{date: date}
+			byDate[date] = d
 		}
-		if isFaturamento(e) {
-			day.income += e.Amount
+		return d
+	}
+	for _, e := range revenueEntries {
+		if domain.IsRevenue(e) {
+			day(e.TransactionDate.String()).revenue += e.Amount
 		}
+	}
+	for _, e := range entries {
+		d := day(e.TransactionDate.String())
 		if e.Type == domain.EntryTypeIncome {
-			day.cashIn += e.Amount
+			d.cashIn += e.Amount
 		} else {
-			day.expense += e.Amount
+			d.expense += e.Amount
 		}
-		day.balance = day.cashIn - day.expense
+		d.balance = d.cashIn - d.expense
 	}
 
 	days := make([]dayTotals, 0, len(byDate))
@@ -58,8 +69,8 @@ func aggregateByDay(entries []domain.FinancialEntry) []dayTotals {
 // balance. With no entries at all every slot is the same "Sem dados"
 // placeholder, so the dashboard renders empty cards instead of a zero-value
 // date.
-func buildHighlights(entries []domain.FinancialEntry) Highlights {
-	days := aggregateByDay(entries)
+func buildHighlights(entries, revenueEntries []domain.FinancialEntry) Highlights {
+	days := aggregateByDay(entries, revenueEntries)
 	if len(days) == 0 {
 		empty := DayHighlight{Date: NoDataDate, Label: "Sem dados", Amount: 0}
 		return Highlights{BestIncome: empty, WorstIncome: empty, BestBalance: empty, WorstBalance: empty}
@@ -68,10 +79,10 @@ func buildHighlights(entries []domain.FinancialEntry) Highlights {
 	bestIncome, worstIncome := days[0], days[0]
 	bestBalance, worstBalance := days[0], days[0]
 	for _, d := range days[1:] {
-		if d.income > bestIncome.income {
+		if d.revenue > bestIncome.revenue {
 			bestIncome = d
 		}
-		if d.income < worstIncome.income {
+		if d.revenue < worstIncome.revenue {
 			worstIncome = d
 		}
 		if d.balance > bestBalance.balance {
@@ -83,8 +94,8 @@ func buildHighlights(entries []domain.FinancialEntry) Highlights {
 	}
 
 	return Highlights{
-		BestIncome:   toHighlight(bestIncome, bestIncome.income),
-		WorstIncome:  toHighlight(worstIncome, worstIncome.income),
+		BestIncome:   toHighlight(bestIncome, bestIncome.revenue),
+		WorstIncome:  toHighlight(worstIncome, worstIncome.revenue),
 		BestBalance:  toHighlight(bestBalance, bestBalance.balance),
 		WorstBalance: toHighlight(worstBalance, worstBalance.balance),
 	}

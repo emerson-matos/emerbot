@@ -156,7 +156,7 @@ export const api = {
     },
     save: (
       month: string,
-      data: { income_target?: number; expense_target?: number },
+      data: { revenue_target?: number; expense_target?: number },
     ) =>
       httpClient<{ goal: Goal }>("/goals", {
         method: "PUT",

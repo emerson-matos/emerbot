@@ -19,18 +19,27 @@ func entrySK(date domain.CalendarDate, id domain.EntryID) string {
 }
 
 type entryItem struct {
-	PK          string `dynamodbav:"PK"`
-	SK          string `dynamodbav:"SK"`
-	GSI1PK      string `dynamodbav:"GSI1PK"`
-	GSI1SK      string `dynamodbav:"GSI1SK"`
-	GSI2PK      string `dynamodbav:"GSI2PK"`
-	GSI2SK      string `dynamodbav:"GSI2SK"`
-	EntryID     string `dynamodbav:"EntryID"`
-	UserID      string `dynamodbav:"UserID"`
-	Date        string `dynamodbav:"Date"` // RFC3339
-	Amount      int64  `dynamodbav:"Amount"`
-	Category    string `dynamodbav:"Category"`
-	Type        string `dynamodbav:"Type"`
+	PK string `dynamodbav:"PK"`
+	SK string `dynamodbav:"SK"`
+	// GSI1PK/GSI1SK index the entry by CashDate — see gsi1IndexName. They are
+	// omitempty because the index is sparse: a pending entry has no payment
+	// date, so it must be absent from the index entirely. Without omitempty
+	// the marshaller writes an empty string, which real DynamoDB rejects for a
+	// key attribute — every pending write would fail in production while the
+	// in-memory fake happily accepted it.
+	GSI1PK   string `dynamodbav:"GSI1PK,omitempty"`
+	GSI1SK   string `dynamodbav:"GSI1SK,omitempty"`
+	GSI2PK   string `dynamodbav:"GSI2PK"`
+	GSI2SK   string `dynamodbav:"GSI2SK"`
+	EntryID  string `dynamodbav:"EntryID"`
+	UserID   string `dynamodbav:"UserID"`
+	Date     string `dynamodbav:"Date"` // RFC3339
+	Amount   int64  `dynamodbav:"Amount"`
+	Category string `dynamodbav:"Category"`
+	Type     string `dynamodbav:"Type"`
+	// Origin is domain.IncomeOrigin; empty on expenses, and on income entries
+	// written before the field existed (see domain.IsRevenue's shim).
+	Origin      string `dynamodbav:"Origin"`
 	Description string `dynamodbav:"Description"`
 	// DescriptionLower is the lowercased Description, stored so search filters can
 	// do case-insensitive contains() (DynamoDB has no lower() in expressions),
@@ -60,11 +69,20 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 	dateStr := e.TransactionDate.String()
 	status := string(e.PaymentStatus)
 
+	// GSI1 is the sparse cash-date index: both key attributes stay empty for a
+	// pending entry so the item never enters the index. Money that has not
+	// moved is not cash, and a "cash in July" query must not find it.
+	gsi1PK, gsi1SK := "", ""
+	if cash := CashDate(e); cash != nil {
+		gsi1PK = pkPrefix + e.UserID
+		gsi1SK = cash.Format("2006-01-02") + "#" + string(e.EntryID)
+	}
+
 	return entryItem{
 		PK:     pkPrefix + e.UserID,
 		SK:     entrySK(e.TransactionDate, e.EntryID),
-		GSI1PK: pkPrefix + e.UserID,
-		GSI1SK: e.Category + "#" + dateStr,
+		GSI1PK: gsi1PK,
+		GSI1SK: gsi1SK,
 		GSI2PK: pkPrefix + e.UserID,
 		// GSI2SK orders entries by effectiveDate (DueDate when set, else
 		// Date) — see effectiveDate's doc comment in store.go for why this,
@@ -77,6 +95,7 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		Amount:           e.Amount,
 		Category:         e.Category,
 		Type:             string(e.Type),
+		Origin:           string(e.Origin),
 		Description:      e.Description,
 		DescriptionLower: strings.ToLower(e.Description),
 		DueDate:          dueDate,
@@ -134,6 +153,7 @@ func itemToEntry(item entryItem) (domain.FinancialEntry, error) {
 		Amount:          item.Amount,
 		Category:        item.Category,
 		Type:            domain.EntryType(item.Type),
+		Origin:          domain.NormalizeIncomeOrigin(item.Origin),
 		Description:     item.Description,
 		DueDate:         dueDate,
 		PaymentStatus:   domain.PaymentStatus(item.PaymentStatus),
@@ -221,32 +241,65 @@ func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (d
 	return domain.FinancialEntry{}, fmt.Errorf("entry %q not found", entryID)
 }
 
+// basisKeys names the index and key attributes that carry a given date basis,
+// plus the prefix its sort key values need. The three bases live on three
+// different key structures, all of them already provisioned:
+//
+//	BasisEffective   GSI2 (GSI2SK = "<effectiveDate>#<id>")
+//	BasisPayment     GSI1 (GSI1SK = "<paymentDate>#<id>", sparse)
+//	BasisTransaction the base table (SK = "ENTRY#<transactionDate>#<id>")
+//
+// The base table needs no index at all: its own sort key is already ordered by
+// transaction date, which is what faturamento is measured on.
+func basisKeys(b DateBasis) (indexName, pkAttr, skAttr, skPrefix string) {
+	switch b {
+	case BasisPayment:
+		return gsi1IndexName, "GSI1PK", "GSI1SK", ""
+	case BasisTransaction:
+		return "", "PK", "SK", entryPrefix
+	default:
+		return gsi2IndexName, "GSI2PK", "GSI2SK", ""
+	}
+}
+
 // listEntriesInput builds the Query for a filter: the key condition pushes the
-// date range (or cursor) into GSI2SK, and everything else becomes a filter
-// expression. It is separate from ListEntries so the request shape can be
-// asserted directly, without inferring it from returned rows.
+// date range (or cursor) into the sort key of whichever basis the filter asks
+// for, and everything else becomes a filter expression. It is separate from
+// ListEntries so the request shape can be asserted directly, without inferring
+// it from returned rows.
 func (s *DynamoDBStore) listEntriesInput(userID string, filter EntryFilter) *dynamodb.QueryInput {
-	keyCondition := "GSI2PK = :pk"
+	indexName, pkAttr, skAttr, skPrefix := basisKeys(filter.DateBasis)
+
+	keyCondition := pkAttr + " = :pk"
 	exprValues := map[string]types.AttributeValue{
 		":pk": &types.AttributeValueMemberS{Value: pkPrefix + userID},
 	}
+	day := func(t *time.Time) string { return skPrefix + t.Format("2006-01-02") }
 
-	// Cursor takes priority: it provides an exact exclusive upper bound on
-	// GSI2SK, preventing the page-boundary data loss that occurs when
-	// cursor-based pagination uses a date-only bound.
-	if filter.Cursor != "" {
-		keyCondition = "GSI2PK = :pk AND GSI2SK < :cursor"
+	// Cursor takes priority: it provides an exact exclusive upper bound on the
+	// sort key, preventing the page-boundary data loss that occurs when
+	// cursor-based pagination uses a date-only bound. EntryFilter.Validate
+	// restricts it to BasisEffective, whose sort key it is shaped like.
+	switch {
+	case filter.Cursor != "":
+		keyCondition += " AND " + skAttr + " < :cursor"
 		exprValues[":cursor"] = &types.AttributeValueMemberS{Value: filter.Cursor}
-	} else if filter.From != nil && filter.To != nil {
-		keyCondition = "GSI2PK = :pk AND GSI2SK BETWEEN :from AND :to"
-		exprValues[":from"] = &types.AttributeValueMemberS{Value: filter.From.Format("2006-01-02")}
-		exprValues[":to"] = &types.AttributeValueMemberS{Value: filter.To.Format("2006-01-02") + "#\xff"}
-	} else if filter.From != nil {
-		keyCondition = "GSI2PK = :pk AND GSI2SK >= :from"
-		exprValues[":from"] = &types.AttributeValueMemberS{Value: filter.From.Format("2006-01-02")}
-	} else if filter.To != nil {
-		keyCondition = "GSI2PK = :pk AND GSI2SK <= :to"
-		exprValues[":to"] = &types.AttributeValueMemberS{Value: filter.To.Format("2006-01-02") + "#\xff"}
+	case filter.From != nil && filter.To != nil:
+		keyCondition += " AND " + skAttr + " BETWEEN :from AND :to"
+		exprValues[":from"] = &types.AttributeValueMemberS{Value: day(filter.From)}
+		exprValues[":to"] = &types.AttributeValueMemberS{Value: day(filter.To) + "#\xff"}
+	case filter.From != nil:
+		keyCondition += " AND " + skAttr + " >= :from"
+		exprValues[":from"] = &types.AttributeValueMemberS{Value: day(filter.From)}
+	case filter.To != nil:
+		keyCondition += " AND " + skAttr + " <= :to"
+		exprValues[":to"] = &types.AttributeValueMemberS{Value: day(filter.To) + "#\xff"}
+	case skPrefix != "":
+		// An unbounded query on the base table would sweep in the user's goal,
+		// category and notification items, which share the partition. The GSIs
+		// only ever contain entries, so they need no equivalent.
+		keyCondition += " AND begins_with(" + skAttr + ", :skprefix)"
+		exprValues[":skprefix"] = &types.AttributeValueMemberS{Value: skPrefix}
 	}
 
 	var filterExpr *string
@@ -281,6 +334,10 @@ func (s *DynamoDBStore) listEntriesInput(userID string, filter EntryFilter) *dyn
 		}
 		filterNames["#t"] = "Type"
 	}
+	if filter.Origin != "" {
+		filters = append(filters, "Origin = :origin")
+		exprValues[":origin"] = &types.AttributeValueMemberS{Value: string(filter.Origin)}
+	}
 	if len(filters) > 0 {
 		expr := strings.Join(filters, " AND ")
 		filterExpr = &expr
@@ -288,10 +345,13 @@ func (s *DynamoDBStore) listEntriesInput(userID string, filter EntryFilter) *dyn
 
 	input := &dynamodb.QueryInput{
 		TableName:                 aws.String(s.tableName),
-		IndexName:                 aws.String(gsi2IndexName),
 		KeyConditionExpression:    aws.String(keyCondition),
 		ExpressionAttributeValues: exprValues,
 		FilterExpression:          filterExpr,
+	}
+	// The transaction basis reads the base table, which has no IndexName.
+	if indexName != "" {
+		input.IndexName = aws.String(indexName)
 	}
 	if filterNames != nil {
 		input.ExpressionAttributeNames = filterNames
@@ -312,6 +372,9 @@ func (s *DynamoDBStore) listEntriesInput(userID string, filter EntryFilter) *dyn
 // December is stored with GSI2SK="2026-12-.../..." and so is only returned
 // when querying December, not July.
 func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, err
+	}
 	var entries []domain.FinancialEntry
 	paginator := dynamodb.NewQueryPaginator(s.client, s.listEntriesInput(userID, filter))
 	for paginator.HasMorePages() {
@@ -336,12 +399,32 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return EffectiveDate(entries[i]).After(EffectiveDate(entries[j]))
+		return sortDate(filter.DateBasis, entries[i]).After(sortDate(filter.DateBasis, entries[j]))
 	})
 	if filter.Limit > 0 && len(entries) > filter.Limit {
 		entries = entries[:filter.Limit]
 	}
 	return entries, nil
+}
+
+// sortDate is the date the returned slice is ordered by — the same one the
+// query's key condition ranged over, so "most recent first" means the same
+// thing to the caller as it did to DynamoDB. Both stores use it, which is what
+// keeps their orderings from diverging.
+func sortDate(b DateBasis, e domain.FinancialEntry) time.Time {
+	switch b {
+	case BasisPayment:
+		// Non-nil for anything the sparse cash index can return; the fallback
+		// only matters for the in-memory store's pre-filter pass.
+		if cash := CashDate(e); cash != nil {
+			return *cash
+		}
+		return time.Time{}
+	case BasisTransaction:
+		return RevenueDate(e)
+	default:
+		return EffectiveDate(e)
+	}
 }
 
 func (s *DynamoDBStore) UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error {

@@ -24,7 +24,36 @@ export interface Entry {
   PaymentDate: string | null;
   Supplier: string;
   Source: string;
+  /**
+   * Where the money came from, for income entries; empty on expenses. Only
+   * "venda" counts as faturamento. Undefined on entries written before the
+   * field existed — see the shim in lib/notifications.ts.
+   */
+  Origin?: IncomeOrigin | "";
 }
+
+/** Only IncomeOrigin.Venda counts toward faturamento; see domain.IsRevenue. */
+export const IncomeOrigin = {
+  Venda: "venda",
+  RecebimentoCliente: "recebimento_cliente",
+  Emprestimo: "emprestimo",
+  AporteSocio: "aporte_socio",
+  ReceitaFinanceira: "receita_financeira",
+  Restituicao: "restituicao",
+  Outros: "outros",
+} as const;
+export type IncomeOrigin = (typeof IncomeOrigin)[keyof typeof IncomeOrigin];
+
+/** pt-BR labels, mirroring domain.OriginLabels. */
+export const incomeOriginLabels: Record<IncomeOrigin, string> = {
+  venda: "Venda",
+  recebimento_cliente: "Recebimento de cliente",
+  emprestimo: "Empréstimo",
+  aporte_socio: "Aporte de sócio",
+  receita_financeira: "Receita financeira",
+  restituicao: "Restituição",
+  outros: "Outros",
+};
 
 export interface CreateEntryInput {
   date: string;
@@ -35,13 +64,29 @@ export interface CreateEntryInput {
   due_date?: string;
   payment_status: "pending" | "paid";
   supplier?: string;
+  /** Defaults to "venda" server-side when omitted on an income entry. */
+  origin?: IncomeOrigin;
 }
 
+/**
+ * The three inflow figures answer three different questions and are bucketed by
+ * three different dates — see packages/finance.MonthlySummary and ADR-015.
+ * Collapsing any two of them back together is how a loan ended up counted as
+ * business growth.
+ */
 export interface MonthlySummary {
   Month: string;
-  TotalIncome: number;
+  /** FATURAMENTO: what was sold, by the day of each sale, paid or not. */
+  TotalRevenue: number;
+  /** ENTRADAS DE CAIXA: money that actually arrived, whatever its origin. */
+  TotalCashIn: number;
+  /** Money that actually left. Pairs with TotalCashIn for real cash movement. */
+  TotalCashOut: number;
+  /** Every inflow by effective date, pending receivables included. */
+  TotalExpectedIn: number;
   TotalExpense: number;
-  Balance: number;
+  /** TotalExpectedIn - TotalExpense: a forecast of the month, not a cash position. */
+  ExpectedBalance: number;
 }
 
 export interface CategorySummary {
@@ -61,7 +106,8 @@ export interface CashFlowPoint {
 export interface Goal {
   UserID: string;
   Month: string;
-  IncomeTarget: number;
+  /** A faturamento target: measured against sales only, never cash in. */
+  RevenueTarget: number;
   ExpenseTarget: number;
 }
 
@@ -99,7 +145,7 @@ export type FinancialHealthStatus =
 
 export const InsightType = {
   ExpenseGrowth: "expense_growth",
-  IncomeDrop: "income_drop",
+  RevenueDrop: "revenue_drop",
   LowCashFlow: "low_cash_flow",
   GoalBehind: "goal_behind",
   GoodPerformance: "good_performance",
@@ -146,7 +192,7 @@ export interface MonthTrend {
 }
 
 export interface Trends {
-  receita: MonthTrend;
+  faturamento: MonthTrend;
   despesa: MonthTrend;
   resultado: MonthTrend;
   /**
@@ -186,16 +232,13 @@ export interface ExpenseComposition {
 }
 
 /**
- * incomeActual/incomeTarget/incomePct are faturamento — venda_balcao +
- * convenio + delivery, not outros_receitas (see isFaturamento in
- * packages/finance/analytics) — narrower than the dashboard's "Receita" KPI
- * on purpose: a loan or aporte filed under "Outros (Receita)" must not count
- * toward a sales goal.
+ * revenueActual is faturamento (sales only), which is what the target is set
+ * against — a month must not read as "goal reached" because a loan came in.
  */
 export interface GoalProgress {
-  incomeTarget: number;
-  incomeActual: number;
-  incomePct: number;
+  revenueTarget: number;
+  revenueActual: number;
+  revenuePct: number;
   expenseTarget: number;
   expenseActual: number;
   expensePct: number;
@@ -206,13 +249,11 @@ export interface GoalProgress {
 export interface MonthlySnapshot {
   month: YearMonth;
   label: string;
-  // Unlike GoalProgress.incomeActual, this is the stored monthly summary's
-  // total income (receita), not faturamento — the summaries this reads from
-  // were never split by category. A past month with an outros_receitas entry
-  // will show slightly higher here than incomeTarget was actually tracked
-  // against.
-  income: number;
-  incomeTarget: number | null;
+  // Faturamento, the same basis as revenueTarget, so a bar and its target line
+  // measure the same thing. They used to disagree: this read the broad income
+  // total against a sales target.
+  revenue: number;
+  revenueTarget: number | null;
   expense: number;
   expenseTarget: number | null;
 }
@@ -274,13 +315,23 @@ export interface CashPosition {
 }
 
 export interface Analysis {
+  /**
+   * The shape of this payload. The daily snapshot is stored as JSON and diffed
+   * against yesterday's, so a renamed field would read as zero on the old side
+   * and report the whole month as movement. The API refuses to serve or compare
+   * a snapshot whose version does not match.
+   */
+  schemaVersion: number;
   month: YearMonth;
   kpis: {
     resultado: number;
-    receita: number;
+    /** What the pharmacy sold this month. Every performance reading uses this. */
+    faturamento: number;
+    /** Every centavo that actually arrived — loans and aportes included. */
+    entradasCaixa: number;
     despesa: number;
     daysRemaining: number;
-    previousMonthIncomeUpToDay: number;
+    previousMonthRevenueUpToDay: number;
   };
   health: FinancialHealth;
   trends: Trends;

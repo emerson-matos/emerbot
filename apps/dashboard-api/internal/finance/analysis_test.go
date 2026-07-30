@@ -66,7 +66,7 @@ func TestAnalysisMonthlyReturnsTheWholeAnalysis(t *testing.T) {
 	if got.Month != month {
 		t.Errorf("Month = %q, want %q", got.Month, month)
 	}
-	if got.KPIs.Receita != 250000 || got.KPIs.Despesa != 100000 {
+	if got.KPIs.Faturamento != 250000 || got.KPIs.Despesa != 100000 {
 		t.Errorf("KPIs = %+v, want the seeded totals", got.KPIs)
 	}
 	if len(got.Weekdays) != 7 {

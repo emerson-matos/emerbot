@@ -12,10 +12,10 @@ import (
 // (health and recommendations) that must agree.
 const (
 	// expenseGrowthPct — expenses growing faster than this, and faster than
-	// income, is worth flagging.
+	// faturamento, is worth flagging.
 	expenseGrowthPct = 10
-	// incomeDropPct — income falling more than this against last month.
-	incomeDropPct = -10
+	// revenueDropPct — faturamento falling more than this against last month.
+	revenueDropPct = -10
 	// weekPacePct — the dead band for week-over-week pace, either direction.
 	weekPacePct = 5
 )
@@ -44,12 +44,12 @@ func buildHealth(
 
 	positiveDays, totalDays := countDays(entries)
 
-	if summary.Balance > 0 {
+	if summary.ExpectedBalance > 0 {
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
 			Title:       "Resultado positivo",
-			Description: "Receitas maiores que despesas",
+			Description: "Entradas maiores que despesas",
 		})
 	}
 
@@ -66,27 +66,37 @@ func buildHealth(
 		})
 	}
 
-	if summary.TotalIncome > 0 {
-		pct := roundToInt(float64(summary.TotalExpense) / float64(summary.TotalIncome) * 100)
+	// Expenses as a share of *faturamento*, not of entradas de caixa: this is a
+	// performance reading ("how much of what we sell goes out again"), and
+	// dividing by cash in would let a loan flatter the ratio — borrow enough
+	// and the pharmacy looks efficient.
+	if summary.TotalRevenue > 0 {
+		pct := roundToInt(float64(summary.TotalExpense) / float64(summary.TotalRevenue) * 100)
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
 			Title:       fmt.Sprintf("Despesas representam %d%%", pct),
-			Description: "das receitas",
+			Description: "do faturamento",
 		})
 	}
 
-	// Month-over-month only says anything when both months actually traded up
-	// to this point; a percentage against a month with no income is noise.
-	if compared.previous.income > 0 && compared.current.income > 0 {
-		incomeChange := percentChange(compared.current.income, compared.previous.income)
+	// Month-over-month only says anything when both months actually sold
+	// something up to this point; a percentage against a month with no sales is
+	// noise.
+	//
+	// Measured on faturamento, not on cash in: both insights below are
+	// performance readings. A month propped up by a loan must still report that
+	// sales fell, and expenses outgrowing borrowed money is not the warning
+	// anyone means by "despesas cresceram".
+	if compared.previous.revenue > 0 && compared.current.revenue > 0 {
+		revenueChange := percentChange(compared.current.revenue, compared.previous.revenue)
 		var expenseChange float64
 		if compared.previous.expense > 0 {
 			expenseChange = percentChange(compared.current.expense, compared.previous.expense)
 		}
 
-		// Expenses growing is only a problem when income is not keeping up.
-		if expenseChange > expenseGrowthPct && incomeChange < expenseChange {
+		// Expenses growing is only a problem when sales are not keeping up.
+		if expenseChange > expenseGrowthPct && revenueChange < expenseChange {
 			messages = append(messages, Insight{
 				Type:        InsightExpenseGrowth,
 				Severity:    SeverityWarning,
@@ -96,18 +106,18 @@ func buildHealth(
 			})
 		}
 
-		if incomeChange < incomeDropPct {
+		if revenueChange < revenueDropPct {
 			messages = append(messages, Insight{
-				Type:        InsightIncomeDrop,
+				Type:        InsightRevenueDrop,
 				Severity:    SeverityWarning,
-				Title:       "Receitas cairam",
-				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-incomeChange), compared.suffix()),
-				Value:       ptr(incomeChange),
+				Title:       "Faturamento caiu",
+				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-revenueChange), compared.suffix()),
+				Value:       ptr(revenueChange),
 			})
 		}
 	}
 
-	if summary.Balance < 0 {
+	if summary.ExpectedBalance < 0 {
 		messages = append(messages, Insight{
 			Type:        InsightLowCashFlow,
 			Severity:    SeverityCritical,
@@ -163,7 +173,7 @@ func buildHealth(
 	}
 
 	return Health{
-		Status:   healthStatus(summary.Balance, messages),
+		Status:   healthStatus(summary.ExpectedBalance, messages),
 		Score:    healthScore(messages),
 		Messages: messages,
 	}
@@ -193,8 +203,8 @@ func healthScore(messages []Insight) int {
 // countDays returns how many days closed in the black, and how many days saw
 // any entry at all. A day is in the black when everything that came in that
 // day beats everything that went out — a true cash balance, not a sales
-// figure, so every income entry counts here even the ones isFaturamento
-// excludes.
+// figure, so every inflow counts here, including the ones that are not
+// faturamento. A loan really did keep the day out of the red.
 func countDays(entries []domain.FinancialEntry) (positive, total int) {
 	byDate := map[string]int64{}
 	for _, e := range entries {

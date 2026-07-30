@@ -17,15 +17,22 @@ import type { PaymentGroupData } from '../components/payments/PaymentGroup'
 import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
 import { formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
-import type { Entry } from '../api/types'
+import type { Entry, IncomeOrigin } from '../api/types'
+import { incomeOriginLabels } from '../api/types'
 
 type TypeFilter = 'all' | 'income' | 'expense'
+type OriginFilter = 'all' | IncomeOrigin
 type StatusFilter = 'all' | 'paid' | 'pending' | 'overdue'
 
 const typeLabels: Record<TypeFilter, string> = {
   all: 'Todos os tipos',
-  income: 'Receitas',
-  expense: 'Despesas',
+  income: 'Entradas',
+  expense: 'Saídas',
+}
+
+const originLabels: Record<OriginFilter, string> = {
+  all: 'Todas as origens',
+  ...incomeOriginLabels,
 }
 
 const statusLabels: Record<StatusFilter, string> = {
@@ -54,6 +61,7 @@ export default function Transactions() {
   const [type, setType] = useState<TypeFilter>('all')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [category, setCategory] = useState('all')
+  const [origin, setOrigin] = useState<OriginFilter>('all')
   const [month, setMonth] = useState('all')
   const [minAmount, setMinAmount] = useState('')
   const [maxAmount, setMaxAmount] = useState('')
@@ -78,12 +86,13 @@ export default function Transactions() {
       if (!overdue) return false
     } else if (status !== 'all' && e.PaymentStatus !== status) return false
     if (category !== 'all' && e.Category !== category) return false
+    if (origin !== 'all' && e.Origin !== origin) return false
     if (month !== 'all' && (effectiveDate(e) ?? '').slice(0, 7) !== month) return false
     if (minCents !== null && e.Amount < minCents) return false
     if (maxCents !== null && e.Amount > maxCents) return false
     if (search !== '' && !e.Description.toLowerCase().includes(search.toLowerCase())) return false
     return true
-  }, [type, status, category, month, search, minCents, maxCents, todayISO])
+  }, [type, status, category, origin, month, search, minCents, maxCents, todayISO])
 
   const categoryOptions = useMemo(() => {
     const list = type === 'all' ? allCategories : categoriesByType(allCategories, type)
@@ -97,13 +106,14 @@ export default function Transactions() {
   }, [allEntries])
 
   const hasActiveFilters = search !== '' || type !== 'all' || status !== 'all' || category !== 'all'
-    || month !== 'all' || minAmount !== '' || maxAmount !== ''
+    || origin !== 'all' || month !== 'all' || minAmount !== '' || maxAmount !== ''
 
   function clearFilters() {
     setSearch('')
     setType('all')
     setStatus('all')
     setCategory('all')
+    setOrigin('all')
     setMonth('all')
     setMinAmount('')
     setMaxAmount('')
@@ -198,6 +208,18 @@ export default function Transactions() {
               ))}
             </SelectContent>
           </Select>
+          {type !== 'expense' && (
+            <Select items={originLabels} value={origin} onValueChange={value => setOrigin(value as OriginFilter)}>
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(originLabels) as OriginFilter[]).map(key => (
+                  <SelectItem key={key} value={key}>{originLabels[key]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select items={statusLabels} value={status} onValueChange={value => setStatus(value as StatusFilter)}>
             <SelectTrigger className="w-full sm:w-40">
               <SelectValue />

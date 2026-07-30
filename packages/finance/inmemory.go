@@ -79,6 +79,9 @@ func (s *InMemoryStore) GetEntry(_ context.Context, userID, entryID string) (dom
 }
 
 func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -96,10 +99,18 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 			}
 		}
 
-		if filter.From != nil && EffectiveDate(e).Before(*filter.From) {
+		// The date range applies to whichever date the basis names, mirroring
+		// the key condition the DynamoDB store pushes down. On the payment
+		// basis an unpaid entry has no date at all and drops out entirely —
+		// that is the sparse GSI1 index expressed in Go.
+		date, ok := basisDate(filter.DateBasis, e)
+		if !ok {
 			continue
 		}
-		if filter.To != nil && EffectiveDate(e).After(*filter.To) {
+		if filter.From != nil && date.Before(*filter.From) {
+			continue
+		}
+		if filter.To != nil && date.After(*filter.To) {
 			continue
 		}
 		if filter.Category != "" && e.Category != filter.Category {
@@ -115,16 +126,37 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 		if filter.Type != "" && e.Type != filter.Type {
 			continue
 		}
+		if filter.Origin != "" && e.Origin != filter.Origin {
+			continue
+		}
 		result = append(result, e)
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return EffectiveDate(result[i]).After(EffectiveDate(result[j]))
+		return sortDate(filter.DateBasis, result[i]).After(sortDate(filter.DateBasis, result[j]))
 	})
 	if filter.Limit > 0 && len(result) > filter.Limit {
 		result = result[:filter.Limit]
 	}
 	return result, nil
+}
+
+// basisDate reports the date the given basis measures an entry by, and whether
+// the entry is on that basis at all: a pending entry has no payment date, so it
+// is absent from the cash basis rather than counted at some substitute date.
+func basisDate(b DateBasis, e domain.FinancialEntry) (time.Time, bool) {
+	switch b {
+	case BasisPayment:
+		cash := CashDate(e)
+		if cash == nil {
+			return time.Time{}, false
+		}
+		return *cash, true
+	case BasisTransaction:
+		return RevenueDate(e), true
+	default:
+		return EffectiveDate(e), true
+	}
 }
 
 func (s *InMemoryStore) UpdateEntry(_ context.Context, entry domain.FinancialEntry) error {

@@ -2,18 +2,47 @@ package finance
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
 )
 
+// DateBasis selects which of an entry's three dates From/To bound. The three
+// exist because the metrics genuinely disagree about when money counts:
+// a sale counts when it is made, cash counts when it lands, and a bill counts
+// when it falls due.
+type DateBasis string
+
+const (
+	// BasisEffective bounds EffectiveDate — the default, and the only basis
+	// that supports Cursor and Limit (see EntryFilter). It answers "what falls
+	// in this month", pending bills and receivables included.
+	BasisEffective DateBasis = ""
+	// BasisTransaction bounds TransactionDate: the day the sale or expense
+	// actually happened. This is the faturamento basis — a crediário sale made
+	// in January is January's revenue even though it is due in February.
+	BasisTransaction DateBasis = "transaction"
+	// BasisPayment bounds PaymentDate: the day money actually moved. This is
+	// the entradas/saídas de caixa basis. Pending entries have no PaymentDate
+	// and are absent from this basis entirely, which is the point — money that
+	// has not arrived is not cash.
+	BasisPayment DateBasis = "payment"
+)
+
 // EntryFilter constrains ListEntries queries. Zero-value fields are ignored.
-// From/To bound an entry's EffectiveDate (see below), not necessarily its
-// registration Date.
+// From/To bound the date named by DateBasis, defaulting to EffectiveDate (see
+// below) rather than the registration Date.
 type EntryFilter struct {
-	From     *time.Time
-	To       *time.Time
-	Category string
+	From *time.Time
+	To   *time.Time
+	// DateBasis selects which date From/To bound. The zero value keeps the
+	// historical behaviour (EffectiveDate).
+	DateBasis DateBasis
+	Category  string
+	// Origin keeps only income entries with this origin. Faturamento is
+	// domain.OriginVenda; see domain.IsRevenue.
+	Origin domain.IncomeOrigin
 	// Description, when set, keeps only entries whose Description contains this
 	// substring (case-insensitive). Used by the GeminiAgent's search_entries
 	// tool to answer free-text lookups ("quanto paguei de aluguel?").
@@ -26,13 +55,39 @@ type EntryFilter struct {
 	// data loss that happens when cursor-based pagination subtracts a day
 	// from EffectiveDate (entries sharing the same EffectiveDate across a
 	// page boundary would be silently skipped).
+	//
+	// Only valid with BasisEffective: the cursor is shaped like GSI2SK, so
+	// comparing it against any other basis's sort key paginates against the
+	// wrong ordering and drops rows without an error. ListEntries rejects the
+	// combination rather than trusting callers to remember.
 	Cursor string
 	// Limit caps the number of entries returned, most-recent (by
 	// EffectiveDate) first. Zero means "no cap" — callers that page through
 	// results (see apps/dashboard-api/internal/finance/entries.go's List
 	// handler) should always set this rather than relying on From/To alone,
 	// to bound DynamoDB read cost and response size.
+	//
+	// Only valid with BasisEffective, for the same reason as Cursor: "the
+	// most-recent N" is meaningless until we agree which date orders them.
 	Limit int
+}
+
+// Validate reports whether the filter's fields can be honoured together.
+// Cursor and Limit both mean "the most recent N by EffectiveDate", which no
+// other basis can order — silently returning a truncated page against the
+// wrong sort key would lose money from a financial view with no error to show
+// for it, so this is a hard failure rather than a documented footgun.
+func (f EntryFilter) Validate() error {
+	if f.DateBasis == BasisEffective {
+		return nil
+	}
+	if f.Cursor != "" {
+		return fmt.Errorf("cursor is only supported on the effective-date basis, got %q", f.DateBasis)
+	}
+	if f.Limit > 0 {
+		return fmt.Errorf("limit is only supported on the effective-date basis, got %q", f.DateBasis)
+	}
+	return nil
 }
 
 // EffectiveDate is the date an entry counts toward for monthly/period views
@@ -51,12 +106,56 @@ func EffectiveDate(e domain.FinancialEntry) time.Time {
 	return e.TransactionDate.Time()
 }
 
-// MonthlySummary aggregates income and expense totals for a calendar month.
+// RevenueDate is the date an entry counts toward faturamento: the day the sale
+// happened, never the day it was paid or is due. A crediário sale made on
+// January 5th and due February 5th is January's revenue — the pharmacy sold
+// something in January.
+func RevenueDate(e domain.FinancialEntry) time.Time {
+	return e.TransactionDate.Time()
+}
+
+// CashDate is the date money actually moved, or nil when it has not moved yet.
+// domain.Normalize guarantees a paid entry has a PaymentDate and a pending one
+// does not, so nil here means "still pending" — which is why pending entries
+// are absent from the cash basis rather than counted at some other date.
+func CashDate(e domain.FinancialEntry) *time.Time {
+	if e.PaymentStatus != domain.PaymentStatusPaid || e.PaymentDate == nil {
+		return nil
+	}
+	t := e.PaymentDate.Time()
+	return &t
+}
+
+// MonthlySummary aggregates a calendar month's totals. Every amount is
+// centavos.
+//
+// The three inflow figures answer three different questions and are bucketed
+// by three different dates on purpose — that is the whole point of the split,
+// and collapsing any two of them back together is how this codebase got a
+// loan counted as business growth twice before (see docs/adr/ADR-015).
 type MonthlySummary struct {
-	Month        string // "2026-07"
-	TotalIncome  int64  // centavos
-	TotalExpense int64  // centavos
-	Balance      int64  // TotalIncome - TotalExpense
+	Month string // "2026-07"
+	// TotalRevenue is FATURAMENTO: what the pharmacy sold, by RevenueDate,
+	// paid or not. Every performance indicator is measured against this one —
+	// goals, projections, period comparisons, growth, the AI's insights.
+	TotalRevenue int64
+	// TotalCashIn is ENTRADAS DE CAIXA: money that actually arrived, by
+	// CashDate, whatever its origin. A loan is here and not in TotalRevenue.
+	// Used for cash-flow and liquidity readings, never for performance.
+	TotalCashIn int64
+	// TotalCashOut is money that actually left, by CashDate. It pairs with
+	// TotalCashIn so callers can read real cash movement without mixing bases.
+	TotalCashOut int64
+	// TotalExpectedIn is every inflow by EffectiveDate, pending receivables
+	// included — what the month is *expected* to bring in. Pairs with
+	// TotalExpense, which is on the same basis, to make ExpectedBalance.
+	TotalExpectedIn int64
+	// TotalExpense is every outflow by EffectiveDate, pending bills included.
+	TotalExpense int64
+	// ExpectedBalance is TotalExpectedIn - TotalExpense: both sides on the
+	// EffectiveDate basis, so it is a forecast of the month, not a cash
+	// position. For cash, read TotalCashIn - TotalCashOut.
+	ExpectedBalance int64
 }
 
 // CategorySummary aggregates totals per category for a date range.

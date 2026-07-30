@@ -25,28 +25,60 @@ type EntryLister interface {
 	ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error)
 }
 
-// monthlySummary totals income and expense over one calendar month, bucketed
-// by each entry's effectiveDate.
+// monthlySummary totals a calendar month on all three date bases.
+//
+// It costs one query per basis rather than one query total, because the bases
+// genuinely disagree about which entries belong to the month: a crediário sale
+// made in January and due in February is January's faturamento but is not in
+// January's effective-date range at all, and a receivable settled in July but
+// due in May is July's cash without being in July's range either. Reading one
+// range and re-bucketing in Go would silently miss both — the reads are cheap,
+// a missing sale is not.
 func monthlySummary(ctx context.Context, l EntryLister, userID, yearMonth string) (MonthlySummary, error) {
 	from, to, err := domain.ParseMonth(yearMonth)
 	if err != nil {
 		return MonthlySummary{}, err
 	}
-	entries, err := l.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
-	if err != nil {
-		return MonthlySummary{}, err
-	}
 
 	summary := MonthlySummary{Month: yearMonth}
+	for _, basis := range []DateBasis{BasisEffective, BasisTransaction, BasisPayment} {
+		entries, err := l.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to, DateBasis: basis})
+		if err != nil {
+			return MonthlySummary{}, err
+		}
+		addToSummary(&summary, basis, entries)
+	}
+	summary.ExpectedBalance = summary.TotalExpectedIn - summary.TotalExpense
+	return summary, nil
+}
+
+// addToSummary folds one basis's worth of entries into the fields that basis
+// feeds. Splitting by basis rather than by field is what keeps a figure from
+// being accumulated twice from two different queries.
+func addToSummary(summary *MonthlySummary, basis DateBasis, entries []domain.FinancialEntry) {
 	for _, e := range entries {
-		if e.Type == domain.EntryTypeIncome {
-			summary.TotalIncome += e.Amount
-		} else {
-			summary.TotalExpense += e.Amount
+		income := e.Type == domain.EntryTypeIncome
+		switch basis {
+		case BasisTransaction:
+			// Faturamento only: an expense's transaction date feeds nothing,
+			// since TotalExpense is an effective-date figure.
+			if domain.IsRevenue(e) {
+				summary.TotalRevenue += e.Amount
+			}
+		case BasisPayment:
+			if income {
+				summary.TotalCashIn += e.Amount
+			} else {
+				summary.TotalCashOut += e.Amount
+			}
+		default:
+			if income {
+				summary.TotalExpectedIn += e.Amount
+			} else {
+				summary.TotalExpense += e.Amount
+			}
 		}
 	}
-	summary.Balance = summary.TotalIncome - summary.TotalExpense
-	return summary, nil
 }
 
 // multiMonthlySummary aggregates several months in one query over the span they
@@ -63,11 +95,19 @@ func multiMonthlySummary(ctx context.Context, l EntryLister, userID string, year
 		return summaries, err
 	}
 
-	entries, err := l.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
-	if err != nil {
-		return nil, err
+	// Three wide queries in total — one per basis — not three per month. The
+	// per-basis cost is the same as monthlySummary's and for the same reason.
+	for _, basis := range []DateBasis{BasisEffective, BasisTransaction, BasisPayment} {
+		entries, err := l.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to, DateBasis: basis})
+		if err != nil {
+			return nil, err
+		}
+		accumulateSummaries(summaries, basis, entries)
 	}
-	accumulateSummaries(summaries, entries)
+	for ym, s := range summaries {
+		s.ExpectedBalance = s.TotalExpectedIn - s.TotalExpense
+		summaries[ym] = s
+	}
 	return summaries, nil
 }
 

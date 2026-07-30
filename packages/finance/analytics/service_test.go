@@ -35,7 +35,7 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 		sale(t, "2026-07-14", 150000),
 		expense(t, "2026-07-05", "aluguel", 90000),
 	)
-	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 1000000}); err != nil {
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 1000000}); err != nil {
 		t.Fatalf("save goal: %v", err)
 	}
 
@@ -44,31 +44,31 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 		t.Fatalf("Assemble: %v", err)
 	}
 
-	if got.KPIs.Receita != 350000 || got.KPIs.Despesa != 90000 {
+	if got.KPIs.Faturamento != 350000 || got.KPIs.Despesa != 90000 {
 		t.Errorf("KPIs = %+v, want July's totals", got.KPIs)
 	}
 	// June's income, truncated at day 15 — the whole 800000 falls on the
 	// 10th, so all of it counts.
-	if got.KPIs.PreviousMonthIncomeUpToDay != 800000 {
-		t.Errorf("PreviousMonthIncomeUpToDay = %d, want 800000", got.KPIs.PreviousMonthIncomeUpToDay)
+	if got.KPIs.PreviousMonthRevenueUpToDay != 800000 {
+		t.Errorf("PreviousMonthRevenueUpToDay = %d, want 800000", got.KPIs.PreviousMonthRevenueUpToDay)
 	}
-	if got.Goals.IncomeTarget != 1000000 {
-		t.Errorf("IncomeTarget = %d, want the stored goal", got.Goals.IncomeTarget)
+	if got.Goals.RevenueTarget != 1000000 {
+		t.Errorf("IncomeTarget = %d, want the stored goal", got.Goals.RevenueTarget)
 	}
 	// May, June and July all carry data, so the window must be fully populated.
 	if len(got.History) != HistoryMonths {
 		t.Fatalf("History = %d months, want %d", len(got.History), HistoryMonths)
 	}
-	if got.History[0].Income != 100000 || got.History[1].Income != 800000 {
+	if got.History[0].Revenue != 100000 || got.History[1].Revenue != 800000 {
 		t.Errorf("History = %+v, want May and June filled in", got.History)
 	}
 	// Only July has a goal; the earlier bars must stay target-less.
-	if got.History[0].IncomeTarget != nil {
-		t.Errorf("May IncomeTarget = %v, want nil", *got.History[0].IncomeTarget)
+	if got.History[0].RevenueTarget != nil {
+		t.Errorf("May IncomeTarget = %v, want nil", *got.History[0].RevenueTarget)
 	}
 	// Down from June's 800000 to July's 350000.
-	if got.Trends.Receita.Direction != TrendDown {
-		t.Errorf("Receita trend = %+v, want down", got.Trends.Receita)
+	if got.Trends.Faturamento.Direction != TrendDown {
+		t.Errorf("Receita trend = %+v, want down", got.Trends.Faturamento)
 	}
 }
 

@@ -96,31 +96,40 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 		weekday := d.Weekday()
 		if weekday == time.Saturday {
 			// Half day on Saturdays
-			save(income(userID, d, randBetween(rng, 60000, 120000), "venda_balcao", "Venda Balcão - Sábado"))
+			save(income(userID, d, randBetween(rng, 60000, 120000), "venda_balcao", "Venda Balcão - Sábado", domain.OriginVenda))
 			continue
 		}
 		if weekday == time.Sunday {
 			continue // closed
 		}
-		save(income(userID, d, randBetween(rng, 120000, 350000), "venda_balcao", "Venda Balcão"))
+		save(income(userID, d, randBetween(rng, 120000, 350000), "venda_balcao", "Venda Balcão", domain.OriginVenda))
 	}
 
 	// Convênio (monthly reimbursement — 30th or last day)
 	lastDay := daysInMonth(year, month)
-	save(income(userID, date(year, month, lastDay), randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio"))
+	save(income(userID, date(year, month, lastDay), randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio", domain.OriginVenda))
 
 	// --- Receitas avulsas no meio do mês ---
 
 	// Convênio adicional — dia 15 (ex.: Unimed)
-	save(income(userID, date(year, month, 15), randBetween(rng, 400000, 700000), "convenio", "Repasse Convênio Unimed"))
+	save(income(userID, date(year, month, 15), randBetween(rng, 400000, 700000), "convenio", "Repasse Convênio Unimed", domain.OriginVenda))
 
 	// Delivery / retirada — dias 10 e 20
 	for _, day := range []int{10, 20} {
-		save(income(userID, date(year, month, day), randBetween(rng, 80000, 250000), "delivery", "Delivery / Tele-entrega"))
+		save(income(userID, date(year, month, day), randBetween(rng, 80000, 250000), "delivery", "Delivery / Tele-entrega", domain.OriginVenda))
 	}
 
-	// Outras receitas (bonificação, comissão, etc.) — dia 8
-	save(income(userID, date(year, month, 8), randBetween(rng, 50000, 150000), "outros_receitas", "Bonificação Laboratório"))
+	// --- Entradas que NÃO são faturamento ---
+	// Sem elas os dois números do dashboard ficam idênticos e a separação entre
+	// faturamento e entradas de caixa não aparece na demo.
+
+	// Bonificação de laboratório — dinheiro que entrou sem venda.
+	save(income(userID, date(year, month, 8), randBetween(rng, 50000, 150000), "outros_receitas", "Bonificação Laboratório", domain.OriginOutros))
+	// Empréstimo — o caso que originou toda a separação: entra no caixa, não é
+	// faturamento e não pode mexer na meta.
+	save(income(userID, date(year, month, 12), randBetween(rng, 2000000, 3000000), "outros_receitas", "Empréstimo de capital de giro", domain.OriginEmprestimo))
+	// Aporte de sócio — mesma história.
+	save(income(userID, date(year, month, 18), randBetween(rng, 500000, 900000), "outros_receitas", "Aporte de sócio", domain.OriginAporteSocio))
 
 	// --- Pending items for the current/future month only ---
 	now := time.Now().UTC()
@@ -132,11 +141,19 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 		save(pending)
 
 		nextConvenio := time.Date(year, month, lastDay, 0, 0, 0, 0, time.UTC)
-		rec := income(userID, now, randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio (a receber)")
-		rec.PaymentStatus = domain.PaymentStatusPending
-		convenioDate := domain.NewCalendarDate(nextConvenio)
-		rec.DueDate = &convenioDate
-		save(rec)
+		save(pendingIncome(
+			income(userID, now, randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio (a receber)", domain.OriginVenda),
+			nextConvenio,
+		))
+
+		// Venda no crediário atravessando o mês: vendida hoje, vence no mês que
+		// vem. É o caso que separa as duas bases de data — tem de aparecer no
+		// faturamento *deste* mês e em entrada de caixa de nenhum mês, até ser
+		// paga. Sem ela a demo não exercita a diferença.
+		save(pendingIncome(
+			income(userID, now, 450000, "venda_balcao", "Venda no crediário (recebe mês que vem)", domain.OriginVenda),
+			nextDue,
+		))
 
 		// A pagar hoje
 		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -148,11 +165,10 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 			expense(userID, now, 54300, "fornecedor_geral", "Embalagens e Insumos (vencimento hoje)", "Fornecedor Geral", domain.PaymentStatusPending),
 			today,
 		))
-		recHoje := income(userID, now, 312000, "convenio", "Convênio Unimed (a receber hoje)")
-		recHoje.PaymentStatus = domain.PaymentStatusPending
-		todayDate := domain.NewCalendarDate(today)
-		recHoje.DueDate = &todayDate
-		save(recHoje)
+		save(pendingIncome(
+			income(userID, now, 312000, "convenio", "Convênio Unimed (a receber hoje)", domain.OriginVenda),
+			today,
+		))
 	}
 
 	// Goal do mês
@@ -165,14 +181,26 @@ func seedMonthGoal(ctx context.Context, store pkgfinance.Store, userID string, b
 	goal := domain.Goal{
 		UserID:        userID,
 		Month:         base.Format("2006-01"),
-		IncomeTarget:  80000000, // R$ 80.000,00
+		RevenueTarget: 80000000, // R$ 80.000,00
 		ExpenseTarget: 60000000, // R$ 60.000,00
 	}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		log.Printf("warn: seed goal: %v", err)
 	} else {
-		log.Printf("goal set for %s: receita=R$%.0f teto=R$%.0f", goal.Month, float64(goal.IncomeTarget)/100, float64(goal.ExpenseTarget)/100)
+		log.Printf("goal set for %s: faturamento=R$%.0f teto=R$%.0f", goal.Month, float64(goal.RevenueTarget)/100, float64(goal.ExpenseTarget)/100)
 	}
+}
+
+// pendingIncome turns a paid inflow into a receivable due on the given day.
+// It clears PaymentDate, which income() sets: a pending entry with a payment
+// date fails domain.Validate, and the open-coded versions of this that the
+// seed used to carry left it behind.
+func pendingIncome(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
+	e.PaymentStatus = domain.PaymentStatusPending
+	e.PaymentDate = nil
+	d := domain.NewCalendarDate(due)
+	e.DueDate = &d
+	return e
 }
 
 func pendingDue(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
@@ -205,7 +233,11 @@ func expense(userID string, d time.Time, amount int64, cat, desc, supplier strin
 	return e
 }
 
-func income(userID string, d time.Time, amount int64, cat, desc string) domain.FinancialEntry {
+// income builds a paid inflow. origin decides whether it is faturamento: only
+// domain.OriginVenda is, so the loan and the aporte seeded below show up in
+// entradas de caixa and not in the sales figures. Without at least one of each
+// the demo's two headline numbers are identical and the split is invisible.
+func income(userID string, d time.Time, amount int64, cat, desc string, origin domain.IncomeOrigin) domain.FinancialEntry {
 	now := time.Now().UTC()
 	date := domain.NewCalendarDate(d)
 	return domain.FinancialEntry{
@@ -219,6 +251,7 @@ func income(userID string, d time.Time, amount int64, cat, desc string) domain.F
 		PaymentStatus:   domain.PaymentStatusPaid,
 		PaymentDate:     &date,
 		Source:          domain.SourceManual,
+		Origin:          origin,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}

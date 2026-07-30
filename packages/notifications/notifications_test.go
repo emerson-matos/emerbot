@@ -84,7 +84,7 @@ func TestEvaluateOverdueSortedAndCapped(t *testing.T) {
 
 func TestEvaluateGoalReachedRespectsTargetAndPref(t *testing.T) {
 	today := day("2026-07-20")
-	goal := domain.Goal{IncomeTarget: 5000000}
+	goal := domain.Goal{RevenueTarget: 5000000}
 
 	// Income below target -> no alert.
 	if a := Evaluate(allOn(), nil, 4999999, goal, today); len(a) != 0 {
@@ -122,7 +122,7 @@ func TestEvaluateOrderDueTodayThenOverdueThenGoal(t *testing.T) {
 		expense("Hoje", 10000, "2026-07-20", domain.PaymentStatusPending),
 		expense("Vencida", 20000, "2026-07-01", domain.PaymentStatusPending),
 	}
-	goal := domain.Goal{IncomeTarget: 100}
+	goal := domain.Goal{RevenueTarget: 100}
 
 	got := kinds(Evaluate(allOn(), entries, 100, goal, today))
 	want := []Kind{KindDueToday, KindOverdue, KindGoal}

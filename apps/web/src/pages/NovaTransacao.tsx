@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import { categoriesByType } from '@/lib/categories'
 import { useCategories, useCreateEntryMutation } from '../api/queries'
+import { IncomeOrigin, incomeOriginLabels } from '@/api/types'
 
 type EntryType = 'income' | 'expense'
 type Status = 'pending' | 'paid'
@@ -28,6 +29,10 @@ export default function NovaTransacao() {
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [status, setStatus] = useState<Status>('pending')
+  // Only "venda" counts toward faturamento, so this is the field that decides
+  // whether an inflow shows up in the sales goal. It defaults to a sale because
+  // that is what a pharmacy records all day.
+  const [origin, setOrigin] = useState<IncomeOrigin>(IncomeOrigin.Venda)
   const [created, setCreated] = useState(false)
 
   const categoriesForType = useMemo(() => categoriesByType(categories, type), [categories, type])
@@ -56,6 +61,7 @@ export default function NovaTransacao() {
       type,
       description: desc.trim(),
       payment_status: status,
+      origin: type === 'income' ? origin : undefined,
     }, {
       onSuccess: () => {
         setCreated(true)
@@ -63,6 +69,7 @@ export default function NovaTransacao() {
         setAmount('')
         setDate(format(new Date(), 'yyyy-MM-dd'))
         setStatus('pending')
+        setOrigin(IncomeOrigin.Venda)
       },
     })
   }
@@ -147,6 +154,32 @@ export default function NovaTransacao() {
               />
             </div>
           </div>
+
+          {type === 'income' && (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Origem</label>
+              <Select
+                items={incomeOriginLabels}
+                value={origin}
+                onValueChange={value => { setOrigin(value as IncomeOrigin); setCreated(false) }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(incomeOriginLabels).map(([slug, label]) => (
+                    <SelectItem key={slug} value={slug}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Só <span className="font-medium">Venda</span> conta como faturamento e entra na meta.
+                Empréstimos e aportes entram apenas nas entradas de caixa.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>

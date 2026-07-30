@@ -26,7 +26,7 @@ type InsightType string
 
 const (
 	InsightExpenseGrowth     InsightType = "expense_growth"
-	InsightIncomeDrop        InsightType = "income_drop"
+	InsightRevenueDrop       InsightType = "revenue_drop"
 	InsightLowCashFlow       InsightType = "low_cash_flow"
 	InsightGoalBehind        InsightType = "goal_behind"
 	InsightGoodPerformance   InsightType = "good_performance"
@@ -94,9 +94,12 @@ type MonthTrend struct {
 // Trends bundles the three headline metrics, each compared against the
 // previous month at the same height of the month.
 type Trends struct {
-	Receita   MonthTrend `json:"receita"`
-	Despesa   MonthTrend `json:"despesa"`
-	Resultado MonthTrend `json:"resultado"`
+	// Faturamento is the growth reading, so it tracks sales only (see
+	// domain.IsRevenue) — a loan is not the business growing. Resultado is the
+	// broad money-in-minus-money-out movement.
+	Faturamento MonthTrend `json:"faturamento"`
+	Despesa     MonthTrend `json:"despesa"`
+	Resultado   MonthTrend `json:"resultado"`
 	// ComparedThroughDay is the day of the month both sides were measured up
 	// to, or 0 when both months are closed and were compared whole. The UI
 	// needs it to say which window a percentage refers to — the same number
@@ -159,15 +162,16 @@ type ExpenseComposition struct {
 	Percentage   int    `json:"percentage"`
 }
 
-// GoalProgress tracks the month against its income and expense targets.
-// IncomeActual is faturamento — venda_balcao + convenio + delivery, not
-// outros_receitas (see isFaturamento) — which is what the target is set
-// against. It is narrower than KPIs.Receita on purpose: a loan or aporte
-// filed under "Outros (Receita)" must not count toward a sales goal.
+// GoalProgress tracks the month against its revenue and expense targets.
+// RevenueActual is faturamento (see domain.IsRevenue), which is what the target
+// is set against — a month must not read as "goal reached" because a loan came
+// in. It is therefore both narrower and broader than KPIs.EntradasCaixa:
+// narrower because it excludes non-sales, broader because an unpaid sale still
+// counts toward the goal.
 type GoalProgress struct {
-	IncomeTarget  int64 `json:"incomeTarget"`
-	IncomeActual  int64 `json:"incomeActual"`
-	IncomePct     int   `json:"incomePct"`
+	RevenueTarget int64 `json:"revenueTarget"`
+	RevenueActual int64 `json:"revenueActual"`
+	RevenuePct    int   `json:"revenuePct"`
 	ExpenseTarget int64 `json:"expenseTarget"`
 	ExpenseActual int64 `json:"expenseActual"`
 	ExpensePct    int   `json:"expensePct"`
@@ -178,11 +182,14 @@ type GoalProgress struct {
 // MonthlySnapshot is one bar in the trailing three-month history chart. The
 // target fields are nil for a month with no goal set, which the chart draws
 // differently from a target of zero.
+//
+// Revenue is faturamento, the same basis as RevenueTarget, so the bar and its
+// target line measure the same thing.
 type MonthlySnapshot struct {
 	Month         string `json:"month"`
 	Label         string `json:"label"`
-	Income        int64  `json:"income"`
-	IncomeTarget  *int64 `json:"incomeTarget"`
+	Revenue       int64  `json:"revenue"`
+	RevenueTarget *int64 `json:"revenueTarget"`
 	Expense       int64  `json:"expense"`
 	ExpenseTarget *int64 `json:"expenseTarget"`
 }
@@ -265,20 +272,44 @@ type CashPosition struct {
 // KPIs are the headline numbers.
 type KPIs struct {
 	Resultado int64 `json:"resultado"`
-	Receita   int64 `json:"receita"`
-	Despesa   int64 `json:"despesa"`
+	// Faturamento is what the pharmacy sold this month, by the day of each sale
+	// (see finance.RevenueDate). Every performance reading on this page is
+	// measured against it.
+	Faturamento int64 `json:"faturamento"`
+	// EntradasCaixa is every centavo that actually arrived this month, by the
+	// day it arrived — loans, aportes and yields included. It is a liquidity
+	// number, not a performance one, and it is *expected* to differ from
+	// Faturamento. Two ways, in fact: it counts inflows that were not sales,
+	// and it excludes sales that have not been paid yet.
+	EntradasCaixa int64 `json:"entradasCaixa"`
+	Despesa       int64 `json:"despesa"`
 	// DaysRemaining excludes today — it is what is left to trade with.
 	DaysRemaining int `json:"daysRemaining"`
-	// PreviousMonthIncomeUpToDay is last month's faturamento truncated at
+	// PreviousMonthRevenueUpToDay is last month's faturamento truncated at
 	// today's day number, so "ahead of / behind last month" is a
 	// like-for-like comparison instead of a partial month against a whole
 	// one — and the same figure Projection.Actual is compared to.
-	PreviousMonthIncomeUpToDay int64 `json:"previousMonthIncomeUpToDay"`
+	PreviousMonthRevenueUpToDay int64 `json:"previousMonthRevenueUpToDay"`
 }
+
+// SchemaVersion is the shape of the Analysis JSON. It exists because the
+// notifier persists a whole Analysis as a daily snapshot
+// (finance.InsightSnapshot) and the dashboard-api unmarshals *yesterday's*
+// stored JSON into *today's* struct to diff the two. A renamed field would
+// silently read as zero on the old side, so "faturamento went from R$ 0 to
+// R$ 45.000" would be reported as real movement on every deploy day.
+//
+// Bump it whenever a field is renamed, removed, or changes meaning. Consumers
+// must refuse to compare across versions rather than guess — see
+// apps/dashboard-api/internal/finance/snapshot.go.
+const SchemaVersion = 2
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.
 type Analysis struct {
+	// Schema is SchemaVersion at the time this Analysis was built. Zero means
+	// a snapshot stored before versioning existed, which is never comparable.
+	Schema             int                  `json:"schemaVersion"`
 	Month              string               `json:"month"`
 	KPIs               KPIs                 `json:"kpis"`
 	Health             Health               `json:"health"`

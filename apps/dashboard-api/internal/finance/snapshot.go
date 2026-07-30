@@ -51,9 +51,9 @@ type healthDelta struct {
 }
 
 type kpiDeltas struct {
-	Receita   *kpiDelta `json:"receita,omitempty"`
-	Despesa   *kpiDelta `json:"despesa,omitempty"`
-	Resultado *kpiDelta `json:"resultado,omitempty"`
+	Faturamento *kpiDelta `json:"faturamento,omitempty"`
+	Despesa     *kpiDelta `json:"despesa,omitempty"`
+	Resultado   *kpiDelta `json:"resultado,omitempty"`
 }
 
 type kpiDelta struct {
@@ -78,6 +78,15 @@ func (h *SnapshotHandler) Get(w http.ResponseWriter, r *http.Request) {
 	snap, err := h.store.GetInsightSnapshot(r.Context(), shared.FinanceLedgerID, today)
 	if err != nil {
 		httpx.Error(w, "snapshot not found — wait for the daily digest or POST /analysis to compute", http.StatusNotFound)
+		return
+	}
+	// A snapshot from an older schema is served to the frontend raw, so a
+	// renamed field would render as R$ 0,00 until the notifier next runs.
+	// Treating it as absent sends the client down the path it already handles
+	// ("wait for the daily digest"), which is honest about not knowing rather
+	// than confidently wrong about the numbers.
+	if !snapshotSchemaCurrent(snap.Snapshot) {
+		httpx.Error(w, "snapshot is from an older analysis schema — wait for the daily digest or POST /analysis to recompute", http.StatusNotFound)
 		return
 	}
 
@@ -132,8 +141,28 @@ func (h *SnapshotHandler) Recalculate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// snapshotSchemaCurrent reports whether a stored snapshot was written by the
+// current Analysis schema. A snapshot from an older shape decodes without
+// error — encoding/json simply leaves renamed fields at their zero value — so
+// the version has to be checked explicitly.
+func snapshotSchemaCurrent(raw []byte) bool {
+	var probe struct {
+		Schema int `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return false
+	}
+	return probe.Schema == analytics.SchemaVersion
+}
+
 // buildComparison computes deltas between two serialized Analysis snapshots.
 // Returns nil if either snapshot cannot be decoded.
+//
+// It also returns nil when the two snapshots were written by different schema
+// versions. Comparing across a rename produces confident nonsense rather than
+// an error: the old side decodes with the renamed field at zero, so the day a
+// field is renamed every user is told their faturamento went from R$ 0,00 to
+// the whole month's total. No delta is the correct answer for one day.
 func buildComparison(date string, current, previous []byte) *comparison {
 	var curr analytics.Analysis
 	if err := json.Unmarshal(current, &curr); err != nil {
@@ -141,6 +170,9 @@ func buildComparison(date string, current, previous []byte) *comparison {
 	}
 	var prev analytics.Analysis
 	if err := json.Unmarshal(previous, &prev); err != nil {
+		return nil
+	}
+	if curr.Schema != prev.Schema {
 		return nil
 	}
 
@@ -164,12 +196,12 @@ func buildComparison(date string, current, previous []byte) *comparison {
 
 	// KPI deltas.
 	kpis := &kpiDeltas{}
-	if curr.KPIs.Receita != prev.KPIs.Receita {
-		kpis.Receita = &kpiDelta{
-			Previous: prev.KPIs.Receita,
-			Current:  curr.KPIs.Receita,
-			Delta:    curr.KPIs.Receita - prev.KPIs.Receita,
-			DeltaPct: pctChange(prev.KPIs.Receita, curr.KPIs.Receita),
+	if curr.KPIs.Faturamento != prev.KPIs.Faturamento {
+		kpis.Faturamento = &kpiDelta{
+			Previous: prev.KPIs.Faturamento,
+			Current:  curr.KPIs.Faturamento,
+			Delta:    curr.KPIs.Faturamento - prev.KPIs.Faturamento,
+			DeltaPct: pctChange(prev.KPIs.Faturamento, curr.KPIs.Faturamento),
 		}
 	}
 	if curr.KPIs.Despesa != prev.KPIs.Despesa {
@@ -188,7 +220,7 @@ func buildComparison(date string, current, previous []byte) *comparison {
 			DeltaPct: pctChange(prev.KPIs.Resultado, curr.KPIs.Resultado),
 		}
 	}
-	if kpis.Receita != nil || kpis.Despesa != nil || kpis.Resultado != nil {
+	if kpis.Faturamento != nil || kpis.Despesa != nil || kpis.Resultado != nil {
 		c.KPIs = kpis
 	}
 
