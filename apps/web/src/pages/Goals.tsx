@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
 import {
   BarChart3, CheckCircle2, Target, TrendingDown, TrendingUp,
 } from 'lucide-react'
-import { formatBRL } from '@/lib/format'
+import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -15,13 +14,6 @@ import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useGoal, useSaveGoalMutation } from '../api/queries'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import type { YearMonth } from '@/api/types'
-
-// CSS `capitalize` (text-transform) uppercases every word, which is wrong
-// for a multi-word Portuguese date like "abril de 2026" (→ "Abril De 2026").
-// Capitalize only the leading letter instead.
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -249,7 +241,7 @@ export default function Goals() {
               {history.map(h => (
                 <TableRow key={h.month}>
                   <TableCell>
-                    {capitalizeFirst(format(new Date(Number(h.month.slice(0, 4)), Number(h.month.slice(5, 7)) - 1, 1), "MMMM 'de' yyyy", { locale: ptBR }))}
+                    {formatMonthLabel(h.month)}
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {formatBRL(h.income)} / {h.incomeTarget !== null ? formatBRL(h.incomeTarget) : '—'}

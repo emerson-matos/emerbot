@@ -20,13 +20,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import EmptyState from '@/components/EmptyState'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
-import { formatBRL } from '@/lib/format'
+import { formatBRL, formatMonthLabel } from '@/lib/format'
 import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Recommendation } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
-
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
   [Status.Boa]: 'Boa',
@@ -38,14 +34,6 @@ function HealthIcon({ status }: { status: FinancialHealthStatus }) {
   if (status === Status.Boa) return <span className="text-lg">🟢</span>
   if (status === Status.Atencao) return <span className="text-lg">🟡</span>
   return <span className="text-lg">🔴</span>
-}
-
-function formatMonthLabel(month: string): string {
-  const [y, m] = month.split('-').map(Number)
-  const date = new Date(y, m - 1, 1)
-  return capitalizeFirst(
-    date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
-  )
 }
 
 // "12 de jul." from a backend "YYYY-MM-DD". Parsed at noon so a negative UTC
@@ -609,7 +597,7 @@ export default function Analysis() {
           a loaded month are the same page rather than three of them. */}
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Análise</h1>
-        <p className="mt-1 text-muted-foreground">{formatMonthLabel(month)}</p>
+        <p className="mt-1 text-muted-foreground first-letter:uppercase">{formatMonthLabel(month)}</p>
       </div>
 
       {/* A failed load has to say so: without this branch the skeleton never

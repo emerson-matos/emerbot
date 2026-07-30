@@ -5,6 +5,15 @@ export function formatBRL(centavos: number): string {
   });
 }
 
+// Formats a "yyyy-MM" key into a localized Portuguese label like "julho de 2026".
+// The first letter is NOT capitalized — use Tailwind `first-letter:uppercase` at
+// the render site instead.
+export function formatMonthLabel(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  const date = new Date(y, m - 1, 1);
+  return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
 export function formatSignedBRL(centavos: number): string {
   const sign = centavos >= 0 ? "+ " : "− ";
   return sign + formatBRL(Math.abs(centavos));
