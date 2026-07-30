@@ -53,7 +53,7 @@ import (
 const legacyRevenueCategory = "outros_receitas"
 
 func main() {
-	endpoint := flag.String("endpoint", shared.Getenv("DYNAMODB_ENDPOINT", ""), "DynamoDB endpoint (empty = real AWS)")
+	endpoint := flag.String("endpoint", shared.Getenv("DYNAMODB_ENDPOINT", "http://localhost:8000"), "DynamoDB endpoint (empty = real AWS)")
 	table := flag.String("table", shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries"), "financial entries table name")
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing")
 	report := flag.Bool("report", false, "print how the ledger's inflows are classified and exit, writing nothing")
