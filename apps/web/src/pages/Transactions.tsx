@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { ChevronDown, ChevronUp, Plus, Receipt, Search, X } from 'lucide-react'
+import { CalendarIcon, ChevronDown, ChevronUp, Plus, Receipt, Search, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { Calendar } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { type DateRange } from 'react-day-picker'
 import { useCategories, useEntriesByMonth, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
 import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
@@ -42,6 +45,28 @@ const statusLabels: Record<StatusFilter, string> = {
   overdue: 'Vencido',
 }
 
+type FilterState = {
+  search: string
+  type: TypeFilter
+  status: StatusFilter
+  category: string
+  origin: OriginFilter
+  date: DateRange | undefined
+  minAmount: string
+  maxAmount: string
+}
+
+const defaultFilters: FilterState = {
+  search: '',
+  type: 'all',
+  status: 'all',
+  category: 'all',
+  origin: 'all',
+  date: undefined,
+  minAmount: '',
+  maxAmount: '',
+}
+
 function monthLabel(monthKey: string): string {
   return format(new Date(`${monthKey}-01T00:00:00`), 'MMMM yyyy', { locale: ptBR })
 }
@@ -57,22 +82,20 @@ export default function Transactions() {
   const markPaid = useMarkPaidMutation()
   const deleteEntry = useDeleteEntryMutation()
 
-  const [search, setSearch] = useState('')
-  const [type, setType] = useState<TypeFilter>('all')
-  const [status, setStatus] = useState<StatusFilter>('all')
-  const [category, setCategory] = useState('all')
-  const [origin, setOrigin] = useState<OriginFilter>('all')
-  const [month, setMonth] = useState('all')
-  const [minAmount, setMinAmount] = useState('')
-  const [maxAmount, setMaxAmount] = useState('')
+  const [filters, setFilters] = useState<FilterState>(defaultFilters)
+  const [pending, setPending] = useState<FilterState>(defaultFilters)
+
+  const updatePending = useCallback((partial: Partial<FilterState>) => {
+    setPending(prev => ({ ...prev, ...partial }))
+  }, [])
 
   // Amounts are compared in centavos, the unit the API stores. An unparseable
   // field parses to null and simply doesn't constrain the list — the input is
   // flagged instead, so a typo never looks like "no results".
-  const minCents = parseAmountToCents(minAmount)
-  const maxCents = parseAmountToCents(maxAmount)
-  const minInvalid = minAmount.trim() !== '' && minCents === null
-  const maxInvalid = maxAmount.trim() !== '' && maxCents === null
+  const minCents = parseAmountToCents(filters.minAmount)
+  const maxCents = parseAmountToCents(filters.maxAmount)
+  const minInvalid = pending.minAmount.trim() !== '' && parseAmountToCents(pending.minAmount) === null
+  const maxInvalid = pending.maxAmount.trim() !== '' && parseAmountToCents(pending.maxAmount) === null
 
   const pages = useMemo(() => data?.pages ?? [], [data])
   const currentMonthKey = format(new Date(), 'yyyy-MM')
@@ -80,43 +103,42 @@ export default function Transactions() {
   const allEntries = useMemo(() => pages.flatMap(p => p.entries), [pages])
 
   const matchesFilters = useCallback((e: Entry) => {
-    if (type !== 'all' && e.Type !== type) return false
-    if (status === 'overdue') {
+    if (filters.type !== 'all' && e.Type !== filters.type) return false
+    if (filters.status === 'overdue') {
       const overdue = e.PaymentStatus === 'pending' && (effectiveDate(e) ?? '') < todayISO
       if (!overdue) return false
-    } else if (status !== 'all' && e.PaymentStatus !== status) return false
-    if (category !== 'all' && e.Category !== category) return false
-    if (origin !== 'all' && e.Origin !== origin) return false
-    if (month !== 'all' && (effectiveDate(e) ?? '').slice(0, 7) !== month) return false
+    } else if (filters.status !== 'all' && e.PaymentStatus !== filters.status) return false
+    if (filters.category !== 'all' && e.Category !== filters.category) return false
+    if (filters.origin !== 'all' && e.Origin !== filters.origin) return false
+    if (filters.date?.from) {
+      const d = effectiveDate(e)
+      if (!d) return false
+      if (d < format(filters.date.from, 'yyyy-MM-dd')) return false
+      if (filters.date.to && d > format(filters.date.to, 'yyyy-MM-dd')) return false
+    }
     if (minCents !== null && e.Amount < minCents) return false
     if (maxCents !== null && e.Amount > maxCents) return false
-    if (search !== '' && !e.Description.toLowerCase().includes(search.toLowerCase())) return false
+    if (filters.search !== '' && !e.Description.toLowerCase().includes(filters.search.toLowerCase())) return false
     return true
-  }, [type, status, category, origin, month, search, minCents, maxCents, todayISO])
+  }, [filters, minCents, maxCents, todayISO])
 
   const categoryOptions = useMemo(() => {
-    const list = type === 'all' ? allCategories : categoriesByType(allCategories, type)
+    const list = pending.type === 'all' ? allCategories : categoriesByType(allCategories, pending.type)
     return list.map(c => [c.Slug, c.Label] as const).sort((a, b) => a[1].localeCompare(b[1]))
-  }, [allCategories, type])
+  }, [allCategories, pending.type])
 
-  const monthOptions = useMemo(() => {
-    const set = new Set<string>()
-    allEntries.forEach(e => set.add((effectiveDate(e) ?? '').slice(0, 7)))
-    return [...set].filter(Boolean).sort().reverse()
-  }, [allEntries])
+  const hasActiveFilters = filters.search !== '' || filters.type !== 'all' || filters.status !== 'all'
+    || filters.category !== 'all' || filters.origin !== 'all' || filters.date !== undefined
+    || filters.minAmount !== '' || filters.maxAmount !== ''
 
-  const hasActiveFilters = search !== '' || type !== 'all' || status !== 'all' || category !== 'all'
-    || origin !== 'all' || month !== 'all' || minAmount !== '' || maxAmount !== ''
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setFilters(pending)
+  }
 
   function clearFilters() {
-    setSearch('')
-    setType('all')
-    setStatus('all')
-    setCategory('all')
-    setOrigin('all')
-    setMonth('all')
-    setMinAmount('')
-    setMaxAmount('')
+    setFilters(defaultFilters)
+    setPending(defaultFilters)
   }
 
   const groups: PaymentGroupData[] = useMemo(() => {
@@ -184,121 +206,135 @@ export default function Transactions() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="relative flex-1 sm:min-w-55">
-            <Search
-              className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden
-            />
-            <Input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar descrição ou categoria..."
-              className="pl-9"
-            />
-          </div>
-          <Select items={typeLabels} value={type} onValueChange={value => setType(value as TypeFilter)}>
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(typeLabels) as TypeFilter[]).map(key => (
-                <SelectItem key={key} value={key}>{typeLabels[key]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {type !== 'expense' && (
-            <Select items={originLabels} value={origin} onValueChange={value => setOrigin(value as OriginFilter)}>
-              <SelectTrigger className="w-full sm:w-48">
+      <form onSubmit={handleSubmit}>
+        <Card>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative flex-1 sm:min-w-55">
+              <Search
+                className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden
+              />
+              <Input
+                value={pending.search}
+                onChange={e => updatePending({ search: e.target.value })}
+                placeholder="Buscar descrição ou categoria..."
+                className="pl-9"
+              />
+            </div>
+            <Select items={typeLabels} value={pending.type} onValueChange={value => updatePending({ type: value as TypeFilter })}>
+              <SelectTrigger className="w-full sm:w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(originLabels) as OriginFilter[]).map(key => (
-                  <SelectItem key={key} value={key}>{originLabels[key]}</SelectItem>
+                {(Object.keys(typeLabels) as TypeFilter[]).map(key => (
+                  <SelectItem key={key} value={key}>{typeLabels[key]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          )}
-          <Select items={statusLabels} value={status} onValueChange={value => setStatus(value as StatusFilter)}>
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
-                <SelectItem key={key} value={key}>{statusLabels[key]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            items={{ all: 'Todas as categorias', ...Object.fromEntries(categoryOptions) }}
-            value={category}
-            onValueChange={value => setCategory(value ?? 'all')}
-          >
-            <SelectTrigger className="w-full sm:w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas as categorias</SelectItem>
-              {categoryOptions.map(([value, label]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            items={{ all: 'Todos os períodos', ...Object.fromEntries(monthOptions.map(k => [k, monthLabel(k)])) }}
-            value={month}
-            onValueChange={value => setMonth(value ?? 'all')}
-          >
-            <SelectTrigger className="w-full sm:w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os períodos</SelectItem>
-              {monthOptions.map(key => (
-                <SelectItem key={key} value={key} className="capitalize">{monthLabel(key)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="flex items-center gap-2">
-            <Input
-              value={minAmount}
-              onChange={e => setMinAmount(e.target.value)}
-              inputMode="decimal"
-              aria-label="Valor mínimo"
-              aria-invalid={minInvalid}
-              placeholder="Valor mín."
-              className="w-full sm:w-32"
-            />
-            <span className="shrink-0 text-sm text-muted-foreground">até</span>
-            <Input
-              value={maxAmount}
-              onChange={e => setMaxAmount(e.target.value)}
-              inputMode="decimal"
-              aria-label="Valor máximo"
-              aria-invalid={maxInvalid}
-              placeholder="Valor máx."
-              className="w-full sm:w-32"
-            />
-          </div>
-        </CardContent>
-      </Card>
+            {pending.type !== 'expense' && (
+              <Select items={originLabels} value={pending.origin} onValueChange={value => updatePending({ origin: value as OriginFilter })}>
+                <SelectTrigger className="w-full sm:w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(originLabels) as OriginFilter[]).map(key => (
+                    <SelectItem key={key} value={key}>{originLabels[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Select items={statusLabels} value={pending.status} onValueChange={value => updatePending({ status: value as StatusFilter })}>
+              <SelectTrigger className="w-full sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
+                  <SelectItem key={key} value={key}>{statusLabels[key]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              items={{ all: 'Todas as categorias', ...Object.fromEntries(categoryOptions) }}
+              value={pending.category}
+              onValueChange={value => updatePending({ category: value ?? 'all' })}
+            >
+              <SelectTrigger className="w-full sm:w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as categorias</SelectItem>
+                {categoryOptions.map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button variant="outline" className="w-full justify-start px-2.5 font-normal sm:w-52">
+                    <CalendarIcon data-icon="inline-start" />
+                    {pending.date?.from ? (
+                      pending.date.to ? (
+                        <>{format(pending.date.from, 'dd/MM/y')} – {format(pending.date.to, 'dd/MM/y')}</>
+                      ) : (
+                        <>{format(pending.date.from, 'dd/MM/y')}</>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground">Período</span>
+                    )}
+                  </Button>
+                }
+              />
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="range"
+                  defaultMonth={pending.date?.from}
+                  selected={pending.date}
+                  onSelect={value => updatePending({ date: value })}
+                  numberOfMonths={2}
+                />
+              </PopoverContent>
+            </Popover>
+            <div className="flex items-center gap-2">
+              <Input
+                value={pending.minAmount}
+                onChange={e => updatePending({ minAmount: e.target.value })}
+                inputMode="decimal"
+                aria-label="Valor mínimo"
+                aria-invalid={minInvalid}
+                placeholder="Valor mín."
+                className="w-full sm:w-32"
+              />
+              <span className="shrink-0 text-sm text-muted-foreground">até</span>
+              <Input
+                value={pending.maxAmount}
+                onChange={e => updatePending({ maxAmount: e.target.value })}
+                inputMode="decimal"
+                aria-label="Valor máximo"
+                aria-invalid={maxInvalid}
+                placeholder="Valor máx."
+                className="w-full sm:w-32"
+              />
+            </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-muted-foreground">
-          {summaryCount} {summaryCount === 1 ? 'lançamento' : 'lançamentos'}
-        </span>
-        {summaryCount > 0 && (
-          <span className={`font-semibold tabular-nums ${summaryNet >= 0 ? 'text-success' : 'text-destructive'}`}>
-            Saldo do período: {formatSignedBRL(summaryNet)}
+            <Button type="submit">Aplicar</Button>
+            <Button variant="secondary" type="button" onClick={clearFilters}>
+              <X className="size-3.5" /> Limpar filtros
+            </Button>
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">
+            {summaryCount} {summaryCount === 1 ? 'lançamento' : 'lançamentos'}
           </span>
-        )}
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            <X className="size-3.5" /> Limpar filtros
-          </Button>
-        )}
-      </div>
+          {summaryCount > 0 && (
+            <span className={`font-semibold tabular-nums ${summaryNet >= 0 ? 'text-success' : 'text-destructive'}`}>
+              Saldo do período: {formatSignedBRL(summaryNet)}
+            </span>
+          )}
+        </div>
+      </form>
 
       <Card>
         <CardContent className="px-0">
