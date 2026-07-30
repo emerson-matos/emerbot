@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { type SyntheticEvent, useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -6,6 +6,8 @@ import { CalendarIcon, ChevronDown, ChevronUp, Plus, Receipt, Search, X } from '
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -18,7 +20,7 @@ import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
 import type { PaymentGroupData } from '../components/payments/PaymentGroup'
 import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
-import { formatSignedBRL, parseAmountToCents } from '@/lib/format'
+import { formatBRL, formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
 import type { Entry, IncomeOrigin } from '../api/types'
 import { incomeOriginLabels } from '../api/types'
@@ -131,7 +133,7 @@ export default function Transactions() {
     || filters.category !== 'all' || filters.origin !== 'all' || filters.date !== undefined
     || filters.minAmount !== '' || filters.maxAmount !== ''
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: SyntheticEvent) {
     e.preventDefault()
     setFilters(pending)
   }
@@ -193,6 +195,59 @@ export default function Transactions() {
   )
   const summaryCount = filteredEntries.length
   const summaryNet = netAmount(filteredEntries)
+  // The ledger strip splits the filtered set the way a caixa is read: money in,
+  // money out, and the balance between them.
+  const { entradas, saidas } = useMemo(() => {
+    let entradas = 0
+    let saidas = 0
+    for (const e of filteredEntries) {
+      if (e.Type === 'income') entradas += e.Amount
+      else saidas += e.Amount
+    }
+    return { entradas, saidas }
+  }, [filteredEntries])
+
+  // Dropping a chip clears one applied filter and its pending twin together, so
+  // the list and the controls never disagree about what's active.
+  const dropFilter = useCallback((partial: Partial<FilterState>) => {
+    setFilters(prev => ({ ...prev, ...partial }))
+    setPending(prev => ({ ...prev, ...partial }))
+  }, [])
+
+  const activeChips = useMemo(() => {
+    const chips: { key: string; label: string; onRemove: () => void }[] = []
+    if (filters.search) {
+      chips.push({ key: 'search', label: `"${filters.search}"`, onRemove: () => dropFilter({ search: '' }) })
+    }
+    if (filters.type !== 'all') {
+      // Type carries origin: an income-only view is the only place origin means
+      // anything, so clearing the type clears the origin with it.
+      chips.push({ key: 'type', label: typeLabels[filters.type], onRemove: () => dropFilter({ type: 'all', origin: 'all' }) })
+    }
+    if (filters.origin !== 'all') {
+      chips.push({ key: 'origin', label: `Origem: ${originLabels[filters.origin]}`, onRemove: () => dropFilter({ origin: 'all' }) })
+    }
+    if (filters.status !== 'all') {
+      chips.push({ key: 'status', label: statusLabels[filters.status], onRemove: () => dropFilter({ status: 'all' }) })
+    }
+    if (filters.category !== 'all') {
+      const label = allCategories.find(c => c.Slug === filters.category)?.Label ?? filters.category
+      chips.push({ key: 'category', label, onRemove: () => dropFilter({ category: 'all' }) })
+    }
+    if (filters.date?.from) {
+      const label = filters.date.to
+        ? `${format(filters.date.from, 'dd/MM/yy')} – ${format(filters.date.to, 'dd/MM/yy')}`
+        : format(filters.date.from, 'dd/MM/yy')
+      chips.push({ key: 'date', label, onRemove: () => dropFilter({ date: undefined }) })
+    }
+    if (filters.minAmount) {
+      chips.push({ key: 'min', label: `≥ R$ ${filters.minAmount}`, onRemove: () => dropFilter({ minAmount: '' }) })
+    }
+    if (filters.maxAmount) {
+      chips.push({ key: 'max', label: `≤ R$ ${filters.maxAmount}`, onRemove: () => dropFilter({ maxAmount: '' }) })
+    }
+    return chips
+  }, [filters, allCategories, dropFilter])
 
   return (
     <div className="space-y-6">
@@ -206,34 +261,74 @@ export default function Transactions() {
         </Button>
       </div>
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="space-y-3">
         <Card>
-          <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            <div className="relative flex-1 sm:min-w-55">
-              <Search
-                className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                value={pending.search}
-                onChange={e => updatePending({ search: e.target.value })}
-                placeholder="Buscar descrição ou categoria..."
-                className="pl-9"
-              />
+          <CardContent className="space-y-4">
+            {/* Busca + período: os dois filtros mais usados, sempre em destaque. */}
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <div className="relative flex-1">
+                <Search
+                  className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  value={pending.search}
+                  onChange={e => updatePending({ search: e.target.value })}
+                  placeholder="Buscar descrição ou categoria..."
+                  className="h-8 pl-9"
+                />
+              </div>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button variant="outline" className="h-8 justify-start px-2.5 font-normal sm:w-64">
+                      <CalendarIcon data-icon="inline-start" />
+                      {pending.date?.from ? (
+                        pending.date.to ? (
+                          <>{format(pending.date.from, 'dd/MM/y')} – {format(pending.date.to, 'dd/MM/y')}</>
+                        ) : (
+                          <>{format(pending.date.from, 'dd/MM/y')}</>
+                        )
+                      ) : (
+                        <span className="text-muted-foreground">
+                          Período <span className="text-xs">· por vencimento</span>
+                        </span>
+                      )}
+                    </Button>
+                  }
+                />
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="range"
+                    defaultMonth={pending.date?.from}
+                    selected={pending.date}
+                    onSelect={value => updatePending({ date: value })}
+                    numberOfMonths={2}
+                    // Outside days repeat a date in both months (July 30 shows in
+                    // July's grid and again as August's leading day), so a single
+                    // pick looked selected on both sides. Hide them.
+                    showOutsideDays={false}
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
-            <Select items={typeLabels} value={pending.type} onValueChange={value => updatePending({ type: value as TypeFilter })}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(typeLabels) as TypeFilter[]).map(key => (
-                  <SelectItem key={key} value={key}>{typeLabels[key]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {pending.type !== 'expense' && (
-              <Select items={originLabels} value={pending.origin} onValueChange={value => updatePending({ origin: value as OriginFilter })}>
-                <SelectTrigger className="w-full sm:w-48">
+
+            {/* Refinamentos numa grade fixa: nada reflowa quando um filtro muda. */}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Select items={typeLabels} value={pending.type} onValueChange={value => updatePending(value === 'expense' ? { type: 'expense', origin: 'all' } : { type: value as TypeFilter })}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(typeLabels) as TypeFilter[]).map(key => (
+                    <SelectItem key={key} value={key}>{typeLabels[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Origem só faz sentido para entradas: fica desabilitada (não some)
+                  quando o filtro é Saídas, para a grade não pular de lugar. */}
+              <Select items={originLabels} value={pending.origin} disabled={pending.type === 'expense'} onValueChange={value => updatePending({ origin: value as OriginFilter })}>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -242,98 +337,115 @@ export default function Transactions() {
                   ))}
                 </SelectContent>
               </Select>
-            )}
-            <Select items={statusLabels} value={pending.status} onValueChange={value => updatePending({ status: value as StatusFilter })}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
-                  <SelectItem key={key} value={key}>{statusLabels[key]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              items={{ all: 'Todas as categorias', ...Object.fromEntries(categoryOptions) }}
-              value={pending.category}
-              onValueChange={value => updatePending({ category: value ?? 'all' })}
-            >
-              <SelectTrigger className="w-full sm:w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas as categorias</SelectItem>
-                {categoryOptions.map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button variant="outline" className="w-full justify-start px-2.5 font-normal sm:w-52">
-                    <CalendarIcon data-icon="inline-start" />
-                    {pending.date?.from ? (
-                      pending.date.to ? (
-                        <>{format(pending.date.from, 'dd/MM/y')} – {format(pending.date.to, 'dd/MM/y')}</>
-                      ) : (
-                        <>{format(pending.date.from, 'dd/MM/y')}</>
-                      )
-                    ) : (
-                      <span className="text-muted-foreground">Período</span>
-                    )}
-                  </Button>
-                }
-              />
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="range"
-                  defaultMonth={pending.date?.from}
-                  selected={pending.date}
-                  onSelect={value => updatePending({ date: value })}
-                  numberOfMonths={2}
-                />
-              </PopoverContent>
-            </Popover>
-            <div className="flex items-center gap-2">
-              <Input
-                value={pending.minAmount}
-                onChange={e => updatePending({ minAmount: e.target.value })}
-                inputMode="decimal"
-                aria-label="Valor mínimo"
-                aria-invalid={minInvalid}
-                placeholder="Valor mín."
-                className="w-full sm:w-32"
-              />
-              <span className="shrink-0 text-sm text-muted-foreground">até</span>
-              <Input
-                value={pending.maxAmount}
-                onChange={e => updatePending({ maxAmount: e.target.value })}
-                inputMode="decimal"
-                aria-label="Valor máximo"
-                aria-invalid={maxInvalid}
-                placeholder="Valor máx."
-                className="w-full sm:w-32"
-              />
+              <Select items={statusLabels} value={pending.status} onValueChange={value => updatePending({ status: value as StatusFilter })}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(statusLabels) as StatusFilter[]).map(key => (
+                    <SelectItem key={key} value={key}>{statusLabels[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                items={{ all: 'Todas as categorias', ...Object.fromEntries(categoryOptions) }}
+                value={pending.category}
+                onValueChange={value => updatePending({ category: value ?? 'all' })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as categorias</SelectItem>
+                  {categoryOptions.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <Button type="submit">Aplicar</Button>
-            <Button variant="secondary" type="button" onClick={clearFilters}>
-              <X className="size-3.5" /> Limpar filtros
-            </Button>
+            {/* Faixa de valor + ações, ancoradas à direita. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-sm text-muted-foreground">Valor</span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                  <Input
+                    value={pending.minAmount}
+                    onChange={e => updatePending({ minAmount: e.target.value })}
+                    inputMode="decimal"
+                    aria-label="Valor mínimo"
+                    aria-invalid={minInvalid}
+                    placeholder="mín."
+                    className="h-8 w-full pl-8 sm:w-28"
+                  />
+                </div>
+                <span className="shrink-0 text-sm text-muted-foreground">até</span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                  <Input
+                    value={pending.maxAmount}
+                    onChange={e => updatePending({ maxAmount: e.target.value })}
+                    inputMode="decimal"
+                    aria-label="Valor máximo"
+                    aria-invalid={maxInvalid}
+                    placeholder="máx."
+                    className="h-8 w-full pl-8 sm:w-28"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 sm:ml-auto">
+                <Button variant="secondary" type="button" className="h-8" onClick={clearFilters} disabled={!hasActiveFilters}>
+                  <X className="size-3.5" /> Limpar
+                </Button>
+                <Button type="submit" className="h-8">Aplicar filtros</Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
-        <div className="flex flex-wrap items-center gap-3 text-sm">
+        {/* Tira-resumo do recorte, lida como uma linha de livro-caixa. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <span className="text-muted-foreground">
             {summaryCount} {summaryCount === 1 ? 'lançamento' : 'lançamentos'}
           </span>
           {summaryCount > 0 && (
-            <span className={`font-semibold tabular-nums ${summaryNet >= 0 ? 'text-success' : 'text-destructive'}`}>
-              Saldo do período: {formatSignedBRL(summaryNet)}
-            </span>
+            <>
+              <Separator orientation="vertical" className="h-4" />
+              <span className="text-muted-foreground">
+                entradas <span className="font-medium text-success tabular-nums">{formatBRL(entradas)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                saídas <span className="font-medium text-destructive tabular-nums">{formatBRL(saidas)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                saldo{' '}
+                <span className={`font-semibold tabular-nums ${summaryNet >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  {formatSignedBRL(summaryNet)}
+                </span>
+              </span>
+            </>
           )}
         </div>
+
+        {/* Filtros ativos: visíveis de relance, removíveis um a um. */}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {activeChips.map(chip => (
+              <Badge key={chip.key} variant="secondary" className="gap-1 pr-1 font-normal">
+                {chip.label}
+                <button
+                  type="button"
+                  onClick={chip.onRemove}
+                  aria-label={`Remover filtro ${chip.label}`}
+                  className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
       </form>
 
       <Card>
