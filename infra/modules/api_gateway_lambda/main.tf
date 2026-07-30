@@ -25,13 +25,25 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# DynamoDB Always-Free is one shared allowance per account: 25 RCU + 25 WCU of
+# PROVISIONED capacity (on-demand tables don't draw from it — they're billed per
+# request). So every table + GSI here must total <= 25/25 to stay free. The
+# split, measured against 14 days of real usage (peak < 1 unit/s, zero throttle):
+#
+#   financial-entries base 7/4 · GSI2 6/4 · GSI1 4/3   → 17/11
+#   whatsapp-sessions 2/3 · conversations 3/4          →  5/7
+#   total                                                22/18  (headroom 3/7)
+#
+# These are sized for burst headroom over the observed load, not throughput —
+# the busiest hour on this table averaged 0.38 read/s. Reads (dashboard) spike
+# harder than writes, so RCU is favoured; DynamoDB burst credit absorbs the rest.
 resource "aws_dynamodb_table" "financial_entries" {
   name           = "${local.prefix}-financial-entries"
   billing_mode   = "PROVISIONED"
   hash_key       = "PK"
   range_key      = "SK"
-  read_capacity  = 10
-  write_capacity = 10
+  read_capacity  = 7
+  write_capacity = 4
 
   attribute {
     name = "PK"
@@ -58,16 +70,16 @@ resource "aws_dynamodb_table" "financial_entries" {
     type = "S"
   }
 
-  # read/write capacity below sums to 25/25 with the base table above — the
-  # DynamoDB Always-Free allowance (25 RCU/25 WCU) is per account, not per
-  # table/index.
+  # GSI1 is the cash-date index (queried by payment date, written on every paid
+  # entry — see packages/finance); GSI2 is the effective-date index every
+  # ListEntries uses. Both count toward the account budget above.
   global_secondary_index {
     name            = "GSI1-Category"
     hash_key        = "GSI1PK"
     range_key       = "GSI1SK"
     projection_type = "ALL"
-    read_capacity   = 8
-    write_capacity  = 8
+    read_capacity   = 4
+    write_capacity  = 3
   }
 
   global_secondary_index {
@@ -75,19 +87,21 @@ resource "aws_dynamodb_table" "financial_entries" {
     hash_key        = "GSI2PK"
     range_key       = "GSI2SK"
     projection_type = "ALL"
-    read_capacity   = 7
-    write_capacity  = 7
+    read_capacity   = 6
+    write_capacity  = 4
   }
 }
 
 # WhatsApp customer-service window: one item per phone, auto-expired by TTL
-# (see packages/wasession). On-demand billing keeps it off the finance table's
-# provisioned free-tier 25/25 capacity, and at a few messages/day the request
-# cost is negligible.
+# (see packages/wasession). Provisioned rather than on-demand so it stays inside
+# the account's 25/25 Always-Free allowance (on-demand is billed per request);
+# a few messages/day sit far under this, and TTL keeps it to ~a dozen items.
 resource "aws_dynamodb_table" "whatsapp_sessions" {
-  name         = "${local.prefix}-whatsapp-sessions"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "Phone"
+  name           = "${local.prefix}-whatsapp-sessions"
+  billing_mode   = "PROVISIONED"
+  hash_key       = "Phone"
+  read_capacity  = 2
+  write_capacity = 3
 
   attribute {
     name = "Phone"
@@ -102,12 +116,15 @@ resource "aws_dynamodb_table" "whatsapp_sessions" {
 
 # Short-term chat history: one item per turn (PK = phone, SK = chronological),
 # so the webhook can load the recent conversation and thread it into the LLM
-# prompt. TTL-managed, in its own table (ADR-005), independent of the finance data.
+# prompt. TTL-managed, in its own table (ADR-005), independent of the finance
+# data. Provisioned to stay inside the account's 25/25 Always-Free allowance.
 resource "aws_dynamodb_table" "conversations" {
-  name         = "${local.prefix}-conversations"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "PK"
-  range_key    = "SK"
+  name           = "${local.prefix}-conversations"
+  billing_mode   = "PROVISIONED"
+  hash_key       = "PK"
+  range_key      = "SK"
+  read_capacity  = 3
+  write_capacity = 4
 
   attribute {
     name = "PK"
