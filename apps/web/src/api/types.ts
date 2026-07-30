@@ -35,6 +35,10 @@ export interface CreateEntryInput {
   supplier?: string;
 }
 
+export type UpdateEntryInput = Partial<CreateEntryInput> & {
+  payment_status?: "pending" | "paid";
+};
+
 export interface MonthlySummary {
   Month: string;
   TotalIncome: number;
