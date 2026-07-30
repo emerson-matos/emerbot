@@ -6,15 +6,13 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
+  Combobox, ComboboxInput, ComboboxContent, ComboboxList, ComboboxItem, ComboboxEmpty,
+} from '@/components/ui/combobox'
 import { categoriesByType } from '@/lib/categories'
 import { useCategories, useCreateEntryMutation } from '../api/queries'
+import type { Category } from '../api/types'
 
 type EntryType = 'income' | 'expense'
-type Status = 'pending' | 'paid'
-
-const statusLabels: Record<Status, string> = { pending: 'Pendente', paid: 'Pago' }
 
 export default function NovaTransacao() {
   const navigate = useNavigate()
@@ -27,8 +25,8 @@ export default function NovaTransacao() {
   const [category, setCategory] = useState('')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [status, setStatus] = useState<Status>('pending')
   const [created, setCreated] = useState(false)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
 
   const categoriesForType = useMemo(() => categoriesByType(categories, type), [categories, type])
 
@@ -42,6 +40,11 @@ export default function NovaTransacao() {
     const first = categoriesByType(categories, next)[0]
     setCategory(first ? first.Slug : '')
     setCreated(false)
+    setTouched({})
+  }
+
+  function touch(field: string) {
+    setTouched(prev => ({ ...prev, [field]: true }))
   }
 
   const invalid = !desc.trim() || !date || !category || !(Number(amount) > 0)
@@ -50,24 +53,23 @@ export default function NovaTransacao() {
     if (invalid) return
     createEntry.mutate({
       date,
-      due_date: status === 'pending' ? date : undefined,
       amount: Math.round(Number(amount) * 100),
       category,
       type,
       description: desc.trim(),
-      payment_status: status,
     }, {
       onSuccess: () => {
         setCreated(true)
         setDesc('')
         setAmount('')
         setDate(format(new Date(), 'yyyy-MM-dd'))
-        setStatus('pending')
+        setTouched({})
+        document.getElementById('tx-desc')?.focus()
       },
     })
   }
 
-  const categoryItems = Object.fromEntries(categoriesForType.map(c => [c.Slug, c.Label]))
+  const categoryLabelMap = useMemo(() => Object.fromEntries(categoriesForType.map(c => [c.Slug, c.Label])), [categoriesForType])
 
   return (
     <div className="space-y-6">
@@ -108,30 +110,44 @@ export default function NovaTransacao() {
               id="tx-desc"
               value={desc}
               onChange={e => { setDesc(e.target.value); setCreated(false) }}
+              onBlur={() => touch('desc')}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('tx-amount')?.focus() } }}
               placeholder="Ex.: Venda Balcão — Semana 3"
+              aria-invalid={touched.desc && !desc.trim()}
             />
+            {touched.desc && !desc.trim() && (
+              <p className="mt-1 text-xs text-destructive">Campo obrigatório</p>
+            )}
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Categoria</label>
+            <Combobox
+              value={category}
+              onValueChange={v => { setCategory(v as string); setCreated(false); touch('category') }}
+              itemToStringLabel={(item: string) => categoryLabelMap[item] ?? item}
+            >
+              <ComboboxInput
+                placeholder="Buscar categoria..."
+                aria-invalid={touched.category && !category}
+              />
+              <ComboboxContent>
+                <ComboboxList>
+                  {categoriesForType.map((c: Category) => (
+                    <ComboboxItem key={c.Slug} value={c.Slug}>
+                      {c.Label}
+                    </ComboboxItem>
+                  ))}
+                </ComboboxList>
+                <ComboboxEmpty>Nenhuma categoria encontrada</ComboboxEmpty>
+              </ComboboxContent>
+            </Combobox>
+            {touched.category && !category && (
+              <p className="mt-1 text-xs text-destructive">Selecione uma categoria</p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Categoria</label>
-              <Select
-                items={categoryItems}
-                value={category}
-                onValueChange={value => { setCategory(value as string); setCreated(false) }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {categoriesForType.map(c => (
-                    <SelectItem key={c.Slug} value={c.Slug}>
-                      {c.Label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <div>
               <label htmlFor="tx-amount" className="mb-1.5 block text-xs font-medium text-muted-foreground">
                 Valor (R$)
@@ -143,12 +159,15 @@ export default function NovaTransacao() {
                 step="0.01"
                 value={amount}
                 onChange={e => { setAmount(e.target.value); setCreated(false) }}
+                onBlur={() => touch('amount')}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('tx-date')?.focus() } }}
                 placeholder="0,00"
+                aria-invalid={touched.amount && !(Number(amount) > 0)}
               />
+              {touched.amount && !(Number(amount) > 0) && (
+                <p className="mt-1 text-xs text-destructive">Valor obrigatório</p>
+              )}
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="tx-date" className="mb-1.5 block text-xs font-medium text-muted-foreground">
                 Vencimento
@@ -158,26 +177,8 @@ export default function NovaTransacao() {
                 type="date"
                 value={date}
                 onChange={e => { setDate(e.target.value); setCreated(false) }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit() } }}
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Status</label>
-              <Select
-                items={statusLabels}
-                value={status}
-                onValueChange={value => { setStatus(value as Status); setCreated(false) }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(statusLabels) as Status[]).map(key => (
-                    <SelectItem key={key} value={key}>
-                      {statusLabels[key]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
 

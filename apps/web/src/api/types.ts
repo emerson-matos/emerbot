@@ -32,8 +32,6 @@ export interface CreateEntryInput {
   category: string;
   type: "expense" | "income";
   description: string;
-  due_date?: string;
-  payment_status: "pending" | "paid";
   supplier?: string;
 }
 

@@ -354,6 +354,52 @@ func TestCreateEntryDefaults(t *testing.T) {
 	}
 }
 
+func TestCreateEntryFutureDatePending(t *testing.T) {
+	store := newStore(t)
+	// Future date, no payment_status → should be pending with due_date = date.
+	body := `{"date":"2099-12-25","amount":5000,"category":"aluguel","type":"expense","description":"Aluguel"}`
+
+	w := run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", body))
+	assertStatus(t, w, http.StatusCreated)
+
+	var got entryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PaymentStatus != domain.PaymentStatusPending {
+		t.Fatalf("status = %q, want pending for future date", got.PaymentStatus)
+	}
+	if got.DueDate == nil || *got.DueDate != "2099-12-25" {
+		t.Fatalf("due_date = %v, want 2099-12-25", got.DueDate)
+	}
+	if got.PaymentDate != nil {
+		t.Fatalf("payment_date = %v, want nil for pending entry", got.PaymentDate)
+	}
+}
+
+func TestCreateEntryPastDatePaid(t *testing.T) {
+	store := newStore(t)
+	// Past date, no payment_status → should be paid with no due_date.
+	body := `{"date":"2020-06-01","amount":1000,"category":"mercado","type":"expense","description":"Feira"}`
+
+	w := run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", body))
+	assertStatus(t, w, http.StatusCreated)
+
+	var got entryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PaymentStatus != domain.PaymentStatusPaid {
+		t.Fatalf("status = %q, want paid for past date", got.PaymentStatus)
+	}
+	if got.DueDate != nil {
+		t.Fatalf("due_date = %v, want nil for past paid entry", got.DueDate)
+	}
+	if got.PaymentDate == nil {
+		t.Fatal("payment_date = nil, want it set for paid entry")
+	}
+}
+
 func TestCreateEntryRejectsBadInput(t *testing.T) {
 	h := NewEntriesHandler(newStore(t), time.UTC)
 	cases := []struct {
