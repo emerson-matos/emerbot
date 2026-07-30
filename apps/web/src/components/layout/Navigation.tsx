@@ -24,8 +24,8 @@ interface NavItem {
 const nav: NavItem[] = [
   { label: "Painel", icon: LayoutDashboard, to: "/" },
   { label: "Transações", icon: Receipt, to: "/transacoes" },
-  { label: "Adquirentes", icon: CreditCard, to: "/adquirentes" },
   { label: "Nova Transação", icon: PlusCircle, to: "/nova-transacao" },
+  { label: "Adquirentes", icon: CreditCard, to: "/adquirentes" },
   { label: "Análise", icon: Activity, to: "/analise" },
   { label: "Metas", icon: Target, to: "/metas" },
   { label: "Notificações", icon: Bell, to: "/notificacoes" },
