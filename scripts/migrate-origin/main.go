@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -55,12 +56,20 @@ func main() {
 	endpoint := flag.String("endpoint", shared.Getenv("DYNAMODB_ENDPOINT", ""), "DynamoDB endpoint (empty = real AWS)")
 	table := flag.String("table", shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries"), "financial entries table name")
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing")
+	report := flag.Bool("report", false, "print how the ledger's inflows are classified and exit, writing nothing")
 	flag.Parse()
 
 	ctx := context.Background()
 	client, err := dynamostore.NewClient(ctx, *endpoint)
 	if err != nil {
 		log.Fatalf("create client: %v", err)
+	}
+
+	if *report {
+		if err := printReport(ctx, client, *table); err != nil {
+			log.Fatalf("report: %v", err)
+		}
+		return
 	}
 
 	stats, err := migrate(ctx, client, *table, *dryRun)
@@ -257,4 +266,95 @@ func apply(ctx context.Context, client dynamostore.API, table string, item map[s
 		Item:      updated,
 	})
 	return err
+}
+
+// printReport answers "why does faturamento look like every inflow?" without
+// changing anything. It breaks the ledger's income down by origin and by the
+// category that stands in for one when the origin is missing, and prints the
+// two totals side by side.
+//
+// The usual answer is that the inflows really are all sales, or that the rows
+// predate the origin field and domain.IsRevenue's shim is still classifying
+// them by category — the report tells the two apart.
+func printReport(ctx context.Context, client dynamostore.API, table string) error {
+	type bucket struct {
+		count int
+		total int64
+	}
+	byOrigin := map[string]*bucket{}
+	var income, revenue int64
+	var incomeRows, missingOrigin int
+
+	paginator := dynamodb.NewScanPaginator(client, &dynamodb.ScanInput{
+		TableName:        aws.String(table),
+		FilterExpression: aws.String("begins_with(SK, :prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":prefix": &types.AttributeValueMemberS{Value: "ENTRY#"},
+		},
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		for _, raw := range page.Items {
+			var row entryRow
+			if err := attributevalue.UnmarshalMap(raw, &row); err != nil {
+				return fmt.Errorf("unmarshal entry: %w", err)
+			}
+			if row.Type != string(domain.EntryTypeIncome) {
+				continue
+			}
+			var amount int64
+			if av, ok := raw["Amount"].(*types.AttributeValueMemberN); ok {
+				if _, err := fmt.Sscanf(av.Value, "%d", &amount); err != nil {
+					return fmt.Errorf("parse Amount of %s: %w", row.EntryID, err)
+				}
+			}
+			incomeRows++
+			income += amount
+
+			key := row.Origin
+			if key == "" {
+				missingOrigin++
+				key = fmt.Sprintf("(sem origem, categoria %q)", row.Category)
+			}
+			b, ok := byOrigin[key]
+			if !ok {
+				b = &bucket{}
+				byOrigin[key] = b
+			}
+			b.count++
+			b.total += amount
+
+			// Exactly the rule the dashboard applies, shim included.
+			if domain.IsRevenue(domain.FinancialEntry{
+				Type: domain.EntryTypeIncome, Category: row.Category,
+				Origin: domain.IncomeOrigin(row.Origin),
+			}) {
+				revenue += amount
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(byOrigin))
+	for k := range byOrigin {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	log.Printf("%d inflow entries", incomeRows)
+	for _, k := range keys {
+		b := byOrigin[k]
+		log.Printf("  %-44s %4d entradas  R$ %.2f", k, b.count, float64(b.total)/100)
+	}
+	log.Printf("faturamento       R$ %.2f", float64(revenue)/100)
+	log.Printf("entradas de caixa R$ %.2f", float64(income)/100)
+	if income > 0 && revenue == income {
+		log.Printf("os dois são iguais: nenhum lançamento de entrada tem origem diferente de venda")
+	}
+	if missingOrigin > 0 {
+		log.Printf("%d entradas ainda sem origem — rode a migração; até lá elas são classificadas pela categoria antiga", missingOrigin)
+	}
+	return nil
 }
