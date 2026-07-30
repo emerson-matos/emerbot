@@ -249,7 +249,7 @@ export default function Goals() {
               {history.map(h => (
                 <TableRow key={h.month}>
                   <TableCell>
-                    {capitalizeFirst(format(new Date(h.month + '-01'), "MMMM 'de' yyyy", { locale: ptBR }))}
+                    {capitalizeFirst(format(new Date(Number(h.month.slice(0, 4)), Number(h.month.slice(5, 7)) - 1, 1), "MMMM 'de' yyyy", { locale: ptBR }))}
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {formatBRL(h.income)} / {h.incomeTarget !== null ? formatBRL(h.incomeTarget) : '—'}
