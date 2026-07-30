@@ -19,7 +19,7 @@ export default function IncomeExpenseChart() {
   const data = trendQueries.every(q => q.isSuccess)
     ? trendQueries.map((q, i) => ({
       month: format(new Date(months3[i] + '-01'), 'MMM', { locale: ptBR }),
-      income: q.data!.TotalIncome,
+      revenue: q.data!.TotalRevenue,
       expense: q.data!.TotalExpense,
     }))
     : []
@@ -27,7 +27,7 @@ export default function IncomeExpenseChart() {
 
   const chartData = data.map(d => ({
     name: d.month,
-    Receitas: d.income / 100,
+    Faturamento: d.revenue / 100,
     Despesas: d.expense / 100,
   }))
 
@@ -36,7 +36,7 @@ export default function IncomeExpenseChart() {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           <BarChart3 className="size-4 text-primary" aria-hidden />
-          Entradas × Saídas — 3 meses
+          Faturamento × Despesas — 3 meses
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -52,7 +52,7 @@ export default function IncomeExpenseChart() {
             />
             <Tooltip {...tooltipProps} formatter={v => formatBRL(Number(v) * 100)} />
             <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-            <Bar dataKey="Receitas" fill={chartColor.income} radius={[4, 4, 0, 0]} maxBarSize={44} />
+            <Bar dataKey="Faturamento" fill={chartColor.income} radius={[4, 4, 0, 0]} maxBarSize={44} />
             <Bar dataKey="Despesas" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={44} />
           </BarChart>
         </ResponsiveContainer>

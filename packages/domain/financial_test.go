@@ -293,7 +293,7 @@ func TestAmountReais(t *testing.T) {
 
 func TestDefaultCategories(t *testing.T) {
 	cats := DefaultCategories("u1")
-	if len(cats) != 15 {
+	if len(cats) != 16 {
 		t.Fatalf("got %d categories, want 15", len(cats))
 	}
 	for _, c := range cats {

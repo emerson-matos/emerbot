@@ -6,7 +6,11 @@ import "math"
 // measured at the same height of the month — see buildComparison.
 func buildTrends(c comparison) Trends {
 	return Trends{
-		Receita:            buildTrend(c.current.income, c.previous.income),
+		// Faturamento is the performance trend, so it moves with sales only —
+		// a loan must never read as the business growing. Resultado stays on
+		// the broad income figure, because a result is money in minus money
+		// out whatever the money was.
+		Faturamento:        buildTrend(c.current.revenue, c.previous.revenue),
 		Despesa:            buildTrend(c.current.expense, c.previous.expense),
 		Resultado:          buildTrend(c.current.balance, c.previous.balance),
 		ComparedThroughDay: c.throughDay,

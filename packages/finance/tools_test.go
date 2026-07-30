@@ -202,23 +202,27 @@ func TestCreateEntryToolIgnoresDueDateWhenNotPending(t *testing.T) {
 	}
 }
 
-func TestResumoMensalToolReturnsIncomeExpenseBalanceAndGoal(t *testing.T) {
+// The tool reports faturamento and entradas de caixa separately, so the model
+// can never present a loan as a sale. The loan seeded here is the difference
+// between the two numbers.
+func TestResumoMensalToolSeparatesRevenueFromCashIn(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
 	month := "2026-07"
-	seed := func(id string, amount int64, typ domain.EntryType) {
+	seed := func(id string, amount int64, typ domain.EntryType, origin domain.IncomeOrigin) {
 		cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 		if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
 			UserID: "u1", EntryID: domain.EntryID(id), TransactionDate: cd,
 			Amount: amount, Type: typ, PaymentStatus: domain.PaymentStatusPaid,
-			PaymentDate: &cd, Source: domain.SourceManual,
+			PaymentDate: &cd, Source: domain.SourceManual, Origin: origin,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	seed("a", 90000, domain.EntryTypeIncome)
-	seed("b", 25000, domain.EntryTypeExpense)
+	seed("a", 90000, domain.EntryTypeIncome, domain.OriginVenda)
+	seed("loan", 500000, domain.EntryTypeIncome, domain.OriginEmprestimo)
+	seed("b", 25000, domain.EntryTypeExpense, "")
 
 	h := handlerFor(t, store, "get_resumo_mensal")
 	out := callTool(t, h, "u1", map[string]any{"month": month})
@@ -227,11 +231,71 @@ func TestResumoMensalToolReturnsIncomeExpenseBalanceAndGoal(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map result, got %T", out)
 	}
-	if m["income"] != 900.0 || m["expense"] != 250.0 || m["balance"] != 650.0 {
+	if m["faturamento"] != 900.0 {
+		t.Errorf("faturamento = %v, want 900 — the loan is not a sale", m["faturamento"])
+	}
+	if m["entradas_de_caixa"] != 5900.0 {
+		t.Errorf("entradas_de_caixa = %v, want 5900 — the loan is real money", m["entradas_de_caixa"])
+	}
+	if m["expense"] != 250.0 || m["balance"] != 5650.0 {
 		t.Fatalf("unexpected summary: %+v", m)
 	}
 	if m["goal"] != nil {
 		t.Fatalf("expected goal to be nil, got %+v", m["goal"])
+	}
+}
+
+// A loan must not be reachable as a sale through the create tool either: the
+// origin the model picks is what decides, and an omitted one means a sale.
+func TestCreateEntryToolRecordsOrigin(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want domain.IncomeOrigin
+	}{
+		{"explicit loan", map[string]any{"origem": "emprestimo"}, domain.OriginEmprestimo},
+		{"omitted defaults to a sale", map[string]any{}, domain.OriginVenda},
+		{"hallucinated value falls back to outros", map[string]any{"origem": "dinheiro_magico"}, domain.OriginOutros},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewInMemoryStore()
+			h := handlerFor(t, store, "create_financial_entry")
+			args := map[string]any{
+				"type": "income", "amount": 100.0,
+				"category": "venda_balcao", "is_pending": false,
+			}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			callTool(t, h, "u1", args)
+
+			entries, err := store.ListEntries(context.Background(), "u1", EntryFilter{})
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("list entries: %v (got %d)", err, len(entries))
+			}
+			if entries[0].Origin != tc.want {
+				t.Fatalf("origin = %q, want %q", entries[0].Origin, tc.want)
+			}
+		})
+	}
+}
+
+// recebimento_cliente is deliberately absent from the create tool: settling a
+// crediário is an edit to the existing pending sale, and offering the model an
+// origin that sounds like "customer paid me" makes it create a second entry for
+// a sale that is already in the ledger.
+func TestCreateEntryToolDoesNotOfferRecebimentoCliente(t *testing.T) {
+	t.Parallel()
+
+	for _, slug := range createOriginSlugs() {
+		if slug == string(domain.OriginRecebimentoCliente) {
+			t.Fatalf("create_financial_entry offers %q, which double-counts a crediário sale", slug)
+		}
+	}
+	if len(createOriginSlugs()) != len(domain.IncomeOrigins())-1 {
+		t.Fatalf("expected exactly one origin to be withheld from the create tool")
 	}
 }
 
@@ -446,7 +510,7 @@ func TestResumoMensalToolComMetaIncluiProgresso(t *testing.T) {
 	}
 
 	// Seed goal: R$ 1000 faturamento target, R$ 500 expense ceiling
-	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000, ExpenseTarget: 50000}
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -515,8 +579,8 @@ func TestDefinirMetaPersisteFaturamentoTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGoal: %v", err)
 	}
-	if goal.IncomeTarget != reaisToCentavos(50000.0) {
-		t.Fatalf("expected IncomeTarget %d, got %d", reaisToCentavos(50000.0), goal.IncomeTarget)
+	if goal.RevenueTarget != reaisToCentavos(50000.0) {
+		t.Fatalf("expected IncomeTarget %d, got %d", reaisToCentavos(50000.0), goal.RevenueTarget)
 	}
 }
 
@@ -564,7 +628,7 @@ func TestDefinirMetaMergeComExisting(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-save a goal with only faturamento target
-	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-09", IncomeTarget: 100000}); err != nil {
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-09", RevenueTarget: 100000}); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
 
@@ -617,7 +681,7 @@ func TestResumoMensalFaturamentoCappedAt100WhenExceedsTarget(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000}
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -646,7 +710,7 @@ func TestResumoMensalExpenseCappedAt100WhenExceedsTarget(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: month, IncomeTarget: 100000, ExpenseTarget: 50000}
+	goal := domain.Goal{UserID: "u1", Month: month, RevenueTarget: 100000, ExpenseTarget: 50000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}
@@ -712,7 +776,7 @@ func TestResumoMensalDefaultsToCurrentMonth(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	goal := domain.Goal{UserID: "u1", Month: expectedMonth, IncomeTarget: 100000}
+	goal := domain.Goal{UserID: "u1", Month: expectedMonth, RevenueTarget: 100000}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("SaveGoal: %v", err)
 	}

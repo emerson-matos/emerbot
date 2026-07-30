@@ -31,6 +31,7 @@ func eachStore(t *testing.T, fn func(t *testing.T, s Store)) {
 				Key:  dynamotest.Key{Hash: "PK", Range: "SK"},
 				GSIs: map[string]dynamotest.Key{
 					gsi2IndexName: {Hash: "GSI2PK", Range: "GSI2SK"},
+					gsi1IndexName: {Hash: "GSI1PK", Range: "GSI1SK"},
 				},
 			})
 			return NewDynamoDBStoreWithClient(tbl, testTable)
@@ -65,7 +66,7 @@ func TestStoresAgreeOnMonthlySummary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("monthly summary: %v", err)
 		}
-		want := MonthlySummary{Month: "2026-07", TotalIncome: 10000, TotalExpense: 35000, Balance: -25000}
+		want := MonthlySummary{Month: "2026-07", TotalRevenue: 10000, TotalExpectedIn: 10000, TotalExpense: 35000, ExpectedBalance: -25000}
 		if got != want {
 			t.Fatalf("summary = %+v, want %+v", got, want)
 		}
@@ -118,13 +119,13 @@ func TestStoresAgreeOnMultiMonthlySummary(t *testing.T) {
 		}
 		// A month with no entries is present with zero totals, not absent, so
 		// callers can index the result without a presence check.
-		if may, ok := got["2026-05"]; !ok || may.TotalIncome != 0 || may.TotalExpense != 0 {
+		if may, ok := got["2026-05"]; !ok || may.TotalExpectedIn != 0 || may.TotalExpense != 0 {
 			t.Fatalf("May = %+v (present %v), want a zeroed summary", may, ok)
 		}
-		if june := got["2026-06"]; june.TotalIncome != 50000 || june.TotalExpense != 20000 {
+		if june := got["2026-06"]; june.TotalExpectedIn != 50000 || june.TotalExpense != 20000 {
 			t.Fatalf("June = %+v, want income 50000 and expense 20000", june)
 		}
-		if july := got["2026-07"]; july.TotalIncome != 10000 || july.TotalExpense != 35000 {
+		if july := got["2026-07"]; july.TotalExpectedIn != 10000 || july.TotalExpense != 35000 {
 			t.Fatalf("July = %+v, want income 10000 and expense 35000", july)
 		}
 		// Each summary must agree with what MonthlySummary reports alone,
@@ -202,6 +203,176 @@ func TestStoresAgreeOnDueDateBucketing(t *testing.T) {
 		}
 		if september.TotalExpense != 35000 {
 			t.Fatalf("September expense = %d, want the pending installment counted at 35000", september.TotalExpense)
+		}
+	})
+}
+
+// TestStoresAgreeOnRevenueAndCashBases is the heart of the faturamento /
+// entradas de caixa split: the three totals are bucketed by three different
+// dates, and a crediário sale proves they cannot be collapsed.
+//
+// The sale is made on 5 January and falls due on 5 February. It is January's
+// faturamento — the pharmacy sold something in January — and it is nobody's
+// cash until it is actually paid. The effective-date view, which is what the
+// ledger has always used, puts it in February; that is right for "what is this
+// month expected to bring in" and wrong for both other questions.
+func TestStoresAgreeOnRevenueAndCashBases(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		crediario := entry(t, "crediario", "2026-01-05", 45000,
+			withOrigin(domain.OriginVenda), withDue(t, "2026-02-05"))
+		if err := s.SaveEntry(ctx, crediario); err != nil {
+			t.Fatalf("seed crediario: %v", err)
+		}
+
+		jan, err := s.MonthlySummary(ctx, "u1", "2026-01")
+		if err != nil {
+			t.Fatalf("January summary: %v", err)
+		}
+		if jan.TotalRevenue != 45000 {
+			t.Errorf("January revenue = %d, want 45000 — a sale counts in the month it was made", jan.TotalRevenue)
+		}
+		if jan.TotalCashIn != 0 {
+			t.Errorf("January cash in = %d, want 0 — the sale has not been paid", jan.TotalCashIn)
+		}
+		if jan.TotalExpectedIn != 0 {
+			t.Errorf("January expected in = %d, want 0 — it is due in February", jan.TotalExpectedIn)
+		}
+
+		feb, err := s.MonthlySummary(ctx, "u1", "2026-02")
+		if err != nil {
+			t.Fatalf("February summary: %v", err)
+		}
+		if feb.TotalRevenue != 0 {
+			t.Errorf("February revenue = %d, want 0 — the sale was made in January", feb.TotalRevenue)
+		}
+		if feb.TotalExpectedIn != 45000 {
+			t.Errorf("February expected in = %d, want 45000 — that is when it falls due", feb.TotalExpectedIn)
+		}
+		if feb.TotalCashIn != 0 {
+			t.Errorf("February cash in = %d, want 0 — still unpaid", feb.TotalCashIn)
+		}
+
+		// Settled late, in March. Only the cash side moves; the sale stays in
+		// January forever.
+		crediario.PaymentStatus = domain.PaymentStatusPaid
+		crediario.PaymentDate = dateP(t, "2026-03-11")
+		if err := s.UpdateEntry(ctx, crediario); err != nil {
+			t.Fatalf("settle crediario: %v", err)
+		}
+
+		jan, err = s.MonthlySummary(ctx, "u1", "2026-01")
+		if err != nil {
+			t.Fatalf("January summary after settling: %v", err)
+		}
+		if jan.TotalRevenue != 45000 {
+			t.Errorf("January revenue = %d after settling, want 45000 — paying a sale does not move it", jan.TotalRevenue)
+		}
+
+		mar, err := s.MonthlySummary(ctx, "u1", "2026-03")
+		if err != nil {
+			t.Fatalf("March summary: %v", err)
+		}
+		if mar.TotalCashIn != 45000 {
+			t.Errorf("March cash in = %d, want 45000 — that is the month the money arrived", mar.TotalCashIn)
+		}
+		if mar.TotalRevenue != 0 {
+			t.Errorf("March revenue = %d, want 0 — receiving is not selling", mar.TotalRevenue)
+		}
+	})
+}
+
+// TestStoresAgreeThatALoanIsNotRevenue is the "empréstimo não é faturamento"
+// rule at the summary level, plus its mirror on the expense side: a pending
+// bill is money owed, not money spent, so it stays out of cash out.
+func TestStoresAgreeThatALoanIsNotRevenue(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		for _, e := range []domain.FinancialEntry{
+			entry(t, "loan", "2026-07-12", 2000000,
+				withOrigin(domain.OriginEmprestimo), withCategory("outros_receitas"), withPaid(t, "2026-07-12")),
+			entry(t, "sale", "2026-07-12", 30000,
+				withOrigin(domain.OriginVenda), withCategory("venda_balcao"), withPaid(t, "2026-07-12")),
+			entry(t, "paid-bill", "2026-07-08", 15000, withCategory("aluguel"), withPaid(t, "2026-07-08")),
+			entry(t, "pending-bill", "2026-07-20", 9000, withCategory("aluguel")),
+		} {
+			if err := s.SaveEntry(ctx, e); err != nil {
+				t.Fatalf("seed %s: %v", e.EntryID, err)
+			}
+		}
+
+		got, err := s.MonthlySummary(ctx, "u1", "2026-07")
+		if err != nil {
+			t.Fatalf("summary: %v", err)
+		}
+		if got.TotalRevenue != 30000 {
+			t.Errorf("revenue = %d, want 30000 — the loan is not a sale", got.TotalRevenue)
+		}
+		if got.TotalCashIn != 2030000 {
+			t.Errorf("cash in = %d, want 2030000 — the loan is real money", got.TotalCashIn)
+		}
+		if got.TotalCashOut != 15000 {
+			t.Errorf("cash out = %d, want 15000 — the pending bill has not been paid", got.TotalCashOut)
+		}
+		if got.TotalExpense != 24000 {
+			t.Errorf("expense = %d, want 24000 — both bills fall in the month", got.TotalExpense)
+		}
+	})
+}
+
+// TestStoresFindCashPaidInADifferentMonthThanItWasDue covers the case the old
+// effective-date-only ledger could not see at all: an entry transacted and due
+// in December but settled in January is January's cash. No query used to reach
+// it, so the money was simply invisible.
+func TestStoresFindCashPaidInADifferentMonthThanItWasDue(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		late := entry(t, "late", "2025-12-20", 80000,
+			withOrigin(domain.OriginVenda), withDue(t, "2025-12-28"), withPaid(t, "2026-01-09"))
+		if err := s.SaveEntry(ctx, late); err != nil {
+			t.Fatalf("seed late: %v", err)
+		}
+
+		jan, err := s.MonthlySummary(ctx, "u1", "2026-01")
+		if err != nil {
+			t.Fatalf("January summary: %v", err)
+		}
+		if jan.TotalCashIn != 80000 {
+			t.Errorf("January cash in = %d, want 80000 — paid on the 9th, nothing else matters", jan.TotalCashIn)
+		}
+		if jan.TotalRevenue != 0 {
+			t.Errorf("January revenue = %d, want 0 — sold in December", jan.TotalRevenue)
+		}
+
+		dec, err := s.MonthlySummary(ctx, "u1", "2025-12")
+		if err != nil {
+			t.Fatalf("December summary: %v", err)
+		}
+		if dec.TotalRevenue != 80000 {
+			t.Errorf("December revenue = %d, want 80000", dec.TotalRevenue)
+		}
+		if dec.TotalCashIn != 0 {
+			t.Errorf("December cash in = %d, want 0 — the money arrived in January", dec.TotalCashIn)
+		}
+	})
+}
+
+// TestStoresRejectCursorAndLimitOffTheEffectiveBasis guards the pagination
+// footgun: both mean "the most recent N by effective date", which no other
+// basis can order. Silently paginating against the wrong sort key would drop
+// entries from a financial view with no error to show for it.
+func TestStoresRejectCursorAndLimitOffTheEffectiveBasis(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		for _, f := range []EntryFilter{
+			{DateBasis: BasisTransaction, Limit: 10},
+			{DateBasis: BasisPayment, Limit: 10},
+			{DateBasis: BasisTransaction, Cursor: "2026-07-01#x"},
+			{DateBasis: BasisPayment, Cursor: "2026-07-01#x"},
+		} {
+			if _, err := s.ListEntries(ctx, "u1", f); err == nil {
+				t.Errorf("ListEntries(%+v) succeeded, want an error", f)
+			}
 		}
 	})
 }
@@ -345,7 +516,7 @@ func TestStoresAgreeOnGoalsAndCategories(t *testing.T) {
 		if _, err := s.GetGoal(ctx, "u1", "2026-07"); err == nil {
 			t.Fatal("expected an error for a month with no goal")
 		}
-		goal := domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 5000, ExpenseTarget: 3000}
+		goal := domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 5000, ExpenseTarget: 3000}
 		if err := s.SaveGoal(ctx, goal); err != nil {
 			t.Fatalf("save goal: %v", err)
 		}

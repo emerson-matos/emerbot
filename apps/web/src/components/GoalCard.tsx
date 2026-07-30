@@ -22,11 +22,9 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 export default function GoalCard() {
   const now = new Date()
   const currentMonth = format(now, 'yyyy-MM') as YearMonth
-  // Faturamento (venda_balcao + convenio + delivery, not outros_receitas) is
-  // the same figure the backend computes for the Analysis page and the
-  // WhatsApp bot (packages/finance/analytics) — this card used to re-derive
-  // its own narrower one (counter sales only) straight from the entries,
-  // which drifted from the number shown everywhere else.
+  // Faturamento comes from the backend (packages/finance/analytics), the same
+  // figure the Analysis page and the WhatsApp bot show. This card used to
+  // re-derive its own from the entries, which drifted from everything else.
   const analysisQuery = useMonthlyAnalysis(currentMonth)
   const goalQuery = useGoal(currentMonth)
   const analysis = analysisQuery.data ?? null
@@ -40,13 +38,13 @@ export default function GoalCard() {
     return <Card className="min-h-26"><CardContent className="flex grow items-center justify-center"><p className="text-xs text-destructive">Erro ao carregar meta do mês</p></CardContent></Card>
   }
 
-  const actualIncome = analysis?.goals.incomeActual ?? 0
+  const actualRevenue = analysis?.goals.revenueActual ?? 0
   const actualExpense = analysis?.goals.expenseActual ?? 0
-  const incomePct = goal?.IncomeTarget && goal.IncomeTarget > 0
-    ? Math.min(100, (actualIncome / goal.IncomeTarget) * 100) : 0
+  const revenuePct = goal?.RevenueTarget && goal.RevenueTarget > 0
+    ? Math.min(100, (actualRevenue / goal.RevenueTarget) * 100) : 0
   const expPct = goal?.ExpenseTarget && goal.ExpenseTarget > 0
     ? Math.min(100, (actualExpense / goal.ExpenseTarget) * 100) : 0
-  const incomeColor = incomePct >= 100 ? 'var(--success)' : 'var(--info)'
+  const revenueColor = revenuePct >= 100 ? 'var(--success)' : 'var(--info)'
   const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 
   return (
@@ -61,9 +59,9 @@ export default function GoalCard() {
             <div>
               <div className="mb-1 flex justify-between text-xs">
                 <span className="text-muted-foreground">Faturamento</span>
-                <span className="font-medium tabular-nums">{formatBRL(actualIncome)} / {formatBRL(goal.IncomeTarget)}</span>
+                <span className="font-medium tabular-nums">{formatBRL(actualRevenue)} / {formatBRL(goal.RevenueTarget)}</span>
               </div>
-              <ProgressBar pct={incomePct} color={incomeColor} />
+              <ProgressBar pct={revenuePct} color={revenueColor} />
             </div>
             <div>
               <div className="mb-1 flex justify-between text-xs">

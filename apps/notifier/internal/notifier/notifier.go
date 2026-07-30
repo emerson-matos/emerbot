@@ -207,20 +207,21 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	}
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
-	// entries spans the overdue lookback window (windowStart..today) — several
-	// months wide — but the goal alert compares against this month's target,
-	// so faturamento must be this month's only, and specifically faturamento
-	// (venda_balcao + convenio + delivery, not outros_receitas — see
-	// pkgfinance.IsFaturamento): a loan or aporte from an earlier month, or one
-	// filed as "Outros (Receita)", must not trigger "meta atingida".
-	monthStart, _, _ := domain.ParseMonth(month) // derived from MonthOf(today), cannot fail
-	var monthEntries []domain.FinancialEntry
-	for _, e := range entries {
-		if !pkgfinance.EffectiveDate(e).Before(monthStart) {
-			monthEntries = append(monthEntries, e)
-		}
+	// The goal alert compares against *this month's* faturamento, which cannot
+	// be derived from `entries` above: that slice spans the overdue lookback
+	// window, several months wide, and is bucketed by effective date, so a
+	// crediário sale made this month but due next is missing from it entirely.
+	// Read the month's summary instead — TotalRevenue is sales only, on the
+	// transaction basis, which is exactly what a sales target is set against.
+	var revenue int64
+	if summaries, serr := n.store.MultiMonthlySummary(ctx, shared.FinanceLedgerID, []string{month}); serr != nil {
+		// Without the month's faturamento the goal alert cannot be evaluated
+		// honestly. Skipping it costs one notification; guessing from the
+		// lookback window would announce "meta atingida" off the wrong number.
+		runLog.Warn("monthly summary unavailable, skipping goal alert", "error", serr)
+	} else {
+		revenue = summaries[month].TotalRevenue
 	}
-	faturamento := pkgfinance.FaturamentoTotal(monthEntries)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
@@ -275,7 +276,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, faturamento, goal, today)
+		alerts := notifications.Evaluate(prefs, entries, revenue, goal, today)
 		if len(alerts) == 0 {
 			res.SkippedNoAlerts++
 			log.Info("notifier digest not sent",

@@ -25,7 +25,8 @@ func snapshotRequest(method, path string) *http.Request {
 func seedSnapshot(t *testing.T, store finance.Store, date string, status analytics.HealthStatus) {
 	t.Helper()
 	analysis := analytics.Analysis{
-		Month: date[:7],
+		Schema: analytics.SchemaVersion,
+		Month:  date[:7],
 		Health: analytics.Health{
 			Status: status,
 			Messages: []analytics.Insight{
@@ -33,9 +34,9 @@ func seedSnapshot(t *testing.T, store finance.Store, date string, status analyti
 			},
 		},
 		KPIs: analytics.KPIs{
-			Receita:   100000,
-			Despesa:   50000,
-			Resultado: 50000,
+			Faturamento: 100000,
+			Despesa:     50000,
+			Resultado:   50000,
 		},
 	}
 	snap, err := json.Marshal(analysis)
@@ -185,9 +186,9 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 
 	// Yesterday: receita 100k
 	prev := analytics.Analysis{
-		Month: yesterday[:7],
+		Month:  yesterday[:7],
 		Health: analytics.Health{Status: analytics.HealthBoa},
-		KPIs:   analytics.KPIs{Receita: 100000, Despesa: 50000, Resultado: 50000},
+		KPIs:   analytics.KPIs{Faturamento: 100000, Despesa: 50000, Resultado: 50000},
 	}
 	prevSnap, _ := json.Marshal(prev)
 	if err := store.SaveInsightSnapshot(context.Background(), shared.FinanceLedgerID, yesterday, prevSnap, time.Now()); err != nil {
@@ -196,9 +197,9 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 
 	// Today: receita 120k
 	curr := analytics.Analysis{
-		Month: today[:7],
+		Month:  today[:7],
 		Health: analytics.Health{Status: analytics.HealthBoa},
-		KPIs:   analytics.KPIs{Receita: 120000, Despesa: 45000, Resultado: 75000},
+		KPIs:   analytics.KPIs{Faturamento: 120000, Despesa: 45000, Resultado: 75000},
 	}
 	currSnap, _ := json.Marshal(curr)
 	if err := store.SaveInsightSnapshot(context.Background(), shared.FinanceLedgerID, today, currSnap, time.Now()); err != nil {
@@ -209,14 +210,14 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 	if c == nil {
 		t.Fatal("comparison is nil")
 	}
-	if c.KPIs == nil || c.KPIs.Receita == nil {
+	if c.KPIs == nil || c.KPIs.Faturamento == nil {
 		t.Fatal("receita delta missing")
 	}
-	if c.KPIs.Receita.Delta != 20000 {
-		t.Errorf("receita delta = %d, want 20000", c.KPIs.Receita.Delta)
+	if c.KPIs.Faturamento.Delta != 20000 {
+		t.Errorf("receita delta = %d, want 20000", c.KPIs.Faturamento.Delta)
 	}
-	if c.KPIs.Receita.DeltaPct != 20.0 {
-		t.Errorf("receita deltaPct = %.1f, want 20.0", c.KPIs.Receita.DeltaPct)
+	if c.KPIs.Faturamento.DeltaPct != 20.0 {
+		t.Errorf("receita deltaPct = %.1f, want 20.0", c.KPIs.Faturamento.DeltaPct)
 	}
 	if c.KPIs.Despesa == nil {
 		t.Fatal("despesa delta missing")
@@ -230,12 +231,52 @@ func TestComparisonReturnsNilWhenNoChanges(t *testing.T) {
 	snap := analytics.Analysis{
 		Month:  "2026-07",
 		Health: analytics.Health{Status: analytics.HealthBoa},
-		KPIs:   analytics.KPIs{Receita: 100000, Despesa: 50000, Resultado: 50000},
+		KPIs:   analytics.KPIs{Faturamento: 100000, Despesa: 50000, Resultado: 50000},
 	}
 	data, _ := json.Marshal(snap)
 	c := buildComparison("2026-07-20", data, data)
 	if c != nil {
 		t.Errorf("comparison should be nil when identical, got %+v", c)
+	}
+}
+
+// TestComparisonRefusesToCrossSchemaVersions guards the deploy-day failure a
+// rename causes: encoding/json leaves a renamed field at its zero value, so a
+// snapshot from the previous schema decodes cleanly with faturamento at 0 and
+// the diff reports the whole month as growth. No delta is the right answer.
+func TestComparisonRefusesToCrossSchemaVersions(t *testing.T) {
+	current, err := json.Marshal(analytics.Analysis{
+		Schema: analytics.SchemaVersion,
+		Month:  "2026-07",
+		KPIs:   analytics.KPIs{Faturamento: 4500000},
+	})
+	if err != nil {
+		t.Fatalf("marshal current: %v", err)
+	}
+	// An older snapshot: right shape, wrong version, and no faturamento field at
+	// all — exactly what is sitting in DynamoDB the day this ships.
+	previous := []byte(`{"schemaVersion":1,"month":"2026-07","kpis":{"receita":4200000}}`)
+
+	if c := buildComparison("2026-07-20", current, previous); c != nil {
+		t.Fatalf("comparison across schema versions = %+v, want nil", c)
+	}
+}
+
+// A stored snapshot from an older schema must read as absent rather than as a
+// month with no revenue: the frontend renders the snapshot raw.
+func TestSnapshotGetRejectsAnOlderSchema(t *testing.T) {
+	store := finance.NewInMemoryStore()
+	today := time.Now().UTC().Format("2006-01-02")
+	stale := []byte(`{"schemaVersion":1,"month":"2026-07","kpis":{"receita":4200000}}`)
+	if err := store.SaveInsightSnapshot(context.Background(), shared.FinanceLedgerID, today, stale, time.Now()); err != nil {
+		t.Fatalf("seed stale snapshot: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	NewSnapshotHandler(store, time.UTC).Get(rec, snapshotRequest(http.MethodGet, "/analysis"))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for a snapshot from an older schema", rec.Code)
 	}
 }
 

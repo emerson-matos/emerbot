@@ -57,7 +57,7 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Month         string `json:"month"`
-		IncomeTarget  *int64 `json:"income_target"`
+		RevenueTarget *int64 `json:"revenue_target"`
 		ExpenseTarget *int64 `json:"expense_target"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -77,8 +77,8 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.IncomeTarget == nil && body.ExpenseTarget == nil {
-		httpx.Error(w, "provide at least one of income_target or expense_target", http.StatusBadRequest)
+	if body.RevenueTarget == nil && body.ExpenseTarget == nil {
+		httpx.Error(w, "provide at least one of revenue_target or expense_target", http.StatusBadRequest)
 		return
 	}
 
@@ -87,12 +87,12 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 		Month:  month,
 	}
 
-	if body.IncomeTarget != nil {
-		if *body.IncomeTarget < 0 {
-			httpx.Error(w, "income_target must be >= 0", http.StatusBadRequest)
+	if body.RevenueTarget != nil {
+		if *body.RevenueTarget < 0 {
+			httpx.Error(w, "revenue_target must be >= 0", http.StatusBadRequest)
 			return
 		}
-		goal.IncomeTarget = *body.IncomeTarget
+		goal.RevenueTarget = *body.RevenueTarget
 	}
 
 	if body.ExpenseTarget != nil {

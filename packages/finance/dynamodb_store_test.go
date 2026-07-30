@@ -20,7 +20,10 @@ import (
 const testTable = "emerbot-finance-test"
 
 // newStore returns a store over an empty table shaped like the deployed one:
-// PK/SK primary key plus the GSI2-Status index ListEntries queries.
+// PK/SK primary key plus both GSIs, registered under the names the real table
+// uses. The names matter: the fake used to register GSI1 as plain "GSI1" while
+// the deployed table calls it "GSI1-Category", which was harmless only for as
+// long as nothing queried it.
 func newStore(t *testing.T, pageSize int) (*DynamoDBStore, *dynamotest.Table) {
 	t.Helper()
 	tbl := dynamotest.New(dynamotest.Config{
@@ -28,7 +31,7 @@ func newStore(t *testing.T, pageSize int) (*DynamoDBStore, *dynamotest.Table) {
 		Key:  dynamotest.Key{Hash: "PK", Range: "SK"},
 		GSIs: map[string]dynamotest.Key{
 			gsi2IndexName: {Hash: "GSI2PK", Range: "GSI2SK"},
-			"GSI1":        {Hash: "GSI1PK", Range: "GSI1SK"},
+			gsi1IndexName: {Hash: "GSI1PK", Range: "GSI1SK"},
 		},
 		PageSize: pageSize,
 	})
@@ -75,6 +78,16 @@ func withDescription(d string) entryOpt {
 
 func withIncome() entryOpt {
 	return func(e *domain.FinancialEntry) { e.Type = domain.EntryTypeIncome }
+}
+
+// withOrigin marks an income entry's origin. Without it an income entry has no
+// origin at all, which is the pre-migration state domain.IsRevenue's shim
+// covers — several tests rely on that, so this is opt-in rather than a default.
+func withOrigin(o domain.IncomeOrigin) entryOpt {
+	return func(e *domain.FinancialEntry) {
+		e.Type = domain.EntryTypeIncome
+		e.Origin = o
+	}
 }
 
 func withPaid(t *testing.T, on string) entryOpt {
@@ -156,6 +169,42 @@ func TestSaveAndListEntriesRoundTrip(t *testing.T) {
 	// Every field must survive the marshal/unmarshal round trip unchanged.
 	if diff := entryDiff(original, got[0]); diff != "" {
 		t.Fatalf("entry changed on round trip: %s", diff)
+	}
+}
+
+// TestPendingEntryStaysOutOfTheCashIndex is the sparse-GSI1 contract, and the
+// reason entryItem's GSI1 tags carry omitempty.
+//
+// Without omitempty the marshaller writes GSI1PK/GSI1SK as empty strings. Real
+// DynamoDB rejects an empty string in a key attribute, so every /pagar and
+// /receber would 500 in production — while the in-memory fake, which used to
+// check only that the attribute was present, accepted it and even returned the
+// item from index queries. Both halves are asserted here: the attributes must
+// be absent, and a paid entry must carry the payment date as its sort key.
+func TestPendingEntryStaysOutOfTheCashIndex(t *testing.T) {
+	s, tbl := newStore(t, 0)
+	save(t, s, entry(t, "pending", "2026-07-10", 5000, withDue(t, "2026-08-01")))
+	save(t, s, entry(t, "paid", "2026-07-11", 7000, withPaid(t, "2026-07-20")))
+
+	byID := map[string]map[string]types.AttributeValue{}
+	for _, item := range tbl.Items() {
+		id := item["EntryID"].(*types.AttributeValueMemberS).Value
+		byID[id] = item
+	}
+
+	if _, ok := byID["pending"]["GSI1PK"]; ok {
+		t.Error("pending entry carries GSI1PK; it must be absent, not empty — money that has not moved is not cash")
+	}
+	if _, ok := byID["pending"]["GSI1SK"]; ok {
+		t.Error("pending entry carries GSI1SK; it must be absent, not empty")
+	}
+
+	sk, ok := byID["paid"]["GSI1SK"].(*types.AttributeValueMemberS)
+	if !ok {
+		t.Fatalf("paid entry is missing GSI1SK: %v", byID["paid"]["GSI1SK"])
+	}
+	if want := "2026-07-20#paid"; sk.Value != want {
+		t.Errorf("GSI1SK = %q, want %q (the day the money moved, not the transaction date)", sk.Value, want)
 	}
 }
 
@@ -341,7 +390,7 @@ func TestListEntriesIgnoresOtherUsersAndNonEntryItems(t *testing.T) {
 
 	// Goals and categories live in the same partition but carry no GSI2
 	// attributes, so the entries index must never see them.
-	if err := s.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 1}); err != nil {
+	if err := s.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 1}); err != nil {
 		t.Fatalf("save goal: %v", err)
 	}
 	if err := s.SaveCategory(ctx, domain.Category{UserID: "u1", Slug: "mercado", Label: "Mercado"}); err != nil {
@@ -495,7 +544,7 @@ func TestDeleteEntry(t *testing.T) {
 func TestGoalRoundTrip(t *testing.T) {
 	s, _ := newStore(t, 0)
 	ctx := context.Background()
-	goal := domain.Goal{UserID: "u1", Month: "2026-07", IncomeTarget: 500000, ExpenseTarget: 300000}
+	goal := domain.Goal{UserID: "u1", Month: "2026-07", RevenueTarget: 500000, ExpenseTarget: 300000}
 
 	if err := s.SaveGoal(ctx, goal); err != nil {
 		t.Fatalf("save goal: %v", err)
@@ -685,6 +734,7 @@ func entryDiff(want, got domain.FinancialEntry) string {
 		{"Type", string(want.Type), string(got.Type)},
 		{"PaymentStatus", string(want.PaymentStatus), string(got.PaymentStatus)},
 		{"Source", string(want.Source), string(got.Source)},
+		{"Origin", string(want.Origin), string(got.Origin)},
 		{"CreatedAt", want.CreatedAt.UTC().Format(time.RFC3339), got.CreatedAt.UTC().Format(time.RFC3339)},
 		{"UpdatedAt", want.UpdatedAt.UTC().Format(time.RFC3339), got.UpdatedAt.UTC().Format(time.RFC3339)},
 		{"RecurrenceID", want.RecurrenceID, got.RecurrenceID},

@@ -19,10 +19,10 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     month: "2026-07",
     kpis: {
       resultado: 900000,
-      receita: 3600000,
+      faturamento: 3600000,
       despesa: 2700000,
       daysRemaining: 5,
-      previousMonthIncomeUpToDay: 0,
+      previousMonthRevenueUpToDay: 0,
     },
     health: {
       status: "atencao",
@@ -37,7 +37,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       ],
     },
     trends: {
-      receita: { current: 0, previous: 0, change: 0, direction: "stable" },
+      faturamento: { current: 0, previous: 0, change: 0, direction: "stable" },
       despesa: { current: 0, previous: 0, change: 0, direction: "stable" },
       resultado: { current: 0, previous: 0, change: 0, direction: "stable" },
       comparedThroughDay: 26,
@@ -60,9 +60,9 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     cashOutDays: [],
     expenseComposition: [],
     goals: {
-      incomeTarget: 3600000,
-      incomeActual: 2777500,
-      incomePct: 77,
+      revenueTarget: 3600000,
+      revenueActual: 2777500,
+      revenuePct: 77,
       expenseTarget: 0,
       expenseActual: 2700000,
       expensePct: 0,
@@ -203,7 +203,7 @@ describe("Analysis page", () => {
 
   it("does not invent a percentage against a month that never traded", () => {
     const data = analysisData();
-    data.kpis = { ...data.kpis, previousMonthIncomeUpToDay: 0 };
+    data.kpis = { ...data.kpis, previousMonthRevenueUpToDay: 0 };
     data.weekComparison = { ...data.weekComparison, previousUpToDay: 0 };
     // The backend drops its own month-over-month copy without a baseline
     // (hasBaseline); only the weekly recommendation survives.

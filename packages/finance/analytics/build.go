@@ -17,12 +17,26 @@ const HistoryMonths = 3
 type Input struct {
 	// Month is the month under analysis, "YYYY-MM".
 	Month string
-	// Entries are the analysed month's entries; PreviousEntries the month
-	// before's. Both are needed in full because the month-over-month
-	// comparison re-totals them day by day rather than reading the stored
-	// summaries, which only exist for whole months.
+	// Entries are the analysed month's entries on the effective-date basis;
+	// PreviousEntries the month before's. Both are needed in full because the
+	// month-over-month comparison re-totals them day by day rather than reading
+	// the stored summaries, which only exist for whole months.
+	//
+	// These feed everything that is *not* faturamento: expense composition,
+	// cash-out days, "dias com movimento".
 	Entries         []domain.FinancialEntry
 	PreviousEntries []domain.FinancialEntry
+	// RevenueEntries are the same two months read on the transaction-date
+	// basis, and they feed every faturamento figure — the goal, the projection,
+	// the weekday averages, the week-over-week pace, the day highlights.
+	//
+	// They are a separate read rather than a filter over Entries because the
+	// two sets genuinely differ: a crediário sale made in the analysed month
+	// but due in the next one is in RevenueEntries and not in Entries. Deriving
+	// revenue from Entries is how the KPI and the goal ended up disagreeing
+	// about which month a sale belonged to.
+	RevenueEntries         []domain.FinancialEntry
+	PreviousRevenueEntries []domain.FinancialEntry
 	// Summaries and Goals run oldest-first over the trailing HistoryMonths
 	// window ending at Month, so the analysed month is the *last* slot. A month
 	// with no data is a nil hole rather than a shorter slice — collapsing it
@@ -48,26 +62,29 @@ func Build(in Input) Analysis {
 	}
 	currentGoal := at(in.Goals, current)
 
-	// Faturamento (venda_balcao + convenio + delivery) is deliberately
-	// narrower than KPIs.Receita (currentSummary.TotalIncome, which also
-	// counts outros_receitas) — see isFaturamento.
-	faturamento := faturamentoTotal(in.Entries)
+	// Faturamento comes off the summary, which reads it on the transaction
+	// basis — the same basis RevenueEntries below is read on, so every revenue
+	// figure in this Analysis agrees about which month a sale falls in.
+	// EntradasCaixa is the broader figure and is deliberately different: it is
+	// what arrived, not what was sold.
+	faturamento := currentSummary.TotalRevenue
 
 	kpis := KPIs{
-		Resultado:                  currentSummary.Balance,
-		Receita:                    currentSummary.TotalIncome,
-		Despesa:                    currentSummary.TotalExpense,
-		DaysRemaining:              daysInMonth(in.Now) - in.Now.Day(),
-		PreviousMonthIncomeUpToDay: faturamentoUpToDay(in.PreviousEntries, in.Now.Day()),
+		Resultado:                   currentSummary.ExpectedBalance,
+		Faturamento:                 faturamento,
+		EntradasCaixa:               currentSummary.TotalCashIn,
+		Despesa:                     currentSummary.TotalExpense,
+		DaysRemaining:               daysInMonth(in.Now) - in.Now.Day(),
+		PreviousMonthRevenueUpToDay: revenueUpToDay(in.PreviousRevenueEntries, in.Now.Day()),
 	}
 
-	var incomeTarget int64
+	var revenueTarget int64
 	if currentGoal != nil {
-		incomeTarget = currentGoal.IncomeTarget
+		revenueTarget = currentGoal.RevenueTarget
 	}
-	week := buildWeekComparison(in.Entries, in.Now, incomeTarget)
+	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, in.Now, faturamento)
-	weekdays := weekdayStats(in.Entries, in.Now)
+	weekdays := weekdayStats(in.RevenueEntries, in.Now)
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
 	// the bot — they each used to work one out for themselves and disagreed.
@@ -76,18 +93,19 @@ func Build(in Input) Analysis {
 	// months, shared by the trends and the health insights — they used to
 	// derive it separately from the full summaries and both inherited the
 	// partial-month distortion.
-	compared := buildComparison(in.Month, in.Entries, in.PreviousEntries, in.Now)
+	compared := buildComparison(in.Month, in.Entries, in.PreviousEntries, in.RevenueEntries, in.PreviousRevenueEntries, in.Now)
 	trends := buildTrends(compared)
 	cashPosition := buildCashPosition(in.CashFlowPoints, in.Now)
 
 	return Analysis{
+		Schema:             SchemaVersion,
 		Month:              in.Month,
 		KPIs:               kpis,
 		Health:             buildHealth(in.Entries, currentSummary, compared, week, projection),
 		Trends:             trends,
 		Weekdays:           weekdays,
 		WeekComparison:     week,
-		Highlights:         buildHighlights(in.Entries),
+		Highlights:         buildHighlights(in.Entries, in.RevenueEntries),
 		CashOutDays:        buildCashOutDays(in.Entries),
 		ExpenseComposition: expenseComposition(in.Entries),
 		Goals:              goals,
@@ -131,7 +149,7 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 
 	week := WeekComparison{MonthlyTarget: monthlyTarget}
 	for _, e := range entries {
-		if !isFaturamento(e) {
+		if !domain.IsRevenue(e) {
 			continue
 		}
 		date := e.TransactionDate.String()
@@ -184,24 +202,13 @@ func MonthRange(month string, count int) []string {
 	return months
 }
 
-// faturamentoTotal sums faturamento across the given entries.
-func faturamentoTotal(entries []domain.FinancialEntry) int64 {
+// revenueUpToDay sums faturamento falling on or before the given day of the
+// month — how last month is truncated for a like-for-like comparison with a
+// month still in progress. entries must be on the transaction basis.
+func revenueUpToDay(entries []domain.FinancialEntry, day int) int64 {
 	var total int64
 	for _, e := range entries {
-		if isFaturamento(e) {
-			total += e.Amount
-		}
-	}
-	return total
-}
-
-// faturamentoUpToDay sums faturamento falling on or before the given day of
-// the month — how last month is truncated for a like-for-like comparison
-// with a month still in progress.
-func faturamentoUpToDay(entries []domain.FinancialEntry, day int) int64 {
-	var total int64
-	for _, e := range entries {
-		if isFaturamento(e) && e.TransactionDate.Day() <= day {
+		if domain.IsRevenue(e) && e.TransactionDate.Day() <= day {
 			total += e.Amount
 		}
 	}

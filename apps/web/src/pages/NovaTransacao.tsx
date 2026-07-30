@@ -12,6 +12,7 @@ import {
 import { categoriesByType } from '@/lib/categories'
 import { useCategories, useCreateEntryMutation } from '../api/queries'
 import type { Category } from '../api/types'
+import { IncomeOrigin, incomeOriginLabels } from '../api/types'
 
 type EntryType = 'income' | 'expense'
 
@@ -39,6 +40,10 @@ export default function NovaTransacao() {
   const [category, setCategory] = useState('')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(today)
+  // Only "venda" counts toward faturamento, so this is the field that decides
+  // whether an inflow reaches the sales goal. It defaults to a sale because
+  // that is what a pharmacy records all day.
+  const [origin, setOrigin] = useState<IncomeOrigin>(IncomeOrigin.Venda)
   const [touched, setTouched] = useState<Record<Field, boolean>>(initialTouched)
 
   const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
@@ -77,6 +82,7 @@ export default function NovaTransacao() {
     setDesc('')
     setAmount('')
     setDate(today())
+    setOrigin(IncomeOrigin.Venda)
     setTouched(initialTouched)
   }
 
@@ -105,6 +111,7 @@ export default function NovaTransacao() {
         category,
         type,
         description: desc.trim(),
+        origin: type === 'income' ? origin : undefined,
       })
 
       createEntry.reset()
@@ -207,6 +214,33 @@ export default function NovaTransacao() {
                 <p className="mt-1 text-xs text-destructive">Selecione uma categoria</p>
               )}
             </div>
+
+            {type === 'income' && (
+              <div>
+                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Origem</Label>
+                <Combobox
+                  value={origin}
+                  onValueChange={v => { setOrigin(v as IncomeOrigin) }}
+                  itemToStringLabel={(item: string) => incomeOriginLabels[item as IncomeOrigin] ?? item}
+                >
+                  <ComboboxInput placeholder="Buscar origem..." />
+                  <ComboboxContent>
+                    <ComboboxList>
+                      {Object.entries(incomeOriginLabels).map(([slug, label]) => (
+                        <ComboboxItem key={slug} value={slug}>
+                          {label}
+                        </ComboboxItem>
+                      ))}
+                    </ComboboxList>
+                    <ComboboxEmpty>Nenhuma origem encontrada</ComboboxEmpty>
+                  </ComboboxContent>
+                </Combobox>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Só <span className="font-medium">Venda</span> conta como faturamento e entra na meta.
+                  Empréstimos e aportes entram apenas nas entradas de caixa.
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>

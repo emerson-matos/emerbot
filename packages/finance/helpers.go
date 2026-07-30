@@ -34,6 +34,38 @@ func knownCategory(c string) bool {
 // from user text; a hallucinated absurd amount is rejected rather than saved.
 const maxEntryAmountReais = 10_000_000
 
+// originArgDescription tells the model what the origin means and, crucially,
+// that only "venda" is faturamento. Without the second half it happily files a
+// loan as a sale, which is the whole mistake this field exists to prevent.
+const originArgDescription = "Origem do dinheiro que entrou (só para type=income). " +
+	"Use \"venda\" para qualquer venda de produto ou serviço — balcão, cartão, PIX ou crediário. " +
+	"Use as outras para dinheiro que entrou sem venda: \"emprestimo\", \"aporte_socio\", " +
+	"\"receita_financeira\" (rendimentos), \"restituicao\", \"outros\". " +
+	"Apenas \"venda\" conta como faturamento e conta para a meta; as demais são só entrada de caixa. " +
+	"Padrão: \"venda\"."
+
+// createOriginSlugs is the origin enum offered to create_financial_entry.
+//
+// It deliberately omits OriginRecebimentoCliente. A customer settling a
+// crediário sale is the *existing* pending entry being marked paid — the sale
+// was already recorded on the day it happened. Offering the model an origin
+// that sounds like "customer paid me" makes it create a second, paid entry for
+// the same sale, and the money gets counted twice with nothing downstream able
+// to detect it. That path is edit_financial_entry; see the rule in
+// packages/orchestrator/internal/agentprompt. The origin stays reachable from
+// the dashboard form, where a human can mean "a receivable that predates this
+// ledger".
+func createOriginSlugs() []string {
+	slugs := make([]string, 0, len(domain.IncomeOrigins()))
+	for _, o := range domain.IncomeOrigins() {
+		if o == domain.OriginRecebimentoCliente {
+			continue
+		}
+		slugs = append(slugs, string(o))
+	}
+	return slugs
+}
+
 // parseDate parses a "YYYY-MM-DD" string; ok is false for empty or malformed
 // input so callers fall back to their default. Tool args come from LLM output,
 // where "no date given" and "a date I could not read" both mean "use the
@@ -76,66 +108,51 @@ func emptySummaries(yearMonths []string) (map[string]MonthlySummary, time.Time, 
 	return summaries, from, to, nil
 }
 
-// accumulateSummaries folds entries into the summaries they belong to, keyed
-// by the month of their effective date. Entries outside the requested months
-// are ignored.
-func accumulateSummaries(summaries map[string]MonthlySummary, entries []domain.FinancialEntry) {
+// accumulateSummaries folds one basis's entries into the summaries they belong
+// to. The month an entry belongs to depends on the basis — a sale is keyed by
+// the month it was made, cash by the month it landed, a bill by the month it
+// falls due — so the same entry can land in two different months across two
+// calls, which is the whole point. Entries outside the requested months are
+// ignored.
+func accumulateSummaries(summaries map[string]MonthlySummary, basis DateBasis, entries []domain.FinancialEntry) {
 	for _, e := range entries {
-		key := domain.MonthOf(EffectiveDate(e))
+		date, ok := basisDate(basis, e)
+		if !ok {
+			continue
+		}
+		key := domain.MonthOf(date)
 		summary, ok := summaries[key]
 		if !ok {
 			continue
 		}
-		if e.Type == domain.EntryTypeIncome {
-			summary.TotalIncome += e.Amount
-		} else {
-			summary.TotalExpense += e.Amount
-		}
-		summary.Balance = summary.TotalIncome - summary.TotalExpense
+		addToSummary(&summary, basis, []domain.FinancialEntry{e})
 		summaries[key] = summary
 	}
 }
 
-// IncomeTotal sums the Amount of every income entry — receita in the broad
-// sense, whatever it came from. See FaturamentoTotal for the narrower figure
-// goals are tracked against.
-func IncomeTotal(entries []domain.FinancialEntry) int64 {
+// RevenueTotal sums faturamento across the given entries: what was sold, by
+// domain.IsRevenue. This is the figure every performance indicator uses.
+//
+// It does not filter by date — callers pass the entries of the period they
+// mean, and the period has to have been read on the transaction basis (see
+// DateBasis) for the total to be the month's real faturamento.
+func RevenueTotal(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
-		if e.Type == domain.EntryTypeIncome {
+		if domain.IsRevenue(e) {
 			total += e.Amount
 		}
 	}
 	return total
 }
 
-// outrosReceitasCategory is the one income category that is not unambiguously
-// a sale — the catch-all a person reaches for when nothing else fits, and so
-// the one place a loan disbursement, a partner contribution or an investment
-// redemption is likely to get filed for lack of a better bucket.
-const outrosReceitasCategory = "outros_receitas"
-
-// IsFaturamento reports whether an entry counts toward faturamento — revenue
-// earned by selling something, as opposed to money that merely moved (an
-// expense payment) or cash that came in without a sale behind it. It mirrors
-// packages/finance/analytics.isFaturamento; that package cannot import this
-// one's caller-facing helpers back without a cycle, so the two are kept in
-// sync by hand.
-//
-// venda_balcao, convenio and delivery are unambiguous sales. outros_receitas
-// is excluded on purpose — a goal is "quanto vendemos", and a loan or capital
-// contribution logged under "Outros (Receita)" must not count toward it. That
-// is exactly the "empréstimo não é faturamento" mistake this function exists
-// to prevent.
-func IsFaturamento(e domain.FinancialEntry) bool {
-	return e.Type == domain.EntryTypeIncome && e.Category != outrosReceitasCategory
-}
-
-// FaturamentoTotal sums the Amount of entries that are IsFaturamento.
-func FaturamentoTotal(entries []domain.FinancialEntry) int64 {
+// CashInTotal sums entradas de caixa: every inflow that has actually been
+// received, whatever its origin. Pending entries are excluded — money that has
+// not arrived is not cash.
+func CashInTotal(entries []domain.FinancialEntry) int64 {
 	var total int64
 	for _, e := range entries {
-		if IsFaturamento(e) {
+		if e.Type == domain.EntryTypeIncome && CashDate(e) != nil {
 			total += e.Amount
 		}
 	}

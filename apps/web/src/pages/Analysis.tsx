@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Clock,
+  Banknote,
   Lightbulb,
   PieChart,
   Target,
@@ -161,7 +162,7 @@ function trendLabel(trend: MonthTrend, throughDay: number): string {
 
 function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: Analysis['goals']; trends: Analysis['trends'] }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
       <KpiCard
         tone={data.resultado >= 0 ? 'positive' : 'negative'}
         className="min-h-26"
@@ -179,13 +180,29 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
 
       <KpiCard tone="positive" className="min-h-26">
         <KpiCardContent icon={TrendingUp} tone="positive">
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Receita</p>
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Faturamento</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
-            {formatBRL(data.receita)}
+            {formatBRL(data.faturamento)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trendLabel(trends.receita, trends.comparedThroughDay)}
+            {trendLabel(trends.faturamento, trends.comparedThroughDay)}
           </p>
+        </KpiCardContent>
+      </KpiCard>
+
+      {/*
+        Entradas de caixa sits next to faturamento so the two are read together
+        and the gap between them is visible. It carries no trend on purpose: it
+        is a liquidity figure, and a rise in it says nothing about the business
+        doing better — a loan would move it.
+      */}
+      <KpiCard tone="info" className="min-h-26">
+        <KpiCardContent icon={Banknote} tone="info">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Entradas de Caixa</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
+            {formatBRL(data.entradasCaixa)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Todo dinheiro recebido</p>
         </KpiCardContent>
       </KpiCard>
 
@@ -205,7 +222,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
         <KpiCardContent icon={Target} tone="info">
           <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Meta</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
-            {goals.incomePct}%
+            {goals.revenuePct}%
           </p>
           <p className="mt-1 text-xs text-muted-foreground">Faturamento</p>
         </KpiCardContent>
@@ -308,8 +325,8 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
   kpis: Analysis['kpis']
   comparedThroughDay: number
 }) {
-  const prevDiff = kpis.previousMonthIncomeUpToDay > 0
-    ? Math.round(((projection.actual - kpis.previousMonthIncomeUpToDay) / kpis.previousMonthIncomeUpToDay) * 100)
+  const prevDiff = kpis.previousMonthRevenueUpToDay > 0
+    ? Math.round(((projection.actual - kpis.previousMonthRevenueUpToDay) / kpis.previousMonthRevenueUpToDay) * 100)
     : null
 
   return (
@@ -343,7 +360,7 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Mês passado (dia {comparedThroughDay})</span>
-            <span className="text-sm tabular-nums">{formatBRL(kpis.previousMonthIncomeUpToDay)}</span>
+            <span className="text-sm tabular-nums">{formatBRL(kpis.previousMonthRevenueUpToDay)}</span>
           </div>
           {/* No previous month is not a 0% move: without a baseline there is
               no percentage to report, and printing one invented a comparison

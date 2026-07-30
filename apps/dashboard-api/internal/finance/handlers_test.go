@@ -727,7 +727,7 @@ func TestGetGoalDefaultsToCurrentMonth(t *testing.T) {
 
 func TestSaveAndGetGoalRoundTrip(t *testing.T) {
 	store := newStore(t)
-	body := `{"month":"2026-07","income_target":500000,"expense_target":300000}`
+	body := `{"month":"2026-07","revenue_target":500000,"expense_target":300000}`
 
 	w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", body))
 	assertStatus(t, w, http.StatusOK)
@@ -735,21 +735,21 @@ func TestSaveAndGetGoalRoundTrip(t *testing.T) {
 	w = run(NewGoalsHandler(store).Get, authed(http.MethodGet, "/goals?month=2026-07", ""))
 	assertStatus(t, w, http.StatusOK)
 	goal := decode(t, w)["goal"].(map[string]any)
-	if goal["IncomeTarget"] != float64(500000) || goal["ExpenseTarget"] != float64(300000) {
+	if goal["RevenueTarget"] != float64(500000) || goal["ExpenseTarget"] != float64(300000) {
 		t.Fatalf("goal = %v, want the saved targets", goal)
 	}
 }
 
 func TestSaveGoalAcceptsASingleTarget(t *testing.T) {
 	store := newStore(t)
-	w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", `{"month":"2026-07","income_target":1000}`))
+	w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", `{"month":"2026-07","revenue_target":1000}`))
 	assertStatus(t, w, http.StatusOK)
 
 	saved, err := store.GetGoal(context.Background(), testUser, "2026-07")
 	if err != nil {
 		t.Fatalf("get goal: %v", err)
 	}
-	if saved.IncomeTarget != 1000 || saved.ExpenseTarget != 0 {
+	if saved.RevenueTarget != 1000 || saved.ExpenseTarget != 0 {
 		t.Fatalf("goal = %+v, want only the income target set", saved)
 	}
 }
@@ -758,10 +758,10 @@ func TestSaveGoalRejectsBadInput(t *testing.T) {
 	h := NewGoalsHandler(newStore(t))
 	cases := []struct{ name, body, wantErr string }{
 		{"malformed json", `{`, "invalid request body"},
-		{"no targets", `{"month":"2026-07"}`, "provide at least one of income_target or expense_target"},
-		{"negative income", `{"month":"2026-07","income_target":-1}`, "income_target must be >= 0"},
+		{"no targets", `{"month":"2026-07"}`, "provide at least one of revenue_target or expense_target"},
+		{"negative income", `{"month":"2026-07","revenue_target":-1}`, "revenue_target must be >= 0"},
 		{"negative expense", `{"month":"2026-07","expense_target":-1}`, "expense_target must be >= 0"},
-		{"malformed month", `{"month":"2026-7","income_target":1}`, "invalid month format, use YYYY-MM"},
+		{"malformed month", `{"month":"2026-7","revenue_target":1}`, "invalid month format, use YYYY-MM"},
 	}
 
 	for _, tc := range cases {
@@ -777,7 +777,7 @@ func TestSaveGoalRejectsBadInput(t *testing.T) {
 
 func TestSaveGoalStoreFailureIs500(t *testing.T) {
 	h := NewGoalsHandler(failingStore{Store: newStore(t), fail: "SaveGoal"})
-	body := `{"month":"2026-07","income_target":1}`
+	body := `{"month":"2026-07","revenue_target":1}`
 	assertStatus(t, run(h.Save, authed(http.MethodPut, "/goals", body)), http.StatusInternalServerError)
 }
 
@@ -792,8 +792,8 @@ func TestMonthlySummary(t *testing.T) {
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
-	if body["TotalIncome"] != float64(100000) || body["TotalExpense"] != float64(30000) || body["Balance"] != float64(70000) {
-		t.Fatalf("summary = %v, want income 100000, expense 30000, balance 70000", body)
+	if body["TotalRevenue"] != float64(100000) || body["TotalExpectedIn"] != float64(100000) || body["TotalExpense"] != float64(30000) || body["ExpectedBalance"] != float64(70000) {
+		t.Fatalf("summary = %v, want revenue/expected-in 100000, expense 30000, expected balance 70000", body)
 	}
 }
 
@@ -880,7 +880,7 @@ func TestSaveGoalRejectsAMonthTheOldCheckLetThrough(t *testing.T) {
 	// held exactly one dash, so both of these were stored verbatim.
 	for _, month := range []string{"julho", "1999-7", "2026-13"} {
 		t.Run(month, func(t *testing.T) {
-			body := `{"month":"` + month + `","income_target":1000}`
+			body := `{"month":"` + month + `","revenue_target":1000}`
 			w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", body))
 			assertStatus(t, w, http.StatusBadRequest)
 		})

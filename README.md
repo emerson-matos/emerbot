@@ -85,14 +85,33 @@ Detalhes em [`docs/payments-import.md`](docs/payments-import.md).
 
 ```
 /despesa 500 aluguel 10/07   → registrar despesa paga (data opcional)
-/receita 3000 cliente        → registrar receita recebida (data opcional)
+/receita 3000 cliente        → registrar venda já recebida (data opcional)
 /pagar 1500 fornecedor       → registrar despesa pendente
-/receber 2000                → registrar receita a receber
+/receber 2000                → registrar venda a receber
 /recorrente pagar 350 aluguel mensal 12  → série de N lançamentos pendentes
 /resumo                      → balanço do mês + pendências
 /meta 80000 60000            → definir meta (faturamento / teto despesas)
 /goal                        → ver progresso das metas
 ```
+
+`/receita` e `/receber` registram **vendas**. Dinheiro que entrou sem venda —
+empréstimo, aporte de sócio, rendimento, restituição — vai por texto livre (o
+agente escolhe a origem) ou pelo formulário do dashboard.
+
+### Faturamento × Entradas de caixa
+
+São duas métricas distintas, e o dashboard mostra as duas:
+
+- **Faturamento** — só venda de produto ou serviço, contada no dia da venda
+  (venda no crediário conta na hora da venda, mesmo sem ter sido paga). Todo
+  indicador de desempenho usa esta: metas, projeções, crescimento, comparações.
+- **Entradas de caixa** — todo dinheiro que efetivamente entrou, incluindo
+  empréstimos e aportes, contado no dia em que chegou. Serve para fluxo de caixa
+  e liquidez, nunca para desempenho: empréstimo não é crescimento.
+
+Cada entrada carrega uma **origem** explícita (venda, empréstimo, aporte de
+sócio, receita financeira, restituição, recebimento de cliente, outros).
+Ver [ADR-016](docs/adr/ADR-016-faturamento-entradas-caixa.md).
 
 ### Credenciais
 

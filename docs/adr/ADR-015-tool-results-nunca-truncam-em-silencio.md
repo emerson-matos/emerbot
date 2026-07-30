@@ -46,7 +46,8 @@ As ferramentas de listagem devolvem um envelope, não um array:
   "totals_available": true,
   "total_matching": 31,
   "total_expense": 5636.83,
-  "total_income": 0,
+  "total_entradas": 0,
+  "total_faturamento": 0,
   "by_category": [{"category": "...", "label": "...", "total": 4636.83, "count": 9}],
   "period": {"from": "2026-08-01", "to": "2026-08-31"}
 }
@@ -63,7 +64,7 @@ Com quatro garantias:
   que o usuário já delimitou é precisamente o que fez uma pergunta sobre agosto
   ser respondida com dois terços de agosto. `limit` só significa alguma coisa
   numa consulta sem período.
-- **Os totais cobrem o período, não a página.** `total_expense`, `total_income`
+- **Os totais cobrem o período, não a página.** `total_expense`, `total_entradas`, `total_faturamento`
   e `by_category` são calculados sobre todos os lançamentos da janela, então o
   modelo nunca precisa somar nada — e o prompt proíbe que ele some.
 - **Qualquer corte é declarado.** Se ainda assim alguma linha ficar de fora

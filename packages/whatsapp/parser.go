@@ -24,6 +24,12 @@ type ParsedEntry struct {
 	// means "today" (the entry is due immediately / date wasn't given).
 	DueDate   *time.Time
 	IsPending bool // true if entry should be PaymentStatusPending
+	// Origin is where the money came from, for income entries; empty on
+	// expenses. /receita and /receber both mean a sale — the slash commands are
+	// the pharmacy's day-to-day till, not the place a loan gets recorded. A
+	// loan or aporte goes through free text (the agent picks the origin) or
+	// through the dashboard form.
+	Origin domain.IncomeOrigin
 }
 
 // RegexParser extracts financial entries from well-structured slash commands
@@ -122,6 +128,9 @@ func parseRegex(text string) (ParsedEntry, bool) {
 		Description: desc,
 		IsPending:   isPending,
 	}
+	if entryType == domain.EntryTypeIncome {
+		entry.Origin = domain.OriginVenda
+	}
 	if isPending {
 		entry.DueDate = parsedDate
 	} else {
@@ -159,26 +168,15 @@ func defaultCategory(t domain.EntryType) string {
 	return "outros_despesas"
 }
 
+// humanCategory turns a category slug into its label, reading the taxonomy from
+// domain rather than repeating it. It used to hold its own copy of the map,
+// which had already drifted — "outros_receitas" read "Outros" here and "Outros
+// (Receita)" everywhere else.
 func humanCategory(slug string) string {
-	labels := map[string]string{
-		"aluguel":                 "Aluguel",
-		"folha_pagamento":         "Folha de Pagamento",
-		"fornecedor_medicamentos": "Fornecedor de Medicamentos",
-		"fornecedor_geral":        "Fornecedor Geral",
-		"impostos":                "Impostos",
-		"emprestimo":              "Empréstimo",
-		"cartao_credito":          "Cartão de Crédito",
-		"energia_agua":            "Energia / Água",
-		"telefone_internet":       "Telefone / Internet",
-		"manutencao":              "Manutenção",
-		"venda_balcao":            "Venda Balcão",
-		"convenio":                "Convênio",
-		"delivery":                "Delivery",
-		"outros_despesas":         "Outros",
-		"outros_receitas":         "Outros",
-	}
-	if l, ok := labels[slug]; ok {
-		return l
+	for _, c := range domain.DefaultCategories("") {
+		if c.Slug == slug {
+			return c.Label
+		}
 	}
 	return slug
 }

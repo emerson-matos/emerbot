@@ -30,6 +30,21 @@ const (
 	// effectiveDate. Only entryItem sets GSI2PK/GSI2SK, so this index never
 	// contains goal or category items.
 	gsi2IndexName = "GSI2-Status"
+
+	// gsi1IndexName is the GSI (hash: GSI1PK, range: GSI1SK) that ListEntries
+	// queries by CashDate — the entradas/saídas de caixa basis.
+	//
+	// The physical name still says "Category" because that is what the index
+	// held before: GSI1SK used to be "<category>#<date>", written on every
+	// entry and queried by nothing (category filtering has always gone through
+	// a filter expression on GSI2). Renaming it in Terraform would make
+	// DynamoDB drop and rebuild the index for a label, so the stale name stays,
+	// documented — the same trade-off goalItem makes for its "RevenueTarget"
+	// attribute. Keep this constant in sync with the index name in
+	// infra/modules/api_gateway_lambda/main.tf and with the fake's registration
+	// in dynamodb_store_test.go; a mismatch is a ValidationException in
+	// production that no test can see.
+	gsi1IndexName = "GSI1-Category"
 )
 
 // DynamoDBStore implements Store using AWS DynamoDB.

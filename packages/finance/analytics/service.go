@@ -33,13 +33,26 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 	}
 	months := MonthRange(month, HistoryMonths)
 
-	entries, err := monthEntries(ctx, store, userID, month)
+	entries, err := monthEntries(ctx, store, userID, month, pkgfinance.BasisEffective)
+	if err != nil {
+		return Analysis{}, err
+	}
+	// A second read on the transaction basis, because faturamento is measured
+	// on the day of the sale and the effective-date read above cannot see it: a
+	// crediário sale made this month but due next is absent from `entries`
+	// entirely. Computing revenue from `entries` would put the same sale in the
+	// KPI of one month and the goal of another.
+	revenueEntries, err := monthEntries(ctx, store, userID, month, pkgfinance.BasisTransaction)
 	if err != nil {
 		return Analysis{}, err
 	}
 
 	previousMonth := months[len(months)-2]
-	previousEntries, err := monthEntries(ctx, store, userID, previousMonth)
+	previousEntries, err := monthEntries(ctx, store, userID, previousMonth, pkgfinance.BasisEffective)
+	if err != nil {
+		return Analysis{}, err
+	}
+	previousRevenueEntries, err := monthEntries(ctx, store, userID, previousMonth, pkgfinance.BasisTransaction)
 	if err != nil {
 		return Analysis{}, err
 	}
@@ -71,24 +84,26 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 	}
 
 	return Build(Input{
-		Month:           month,
-		Entries:         entries,
-		PreviousEntries: previousEntries,
-		Summaries:       summaries,
-		Goals:           goals,
-		CashFlowPoints:  points,
-		Now:             now,
+		Month:                  month,
+		Entries:                entries,
+		PreviousEntries:        previousEntries,
+		RevenueEntries:         revenueEntries,
+		PreviousRevenueEntries: previousRevenueEntries,
+		Summaries:              summaries,
+		Goals:                  goals,
+		CashFlowPoints:         points,
+		Now:                    now,
 	}), nil
 }
 
-func monthEntries(ctx context.Context, store LedgerReader, userID, month string) ([]domain.FinancialEntry, error) {
+func monthEntries(ctx context.Context, store LedgerReader, userID, month string, basis pkgfinance.DateBasis) ([]domain.FinancialEntry, error) {
 	from, to, err := domain.ParseMonth(month)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to})
+	entries, err := store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to, DateBasis: basis})
 	if err != nil {
-		return nil, fmt.Errorf("list entries for %s: %w", month, err)
+		return nil, fmt.Errorf("list entries for %s (%s basis): %w", month, basis, err)
 	}
 	return entries, nil
 }

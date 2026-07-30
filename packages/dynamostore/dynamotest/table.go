@@ -591,7 +591,52 @@ func (t *Table) put(item map[string]types.AttributeValue) error {
 	if err != nil {
 		return err
 	}
+	if err := checkEmptyKeyAttrs(item, t.cfg.Key, t.cfg.GSIs); err != nil {
+		return err
+	}
 	t.store(id, cloneItem(item))
+	return nil
+}
+
+// checkEmptyKeyAttrs rejects an empty-string value on any key attribute, table
+// or index — real DynamoDB answers ValidationException for those.
+//
+// Without this the fake accepts an item whose GSI key marshalled to "" and even
+// returns it from index queries, because inIndex only checks that the attribute
+// is present. A sparse index built by leaving a key attribute empty (rather
+// than omitting it, e.g. a missing `omitempty` on a struct tag) therefore
+// passes every test here and fails every write in production.
+func checkEmptyKeyAttrs(item map[string]types.AttributeValue, primary Key, gsis map[string]Key) error {
+	check := func(where, attr string) error {
+		v, ok := item[attr]
+		if !ok {
+			return nil
+		}
+		if s, isStr := v.(*types.AttributeValueMemberS); isStr && s.Value == "" {
+			return fmt.Errorf("dynamotest: %s key attribute %q is an empty string; "+
+				"DynamoDB rejects that — omit the attribute entirely (e.g. dynamodbav \",omitempty\") "+
+				"to keep the item out of a sparse index", where, attr)
+		}
+		return nil
+	}
+	for _, attr := range []string{primary.Hash, primary.Range} {
+		if attr == "" {
+			continue
+		}
+		if err := check("primary", attr); err != nil {
+			return err
+		}
+	}
+	for name, idx := range gsis {
+		for _, attr := range []string{idx.Hash, idx.Range} {
+			if attr == "" {
+				continue
+			}
+			if err := check("index "+name+"'s", attr); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

@@ -47,31 +47,31 @@ export default function Goals() {
   const trendLoading = analysisQuery.isLoading
   const trendError = analysisQuery.isError
 
-  const [incomeInput, setIncomeInput] = useState('')
+  const [revenueInput, setRevenueInput] = useState('')
   const [expenseInput, setExpenseInput] = useState('')
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     if (goal) {
-      setIncomeInput(String(goal.IncomeTarget / 100))
+      setRevenueInput(String(goal.RevenueTarget / 100))
       setExpenseInput(String(goal.ExpenseTarget / 100))
     }
   }, [goal])
 
 
-  const actualIncome = analysis?.goals.incomeActual ?? 0
+  const actualRevenue = analysis?.goals.revenueActual ?? 0
   const actualExpense = analysis?.goals.expenseActual ?? 0
 
-  const incomeTarget = Math.round(Number(incomeInput) * 100)
+  const revenueTarget = Math.round(Number(revenueInput) * 100)
   const expenseTarget = Math.round(Number(expenseInput) * 100)
-  const incomePct = incomeTarget > 0 ? Math.min(100, (actualIncome / incomeTarget) * 100) : 0
+  const revenuePct = revenueTarget > 0 ? Math.min(100, (actualRevenue / revenueTarget) * 100) : 0
   const expPct = expenseTarget > 0 ? Math.min(100, (actualExpense / expenseTarget) * 100) : 0
-  const incomeColor = incomePct >= 100 ? 'var(--success)' : 'var(--info)'
+  const revenueColor = revenuePct >= 100 ? 'var(--success)' : 'var(--info)'
   const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 
-  const monthsHit = history.filter(h => h.incomeTarget !== null && h.income >= h.incomeTarget).length
-  const avgIncome = history.length
-    ? Math.round(history.reduce((s, h) => s + h.income, 0) / history.length)
+  const monthsHit = history.filter(h => h.revenueTarget !== null && h.revenue >= h.revenueTarget).length
+  const avgRevenue = history.length
+    ? Math.round(history.reduce((s, h) => s + h.revenue, 0) / history.length)
     : 0
 
   return (
@@ -92,7 +92,7 @@ export default function Goals() {
           <KpiCardContent icon={TrendingUp} tone="positive">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Progresso Faturamento</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
-              {incomePct.toFixed(0)}%
+              {revenuePct.toFixed(0)}%
             </p>
             <p className="mt-1 text-xs text-muted-foreground">da meta deste mês</p>
           </KpiCardContent>
@@ -140,7 +140,7 @@ export default function Goals() {
           <KpiCardContent icon={BarChart3} tone="primary">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Faturamento Médio</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.primary }}>
-              {formatBRL(avgIncome)}
+              {formatBRL(avgRevenue)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">últimos meses</p>
           </KpiCardContent>
@@ -157,10 +157,10 @@ export default function Goals() {
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Progresso</span>
               <span className="font-medium tabular-nums">
-                {formatBRL(actualIncome)} / {formatBRL(incomeTarget)}
+                {formatBRL(actualRevenue)} / {formatBRL(revenueTarget)}
               </span>
             </div>
-            <ProgressBar pct={incomePct} color={incomeColor} />
+            <ProgressBar pct={revenuePct} color={revenueColor} />
             <div className="space-y-2 pt-2">
               <label htmlFor="income-target" className="text-xs font-medium text-muted-foreground">
                 Valor da meta (R$)
@@ -170,8 +170,8 @@ export default function Goals() {
                 type="number"
                 min="0"
                 step="0.01"
-                value={incomeInput}
-                onChange={e => { setIncomeInput(e.target.value); setSaved(false) }}
+                value={revenueInput}
+                onChange={e => { setRevenueInput(e.target.value); setSaved(false) }}
               />
             </div>
           </CardContent>
@@ -210,7 +210,7 @@ export default function Goals() {
       <div className="flex items-center gap-3">
         <Button
           onClick={() => saveGoal.mutate(
-            { income_target: incomeTarget, expense_target: expenseTarget },
+            { revenue_target: revenueTarget, expense_target: expenseTarget },
             { onSuccess: () => setSaved(true) },
           )}
           className="grow"
@@ -244,7 +244,7 @@ export default function Goals() {
                     {formatMonthLabel(h.month)}
                   </TableCell>
                   <TableCell className="tabular-nums">
-                    {formatBRL(h.income)} / {h.incomeTarget !== null ? formatBRL(h.incomeTarget) : '—'}
+                    {formatBRL(h.revenue)} / {h.revenueTarget !== null ? formatBRL(h.revenueTarget) : '—'}
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {formatBRL(h.expense)} / {h.expenseTarget !== null ? formatBRL(h.expenseTarget) : '—'}

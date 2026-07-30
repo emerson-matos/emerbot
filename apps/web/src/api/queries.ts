@@ -153,7 +153,7 @@ export function useSaveGoalMutation(month: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { income_target?: number; expense_target?: number }) =>
+    mutationFn: (data: { revenue_target?: number; expense_target?: number }) =>
       api.goals.save(month, data),
     onError: () => {
       toast.error("Não foi possível salvar a meta.");

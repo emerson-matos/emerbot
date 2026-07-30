@@ -326,7 +326,7 @@ func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
 		maySale, julyLoan,
 	)
 	if err := s.fin.SaveGoal(ctx, domain.Goal{
-		UserID: shared.FinanceLedgerID, Month: "2026-07", IncomeTarget: 5000000,
+		UserID: shared.FinanceLedgerID, Month: "2026-07", RevenueTarget: 5000000,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 		dueExpense("Fornecedor", 285000), sale,
 	)
 	if err := s.fin.SaveGoal(ctx, domain.Goal{
-		UserID: shared.FinanceLedgerID, Month: "2026-07", IncomeTarget: 5000000,
+		UserID: shared.FinanceLedgerID, Month: "2026-07", RevenueTarget: 5000000,
 	}); err != nil {
 		t.Fatal(err)
 	}

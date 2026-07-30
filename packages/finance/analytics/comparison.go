@@ -8,9 +8,16 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-// monthTotals is a month's income, expense and balance, possibly measured only
-// up to a day of the month.
+// monthTotals is a month's totals, possibly measured only up to a day of the
+// month.
+//
+// revenue and income are separate on purpose. revenue is faturamento — what was
+// sold — and is what the performance trend reports. income is every inflow that
+// falls in the month, and is what balance is made of: narrowing income to sales
+// would turn balance into "sales minus every expense", quietly reporting a loss
+// for a month that a loan or an aporte actually covered.
 type monthTotals struct {
+	revenue int64
 	income  int64
 	expense int64
 	balance int64
@@ -44,14 +51,21 @@ type comparison struct {
 // A month that is not the one now falls in is already closed, and is compared
 // whole (throughDay 0) — truncating a finished month at today's day number
 // would be arbitrary.
-func buildComparison(month string, current, previous []domain.FinancialEntry, now time.Time) comparison {
+// currentRevenue/previousRevenue are the same two months read on the
+// transaction basis; they fill monthTotals.revenue, which is bucketed by the
+// day of the sale rather than the effective date.
+func buildComparison(month string, current, previous, currentRevenue, previousRevenue []domain.FinancialEntry, now time.Time) comparison {
 	throughDay := 0
 	if domain.MonthOf(now) == month {
 		throughDay = now.Day()
 	}
+	cur := totalsThroughDay(current, throughDay)
+	prev := totalsThroughDay(previous, throughDay)
+	cur.revenue = revenueThroughDay(currentRevenue, throughDay)
+	prev.revenue = revenueThroughDay(previousRevenue, throughDay)
 	return comparison{
-		current:    totalsThroughDay(current, throughDay),
-		previous:   totalsThroughDay(previous, throughDay),
+		current:    cur,
+		previous:   prev,
 		throughDay: throughDay,
 	}
 }
@@ -76,6 +90,23 @@ func totalsThroughDay(entries []domain.FinancialEntry, throughDay int) monthTota
 	}
 	totals.balance = totals.income - totals.expense
 	return totals
+}
+
+// revenueThroughDay sums faturamento up to throughDay, bucketed by the day of
+// the sale — the only date a sale can honestly be attributed to. entries must
+// have been read on the transaction basis.
+func revenueThroughDay(entries []domain.FinancialEntry, throughDay int) int64 {
+	var total int64
+	for _, e := range entries {
+		if !domain.IsRevenue(e) {
+			continue
+		}
+		if throughDay > 0 && e.TransactionDate.Day() > throughDay {
+			continue
+		}
+		total += e.Amount
+	}
+	return total
 }
 
 // suffix names the window the comparison actually measured, so a percentage

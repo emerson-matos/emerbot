@@ -3,6 +3,7 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ type entryResponse struct {
 	Type                             domain.EntryType
 	PaymentStatus                    domain.PaymentStatus
 	Source                           domain.EntrySource
+	Origin                           domain.IncomeOrigin
 	CreatedAt                        time.Time
 	UpdatedAt                        time.Time
 	RecurrenceID                     string
@@ -65,7 +67,7 @@ type entryResponse struct {
 }
 
 func responseEntry(e domain.FinancialEntry) entryResponse {
-	r := entryResponse{UserID: e.UserID, EntryID: e.EntryID, TransactionDate: e.TransactionDate.String(), Amount: e.Amount, Category: e.Category, Description: e.Description, Supplier: e.Supplier, Type: e.Type, PaymentStatus: e.PaymentStatus, Source: e.Source, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, RecurrenceID: e.RecurrenceID, RecurrenceIndex: e.RecurrenceIndex, RecurrenceTotal: e.RecurrenceTotal}
+	r := entryResponse{UserID: e.UserID, EntryID: e.EntryID, TransactionDate: e.TransactionDate.String(), Amount: e.Amount, Category: e.Category, Description: e.Description, Supplier: e.Supplier, Type: e.Type, PaymentStatus: e.PaymentStatus, Source: e.Source, Origin: e.Origin, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, RecurrenceID: e.RecurrenceID, RecurrenceIndex: e.RecurrenceIndex, RecurrenceTotal: e.RecurrenceTotal}
 	if e.DueDate != nil {
 		s := e.DueDate.String()
 		r.DueDate = &s
@@ -117,6 +119,7 @@ func (h *EntriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	filter.Category = q.Get("category")
 	filter.Status = domain.PaymentStatus(q.Get("status"))
 	filter.Type = domain.EntryType(q.Get("type"))
+	filter.Origin = domain.NormalizeIncomeOrigin(q.Get("origin"))
 	// Default limit only when scanning the full partition (no date range).
 	// Date-bounded queries (used by the Dashboard's monthly view) return all
 	// entries in the range so that summary calculations are not silently
@@ -155,6 +158,30 @@ type createEntryRequest struct {
 	PaymentStatus string `json:"payment_status"` // "pending" | "paid"
 	Supplier      string `json:"supplier"`
 	Source        string `json:"source"`
+	// Origin is where the money came from, for income entries. Empty defaults
+	// to "venda" — the overwhelmingly common case for a pharmacy, and the
+	// reading that keeps ordinary sales out of "Outros". An unknown value is
+	// rejected rather than coerced: unlike the AI tools, this endpoint is
+	// driven by a form with a fixed set of options, so a value outside the enum
+	// is a client bug worth surfacing.
+	Origin string `json:"origin"`
+}
+
+// incomeOrigin resolves the request's origin for the given entry type,
+// reporting an error for a value outside the enum.
+func (req createEntryRequest) incomeOrigin(entryType domain.EntryType) (domain.IncomeOrigin, error) {
+	if entryType != domain.EntryTypeIncome {
+		return "", nil
+	}
+	raw := strings.TrimSpace(req.Origin)
+	if raw == "" {
+		return domain.OriginVenda, nil
+	}
+	origin := domain.NormalizeIncomeOrigin(raw)
+	if string(origin) != raw {
+		return "", fmt.Errorf("invalid origin %q", raw)
+	}
+	return origin, nil
 }
 
 // Create handles POST /entries
@@ -226,6 +253,11 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = domain.SourceManual
 	}
+	origin, err := req.incomeOrigin(entryType)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 		UserID:          claims.UserID,
 		TransactionDate: date,
@@ -237,6 +269,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PaymentStatus:   status,
 		Supplier:        req.Supplier,
 		Source:          source,
+		Origin:          origin,
 	})
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
@@ -308,6 +341,24 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Supplier != "" {
 		existing.Supplier = req.Supplier
+	}
+	// Correcting the origin is the whole point of having the field: a loan
+	// mislabelled as a sale has to be fixable, or it inflates faturamento
+	// forever.
+	//
+	// Only an explicit origin is applied. Defaulting an empty one to "venda"
+	// here would silently relabel every pre-migration entry the first time
+	// anyone edited its description — a loan filed under "Outros (Receita)",
+	// which domain.IsRevenue's shim correctly keeps out of faturamento, would
+	// walk into it. An entry with no origin stays that way until the backfill
+	// or a deliberate edit gives it one.
+	if req.Origin != "" {
+		origin, err := req.incomeOrigin(existing.Type)
+		if err != nil {
+			httpx.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		existing.Origin = origin
 	}
 	if req.DueDate != "" {
 		t, err := domain.ParseDay(req.DueDate)

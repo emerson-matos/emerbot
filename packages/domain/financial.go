@@ -12,6 +12,13 @@ type (
 	EntryType     string
 	PaymentStatus string
 	EntrySource   string
+	// IncomeOrigin is where an incoming amount came from. It answers "was this
+	// a sale?", which EntryType cannot: every inflow is EntryTypeIncome,
+	// whether it was sold, borrowed or contributed by a partner.
+	//
+	// It is not EntrySource: that one records which *channel* wrote the record
+	// (WhatsApp, the dashboard), not where the money came from.
+	IncomeOrigin string
 )
 
 const (
@@ -24,6 +31,23 @@ const (
 	SourceWhatsApp EntrySource = "whatsapp"
 	SourceManual   EntrySource = "manual"
 	SourceUnknown  EntrySource = "unknown"
+
+	// OriginVenda is the only origin that counts toward faturamento — see
+	// IsRevenue. A sale counts when it is *made*, so a crediário sale is
+	// OriginVenda on the day it happens, whether or not it has been paid.
+	OriginVenda IncomeOrigin = "venda"
+	// OriginRecebimentoCliente is a customer settling a debt that was never
+	// recorded as a sale in this ledger — a receivable that predates it.
+	// Settling a crediário sale that *is* in the ledger is not this: that is
+	// the original OriginVenda entry being marked paid. Recording it as a new
+	// entry would count the sale twice, which is why this origin is
+	// deliberately absent from the AI's create tool (see packages/finance/tools.go).
+	OriginRecebimentoCliente IncomeOrigin = "recebimento_cliente"
+	OriginEmprestimo         IncomeOrigin = "emprestimo"
+	OriginAporteSocio        IncomeOrigin = "aporte_socio"
+	OriginReceitaFinanceira  IncomeOrigin = "receita_financeira"
+	OriginRestituicao        IncomeOrigin = "restituicao"
+	OriginOutros             IncomeOrigin = "outros"
 )
 
 func NormalizeSource(s string) EntrySource {
@@ -33,6 +57,78 @@ func NormalizeSource(s string) EntrySource {
 	default:
 		return SourceUnknown
 	}
+}
+
+// IncomeOrigins returns every valid origin, in the order the UI offers them.
+func IncomeOrigins() []IncomeOrigin {
+	return []IncomeOrigin{
+		OriginVenda,
+		OriginRecebimentoCliente,
+		OriginEmprestimo,
+		OriginAporteSocio,
+		OriginReceitaFinanceira,
+		OriginRestituicao,
+		OriginOutros,
+	}
+}
+
+// OriginLabels maps each origin to its pt-BR label, so the dashboard, the
+// WhatsApp replies and the AI tool schemas all name them the same way.
+func OriginLabels() map[IncomeOrigin]string {
+	return map[IncomeOrigin]string{
+		OriginVenda:              "Venda",
+		OriginRecebimentoCliente: "Recebimento de cliente",
+		OriginEmprestimo:         "Empréstimo",
+		OriginAporteSocio:        "Aporte de sócio",
+		OriginReceitaFinanceira:  "Receita financeira",
+		OriginRestituicao:        "Restituição",
+		OriginOutros:             "Outros",
+	}
+}
+
+// NormalizeIncomeOrigin coerces s to a known origin, falling back to
+// OriginOutros. An empty string stays empty: "not recorded" is a real state
+// that IsRevenue handles, and turning it into a value here would erase the
+// distinction between an origin nobody set and one somebody chose.
+func NormalizeIncomeOrigin(s string) IncomeOrigin {
+	if s == "" {
+		return ""
+	}
+	for _, o := range IncomeOrigins() {
+		if IncomeOrigin(s) == o {
+			return o
+		}
+	}
+	return OriginOutros
+}
+
+// legacyRevenueCategory is the income category that used to stand in for "not
+// a sale" before Origin existed. Only IsRevenue's migration shim reads it.
+const legacyRevenueCategory = "outros_receitas"
+
+// IsRevenue reports whether an entry counts toward faturamento: money earned
+// by selling something, as opposed to money that merely came in (a loan, a
+// partner's capital, an investment yield, a tax refund). It is what the goals,
+// projections, weekday averages, week-over-week pace and every other
+// performance indicator are measured against — "empréstimo não é faturamento".
+//
+// Entradas de caixa, the broader figure, is every income entry that was
+// actually received; see packages/finance.CashInTotal.
+//
+// MIGRATION SHIM: the Origin == "" branch reproduces the pre-Origin rule
+// (every income category except outros_receitas was assumed to be a sale), so
+// faturamento keeps the exact value it had before this refactor for entries
+// written before the field existed. DELETE IT once scripts/migrate-origin has
+// run in every environment — after that an empty origin can only be a bug, and
+// reading a bug as a sale is the mistake this function exists to prevent.
+func IsRevenue(e FinancialEntry) bool {
+	if e.Type != EntryTypeIncome {
+		return false
+	}
+	if e.Origin == "" {
+		return e.Category != legacyRevenueCategory
+	}
+	return e.Origin == OriginVenda
 }
 
 // FinancialEntry represents a single financial transaction for the pharmacy.
@@ -50,8 +146,12 @@ type FinancialEntry struct {
 	Type            EntryType
 	PaymentStatus   PaymentStatus
 	Source          EntrySource
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Origin is where the money came from, for income entries; empty on
+	// expenses. Empty on an income entry means "written before Origin
+	// existed" — see IsRevenue's migration shim.
+	Origin    IncomeOrigin
+	CreatedAt time.Time
+	UpdatedAt time.Time
 
 	// RecurrenceID groups occurrences generated together by /recorrente.
 	// Empty for one-off entries.
@@ -73,6 +173,7 @@ type NewFinancialEntryInput struct {
 	Type            EntryType
 	PaymentStatus   PaymentStatus
 	Source          EntrySource
+	Origin          IncomeOrigin
 	RecurrenceID    string
 	RecurrenceIndex int
 	RecurrenceTotal int
@@ -85,7 +186,7 @@ func NewFinancialEntry(input NewFinancialEntryInput) (FinancialEntry, error) {
 		UserID: input.UserID, EntryID: EntryID(ulid.Make().String()),
 		TransactionDate: input.TransactionDate, DueDate: input.DueDate, PaymentDate: input.PaymentDate,
 		Amount: input.Amount, Category: input.Category, Description: input.Description, Supplier: input.Supplier,
-		Type: input.Type, PaymentStatus: input.PaymentStatus, Source: input.Source,
+		Type: input.Type, PaymentStatus: input.PaymentStatus, Source: input.Source, Origin: input.Origin,
 		CreatedAt: now, UpdatedAt: now,
 		RecurrenceID: input.RecurrenceID, RecurrenceIndex: input.RecurrenceIndex, RecurrenceTotal: input.RecurrenceTotal,
 	}
@@ -103,6 +204,16 @@ func (e *FinancialEntry) Normalize() {
 	if e.PaymentStatus == PaymentStatusPending {
 		e.PaymentDate = nil
 	}
+	// An origin on an expense is meaningless — "where did this money come
+	// from" has no answer for money going out.
+	if e.Type == EntryTypeExpense {
+		e.Origin = ""
+	}
+	// Deliberately no default for an empty origin on an income entry. Filling
+	// it here would run before Validate on every read (see
+	// packages/finance.itemToEntry) and silently relabel every entry written
+	// before the field existed — a loan filed under "Outros (Receita)" would
+	// come back as a sale. IsRevenue handles the empty case explicitly instead.
 }
 
 // Validate checks financial invariants before an entry is persisted.
@@ -129,6 +240,19 @@ func (e FinancialEntry) Validate() error {
 	default:
 		return errors.New("invalid entry source")
 	}
+	// An empty origin is allowed on income: entries written before the field
+	// existed have none, and rejecting them here would fail the whole
+	// ListEntries query they are read in (see packages/finance.itemToEntry).
+	// Once scripts/migrate-origin has run everywhere, tighten this to require
+	// a value and delete IsRevenue's shim in the same commit.
+	if e.Origin != "" {
+		if e.Type != EntryTypeIncome {
+			return errors.New("expense entry cannot have an income origin")
+		}
+		if NormalizeIncomeOrigin(string(e.Origin)) != e.Origin {
+			return errors.New("invalid income origin")
+		}
+	}
 	switch e.PaymentStatus {
 	case PaymentStatusPending:
 		if e.PaymentDate != nil {
@@ -144,11 +268,17 @@ func (e FinancialEntry) Validate() error {
 	return nil
 }
 
-// Goal represents a monthly financial target (receita/teto de despesa).
+// Goal represents a monthly financial target: how much to sell, and how much
+// to spend at most.
+//
+// RevenueTarget is a faturamento target — measured against sales only (see
+// IsRevenue), never against entradas de caixa. A month that hits its number
+// because of a loan has not hit its number. The name also matches the stored
+// DynamoDB attribute again (see packages/finance.goalItem).
 type Goal struct {
 	UserID        string
 	Month         string
-	IncomeTarget  int64
+	RevenueTarget int64
 	ExpenseTarget int64
 }
 

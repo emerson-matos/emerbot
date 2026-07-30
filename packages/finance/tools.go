@@ -84,6 +84,7 @@ func createEntryTool(store Store) Tool {
 				"type":        {Type: genai.TypeString, Enum: []string{"expense", "income"}},
 				"amount":      {Type: genai.TypeNumber, Description: "Valor em reais (ex: 500.00)"},
 				"category":    {Type: genai.TypeString, Enum: categorySlugs(), Description: "Categoria do lançamento"},
+				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
 				"description": {Type: genai.TypeString, Description: "Descrição curta do lançamento"},
 				"date":        {Type: genai.TypeString, Description: "Data da transação YYYY-MM-DD (padrão: hoje)"},
 				"due_date":    {Type: genai.TypeString, Description: "Data de vencimento YYYY-MM-DD (para contas a pagar/receber)"},
@@ -96,6 +97,7 @@ func createEntryTool(store Store) Tool {
 				Type        string  `json:"type"`
 				Amount      float64 `json:"amount"`
 				Category    string  `json:"category"`
+				Origin      string  `json:"origem"`
 				Description string  `json:"description"`
 				Date        string  `json:"date"`
 				DueDate     string  `json:"due_date"`
@@ -127,6 +129,15 @@ func createEntryTool(store Store) Tool {
 			entry.Type = domain.EntryTypeExpense
 			if args.Type == "income" {
 				entry.Type = domain.EntryTypeIncome
+				// An income entry always gets an origin. The model omitting it
+				// most often means an ordinary sale, which is also the only
+				// reading that keeps a pharmacy's day-to-day entries out of
+				// "Outros" — but a hallucinated value falls back to
+				// OriginOutros rather than quietly becoming revenue.
+				entry.Origin = domain.OriginVenda
+				if args.Origin != "" {
+					entry.Origin = domain.NormalizeIncomeOrigin(args.Origin)
+				}
 			}
 
 			if !knownCategory(entry.Category) {
@@ -182,6 +193,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 				"amount":      {Type: genai.TypeNumber, Description: "Novo valor em reais (ex: 500.00)"},
 				"category":    {Type: genai.TypeString, Enum: categorySlugs(), Description: "Nova categoria do lançamento"},
 				"description": {Type: genai.TypeString, Description: "Nova descrição do lançamento"},
+				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
 				"date":        {Type: genai.TypeString, Description: "Nova data da transação YYYY-MM-DD"},
 				"due_date":    {Type: genai.TypeString, Description: "Nova data de vencimento YYYY-MM-DD"},
 				"is_pending":  {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
@@ -193,6 +205,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 				EntryID     string  `json:"entry_id"`
 				Amount      float64 `json:"amount"`
 				Category    string  `json:"category"`
+				Origin      string  `json:"origem"`
 				Description string  `json:"description"`
 				Date        string  `json:"date"`
 				DueDate     string  `json:"due_date"`
@@ -218,6 +231,12 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 			}
 			if args.Category != "" && knownCategory(args.Category) {
 				entry.Category = args.Category
+			}
+			// Correcting the origin is how a mislabelled loan stops counting as
+			// faturamento, so an edit has to be able to set it. Only on income:
+			// domain.Normalize clears it on expenses anyway.
+			if args.Origin != "" && entry.Type == domain.EntryTypeIncome {
+				entry.Origin = domain.NormalizeIncomeOrigin(args.Origin)
 			}
 			if args.Description != "" {
 				entry.Description = args.Description
@@ -267,7 +286,7 @@ func resumoMensalTool(store Store) Tool {
 
 	return Tool{
 		Name:        name,
-		Description: "Retorna o resumo financeiro de um mês: receitas, despesas, saldo e progresso das metas (faturamento e teto de despesas).",
+		Description: "Retorna o resumo financeiro de um mês: faturamento (só vendas), entradas de caixa (todo dinheiro que entrou, incluindo empréstimos e aportes), despesas, saldo e progresso das metas.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -290,39 +309,31 @@ func resumoMensalTool(store Store) Tool {
 				return nil, fmt.Errorf("monthly summary: %w", err)
 			}
 
+			// faturamento and entradas_de_caixa are different questions and
+			// deliberately different numbers: the first is what the pharmacy
+			// sold, the second is every centavo that arrived, loans and aportes
+			// included. Both come off the summary now — the goal progress below
+			// used to re-read the whole month's entries because the summary
+			// could not tell them apart.
 			result := map[string]any{
-				"month":   summary.Month,
-				"income":  centavosToReais(summary.TotalIncome),
-				"expense": centavosToReais(summary.TotalExpense),
-				"balance": centavosToReais(summary.Balance),
-				"goal":    nil,
+				"month":             summary.Month,
+				"faturamento":       centavosToReais(summary.TotalRevenue),
+				"entradas_de_caixa": centavosToReais(summary.TotalCashIn),
+				"expense":           centavosToReais(summary.TotalExpense),
+				"balance":           centavosToReais(summary.ExpectedBalance),
+				"goal":              nil,
 			}
 
 			goal, err := store.GetGoal(ctx, userID, args.Month)
-			if err == nil && (goal.IncomeTarget > 0 || goal.ExpenseTarget > 0) {
-				// The goal is faturamento (venda_balcao + convenio + delivery,
-				// not outros_receitas — see pkgfinance.IsFaturamento), narrower
-				// than the "income" total above, so it needs the raw entries
-				// rather than the pre-aggregated summary.
-				var faturamento int64
-				if goal.IncomeTarget > 0 {
-					from, to, perr := domain.ParseMonth(args.Month)
-					if perr != nil {
-						return nil, perr
-					}
-					monthEntries, lerr := store.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to})
-					if lerr != nil {
-						return nil, fmt.Errorf("monthly entries: %w", lerr)
-					}
-					faturamento = FaturamentoTotal(monthEntries)
-				}
+			if err == nil && (goal.RevenueTarget > 0 || goal.ExpenseTarget > 0) {
+				faturamento := summary.TotalRevenue
 				goalMap := map[string]any{
-					"faturamento_target": centavosToReais(goal.IncomeTarget),
+					"faturamento_target": centavosToReais(goal.RevenueTarget),
 					"expense_target":     centavosToReais(goal.ExpenseTarget),
 				}
-				if goal.IncomeTarget > 0 {
-					if faturamento <= goal.IncomeTarget {
-						goalMap["faturamento_progress_pct"] = float64(faturamento*100) / float64(goal.IncomeTarget)
+				if goal.RevenueTarget > 0 {
+					if faturamento <= goal.RevenueTarget {
+						goalMap["faturamento_progress_pct"] = float64(faturamento*100) / float64(goal.RevenueTarget)
 					} else {
 						goalMap["faturamento_progress_pct"] = 100.0
 					}
@@ -355,14 +366,14 @@ func definirMetaTool(store Store) Tool {
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
 				"month":            {Type: genai.TypeString, Description: "Mês no formato YYYY-MM (padrão: mês atual)"},
-				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais — apenas vendas (balcão, convênio, delivery), não empréstimos ou aportes (ex: 80000.00)"},
+				"meta_faturamento": {Type: genai.TypeNumber, Description: "Meta de faturamento em reais — mede apenas vendas (origem \"venda\"), nunca empréstimos, aportes ou outras entradas de caixa (ex: 80000.00)"},
 				"teto_despesas":    {Type: genai.TypeNumber, Description: "Teto de despesas em reais (ex: 60000.00)"},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
 			var args struct {
 				Month         string  `json:"month"`
-				IncomeTarget  float64 `json:"meta_faturamento"`
+				RevenueTarget float64 `json:"meta_faturamento"`
 				ExpenseTarget float64 `json:"teto_despesas"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
@@ -380,7 +391,7 @@ func definirMetaTool(store Store) Tool {
 				return nil, err
 			}
 
-			if args.IncomeTarget <= 0 && args.ExpenseTarget <= 0 {
+			if args.RevenueTarget <= 0 && args.ExpenseTarget <= 0 {
 				return nil, fmt.Errorf("informe pelo menos meta_faturamento ou teto_despesas")
 			}
 
@@ -389,19 +400,19 @@ func definirMetaTool(store Store) Tool {
 				Month:  month,
 			}
 
-			if args.IncomeTarget > 0 {
-				goal.IncomeTarget = reaisToCentavos(args.IncomeTarget)
+			if args.RevenueTarget > 0 {
+				goal.RevenueTarget = reaisToCentavos(args.RevenueTarget)
 			}
 			if args.ExpenseTarget > 0 {
 				goal.ExpenseTarget = reaisToCentavos(args.ExpenseTarget)
 			}
 
 			// Merge with existing goal if only one field was provided
-			if args.IncomeTarget <= 0 || args.ExpenseTarget <= 0 {
+			if args.RevenueTarget <= 0 || args.ExpenseTarget <= 0 {
 				existing, err := store.GetGoal(ctx, userID, month)
 				if err == nil {
-					if args.IncomeTarget <= 0 {
-						goal.IncomeTarget = existing.IncomeTarget
+					if args.RevenueTarget <= 0 {
+						goal.RevenueTarget = existing.RevenueTarget
 					}
 					if args.ExpenseTarget <= 0 {
 						goal.ExpenseTarget = existing.ExpenseTarget
@@ -415,7 +426,7 @@ func definirMetaTool(store Store) Tool {
 
 			return map[string]any{
 				"month":            month,
-				"meta_faturamento": centavosToReais(goal.IncomeTarget),
+				"meta_faturamento": centavosToReais(goal.RevenueTarget),
 				"teto_despesas":    centavosToReais(goal.ExpenseTarget),
 				"status":           "saved",
 			}, nil
@@ -453,8 +464,8 @@ const maxRangeEntries = 500
 //     question about August answerable with two thirds of August. limit does
 //     not apply here — it is ignored, not clamped;
 //   - the totals are computed over every matching entry, so the model never
-//     has to add anything up itself — total_expense, total_income and
-//     by_category come pre-computed;
+//     has to add anything up itself — total_expense, total_entradas,
+//     total_faturamento and by_category come pre-computed;
 //   - if rows are ever omitted anyway (an unbounded query, or a period past
 //     maxRangeEntries), truncated/omitted/warning say so out loud, and the
 //     prompt requires the model to relay that.
@@ -505,12 +516,22 @@ func listing(ctx context.Context, store EntryLister, userID string, filter Entry
 	}
 
 	if bounded {
-		var income, expense int64
+		// total_entradas, not "total_income": these are the matched entries
+		// summed over whatever period was asked for, on the effective-date
+		// basis this listing filters by. That is neither faturamento (measured
+		// on the day of the sale) nor entradas de caixa (measured on the day the
+		// money arrived), so naming it after either would invite the model to
+		// quote it as one. total_faturamento is offered alongside for the
+		// question the model is usually being asked.
+		var entradas, faturamento, expense int64
 		for _, e := range matched {
-			if e.Type == domain.EntryTypeIncome {
-				income += e.Amount
-			} else {
+			if e.Type != domain.EntryTypeIncome {
 				expense += e.Amount
+				continue
+			}
+			entradas += e.Amount
+			if domain.IsRevenue(e) {
+				faturamento += e.Amount
 			}
 		}
 		byCategory := foldByCategory(matched)
@@ -527,12 +548,13 @@ func listing(ctx context.Context, store EntryLister, userID string, filter Entry
 		result["totals_available"] = true
 		result["total_matching"] = len(matched)
 		result["total_expense"] = centavosToReais(expense)
-		result["total_income"] = centavosToReais(income)
+		result["total_entradas"] = centavosToReais(entradas)
+		result["total_faturamento"] = centavosToReais(faturamento)
 		result["by_category"] = cats
 	} else {
 		result["totals_available"] = false
 		result["note"] = "Sem período (from e to), não há como somar: informe as datas " +
-			"para receber total_expense, total_income e by_category já calculados."
+			"para receber total_expense, total_entradas, total_faturamento e by_category já calculados."
 	}
 
 	if truncated {
@@ -566,8 +588,8 @@ func listDueEntriesTool(store Store) Tool {
 		Name: name,
 		Description: "Lista contas a pagar ou receber em um período de datas. " +
 			"Informando from e to, retorna o período INTEIRO (sem corte) mais os " +
-			"totais já somados (total_expense, total_income) e o agrupamento por " +
-			"categoria (by_category) — use esses números, não some os lançamentos à mão.",
+			"totais já somados (total_expense, total_entradas, total_faturamento) e o " +
+			"agrupamento por categoria (by_category) — use esses números, não some os lançamentos à mão.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -622,8 +644,8 @@ func searchEntriesTool(store Store) Tool {
 		Name: name,
 		Description: "Busca lançamentos por descrição, categoria ou período. " +
 			"Informando from e to, retorna o período INTEIRO (sem corte) mais os " +
-			"totais já somados (total_expense, total_income) e o agrupamento por " +
-			"categoria (by_category) — use esses números, não some os lançamentos à mão.",
+			"totais já somados (total_expense, total_entradas, total_faturamento) e o " +
+			"agrupamento por categoria (by_category) — use esses números, não some os lançamentos à mão.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
