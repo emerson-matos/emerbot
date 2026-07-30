@@ -10,6 +10,7 @@ import type {
   Analysis,
   Entry,
   CreateEntryInput,
+  UpdateEntryInput,
   MonthlySummary,
   CategorySummary,
   CashFlowPoint,
@@ -26,6 +27,7 @@ export type { CognitoAuthResult } from "./cognito";
 export type {
   Entry,
   CreateEntryInput,
+  UpdateEntryInput,
   MonthlySummary,
   CategorySummary,
   CashFlowPoint,
@@ -108,7 +110,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: Partial<CreateEntryInput>) =>
+    update: (id: string, data: UpdateEntryInput) =>
       httpClient<Entry>(`/entries/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),

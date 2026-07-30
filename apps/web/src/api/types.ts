@@ -61,16 +61,18 @@ export interface CreateEntryInput {
   category: string;
   type: "expense" | "income";
   description: string;
-  due_date?: string;
-  payment_status: "pending" | "paid";
   supplier?: string;
   /** Defaults to "venda" server-side when omitted on an income entry. */
   origin?: IncomeOrigin;
 }
 
+export type UpdateEntryInput = Partial<CreateEntryInput> & {
+  payment_status?: "pending" | "paid";
+};
+
 /**
  * The three inflow figures answer three different questions and are bucketed by
- * three different dates — see packages/finance.MonthlySummary and ADR-015.
+ * three different dates — see packages/finance.MonthlySummary and ADR-016.
  * Collapsing any two of them back together is how a loan ended up counted as
  * business growth.
  */

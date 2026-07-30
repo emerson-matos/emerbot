@@ -111,7 +111,7 @@ São duas métricas distintas, e o dashboard mostra as duas:
 
 Cada entrada carrega uma **origem** explícita (venda, empréstimo, aporte de
 sócio, receita financeira, restituição, recebimento de cliente, outros).
-Ver [ADR-015](docs/adr/ADR-015-faturamento-entradas-caixa.md).
+Ver [ADR-016](docs/adr/ADR-016-faturamento-entradas-caixa.md).
 
 ### Credenciais
 

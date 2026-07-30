@@ -224,7 +224,12 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	status := domain.PaymentStatus(req.PaymentStatus)
 	if status != domain.PaymentStatusPending && status != domain.PaymentStatusPaid {
-		status = domain.PaymentStatusPaid
+		today := domain.NewCalendarDate(time.Now().UTC())
+		if date.After(today) {
+			status = domain.PaymentStatusPending
+		} else {
+			status = domain.PaymentStatusPaid
+		}
 	}
 
 	// A malformed due date is rejected rather than dropped: silently saving the
@@ -239,6 +244,9 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		d := domain.NewCalendarDate(t)
 		dueDate = &d
+	}
+	if status == domain.PaymentStatusPending && dueDate == nil {
+		dueDate = &date
 	}
 
 	source := domain.EntrySource(strings.TrimSpace(req.Source))

@@ -2,7 +2,6 @@ package finance
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -118,22 +117,7 @@ func categorySummary(ctx context.Context, l EntryLister, userID string, from, to
 	if err != nil {
 		return nil, err
 	}
-
-	totals := make(map[string]*CategorySummary)
-	for _, e := range entries {
-		if _, ok := totals[e.Category]; !ok {
-			totals[e.Category] = &CategorySummary{Category: e.Category, Type: e.Type}
-		}
-		totals[e.Category].Total += e.Amount
-		totals[e.Category].Count++
-	}
-
-	result := make([]CategorySummary, 0, len(totals))
-	for _, v := range totals {
-		result = append(result, *v)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Total > result[j].Total })
-	return result, nil
+	return foldByCategory(entries), nil
 }
 
 // cashFlowForecast projects a daily running balance across the given calendar

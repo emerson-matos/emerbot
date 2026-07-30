@@ -1,4 +1,4 @@
-# ADR-015: Faturamento e entradas de caixa são métricas distintas
+# ADR-016: Faturamento e entradas de caixa são métricas distintas
 
 ## Status
 

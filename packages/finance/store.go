@@ -132,7 +132,7 @@ func CashDate(e domain.FinancialEntry) *time.Time {
 // The three inflow figures answer three different questions and are bucketed
 // by three different dates on purpose — that is the whole point of the split,
 // and collapsing any two of them back together is how this codebase got a
-// loan counted as business growth twice before (see docs/adr/ADR-015).
+// loan counted as business growth twice before (see docs/adr/ADR-016).
 type MonthlySummary struct {
 	Month string // "2026-07"
 	// TotalRevenue is FATURAMENTO: what the pharmacy sold, by RevenueDate,
