@@ -26,6 +26,7 @@ func DefaultCategories(userID string) []Category {
 	}
 	income := []struct{ slug, label string }{
 		{"venda_balcao", "Venda Balcão"},
+		{"venda_atacado", "Venda Atacado"},
 		{"convenio", "Convênio"},
 		{"delivery", "Delivery"},
 		{"outros_receitas", "Outros (Receita)"},
