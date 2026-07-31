@@ -241,22 +241,12 @@ func rebaseRecords(byKind map[ExtractKind][]map[string]any, month string) error 
 				if err != nil {
 					return
 				}
-				rec[key] = addMonths(t, months).Format("2006-01-02")
+				// domain.AddMonths clamps the day to the target month's last
+				// day, so installments keep their order instead of overflowing
+				// into the month after next.
+				rec[key] = domain.AddMonths(t, months).Format("2006-01-02")
 			})
 		}
 	}
 	return nil
-}
-
-// addMonths shifts t by n months, clamping the day to the target month's last
-// day. time.AddDate would instead overflow — 31 January plus one month becomes
-// 3 March — which would reorder installments relative to each other.
-func addMonths(t time.Time, n int) time.Time {
-	year, month, day := t.Date()
-	firstOfTarget := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).AddDate(0, n, 0)
-	lastDay := firstOfTarget.AddDate(0, 1, -1).Day()
-	if day > lastDay {
-		day = lastDay
-	}
-	return time.Date(firstOfTarget.Year(), firstOfTarget.Month(), day, 0, 0, 0, 0, time.UTC)
 }
