@@ -76,13 +76,16 @@ func withDescription(d string) entryOpt {
 	return func(e *domain.FinancialEntry) { e.Description = d }
 }
 
+// withIncome makes the entry a sale, the ordinary income an app writes today.
+// The origin is spelled out so faturamento does not depend on
+// domain.IsRevenue's migration shim: an income entry with no origin at all is
+// legacy data, and only the shim's own test should build one.
 func withIncome() entryOpt {
-	return func(e *domain.FinancialEntry) { e.Type = domain.EntryTypeIncome }
+	return withOrigin(domain.OriginVenda)
 }
 
-// withOrigin marks an income entry's origin. Without it an income entry has no
-// origin at all, which is the pre-migration state domain.IsRevenue's shim
-// covers — several tests rely on that, so this is opt-in rather than a default.
+// withOrigin marks an income entry's origin, for the inflows that are not
+// sales — a loan, a partner's capital — and so must stay out of faturamento.
 func withOrigin(o domain.IncomeOrigin) entryOpt {
 	return func(e *domain.FinancialEntry) {
 		e.Type = domain.EntryTypeIncome

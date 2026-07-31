@@ -397,6 +397,13 @@ func TestResumoIncludesPendingTotals(t *testing.T) {
 
 func testFinancialEntry(userID, entryID string, date time.Time, amount int64, category string, entryType domain.EntryType) domain.FinancialEntry {
 	cd := domain.NewCalendarDate(date)
+	// Income built here is a sale, spelled out rather than left to
+	// domain.IsRevenue's migration shim: an income entry with no origin is
+	// legacy data, not what /receita writes.
+	origin := domain.IncomeOrigin("")
+	if entryType == domain.EntryTypeIncome {
+		origin = domain.OriginVenda
+	}
 	return domain.FinancialEntry{
 		UserID:          userID,
 		EntryID:         domain.EntryID(entryID),
@@ -404,6 +411,7 @@ func testFinancialEntry(userID, entryID string, date time.Time, amount int64, ca
 		Amount:          amount,
 		Category:        category,
 		Type:            entryType,
+		Origin:          origin,
 		Description:     category,
 		PaymentStatus:   domain.PaymentStatusPaid,
 		PaymentDate:     &cd,
