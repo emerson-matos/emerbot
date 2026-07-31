@@ -113,34 +113,29 @@ func TestRevenueAndCashInDiverge(t *testing.T) {
 	}
 }
 
-// TestIsRevenueMigrationShim pins the fallback that keeps faturamento identical
-// for entries written before Origin existed. Delete this test in the same
-// commit that deletes the shim in domain.IsRevenue — not before.
-func TestIsRevenueMigrationShim(t *testing.T) {
+// TestIsRevenue pins that faturamento is decided by Origin alone: category is
+// irrelevant, and an income entry with no origin (a stray the backfill never
+// reached) is not a sale.
+func TestIsRevenue(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		e    domain.FinancialEntry
 		want bool
 	}{
 		{
-			"legacy sale category, no origin",
-			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao"},
+			"a sale, whatever its category",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Origin: domain.OriginVenda},
 			true,
 		},
 		{
-			"legacy outros_receitas, no origin — the old 'not a sale' marker",
-			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas"},
-			false,
-		},
-		{
-			"origin wins over category: a loan filed under venda_balcao",
+			"a loan is not a sale, whatever its category",
 			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginEmprestimo},
 			false,
 		},
 		{
-			"origin wins over category: a sale filed under outros_receitas",
-			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "outros_receitas", Origin: domain.OriginVenda},
-			true,
+			"an income entry with no origin is a stray, not a sale",
+			domain.FinancialEntry{Type: domain.EntryTypeIncome, Category: "venda_balcao"},
+			false,
 		},
 		{
 			"an expense is never revenue",
