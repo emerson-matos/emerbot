@@ -1383,3 +1383,83 @@ func TestMonthOverMonthMessagesAlwaysNameTheirWindow(t *testing.T) {
 		}
 	}
 }
+
+// A week does not stop at the turn of the month. On the 5th, "last week" began
+// in the previous month, and the comparison used to read only the analysed
+// month's entries — so the first week of every month showed a fraction of last
+// week's takings and no pace at all.
+func TestWeekComparisonSpansTheTurnOfTheMonth(t *testing.T) {
+	var july, august []domain.FinancialEntry
+	for d := 20; d <= 31; d++ {
+		july = append(july, sale(t, fmt.Sprintf("2026-07-%02d", d), 10000))
+	}
+	for d := 1; d <= 5; d++ {
+		august = append(august, sale(t, fmt.Sprintf("2026-08-%02d", d), 10000))
+	}
+
+	// Wednesday 5 August: this week began Mon the 3rd, last week ran Mon 27 July
+	// through Sun 2 August.
+	got := Build(Input{
+		Month: "2026-08", Entries: august, PreviousEntries: july,
+		RevenueEntries: august, PreviousRevenueEntries: july,
+		Summaries: []*pkgfinance.MonthlySummary{nil, summary(120000, 0), summary(50000, 0)},
+		Now:       at12(t, "2026-08-05"),
+	})
+
+	if want := int64(70000); got.WeekComparison.Previous != want {
+		t.Errorf("Previous = %d, want all seven days of last week (%d)", got.WeekComparison.Previous, want)
+	}
+	if want := int64(20000); got.WeekComparison.Pace.Previous != want {
+		t.Errorf("Pace.Previous = %d, want Mon–Tue of last week, in July (%d)",
+			got.WeekComparison.Pace.Previous, want)
+	}
+	if want := int64(20000); got.WeekComparison.Pace.Current != want {
+		t.Errorf("Pace.Current = %d, want Mon–Tue of this week (%d)", got.WeekComparison.Pace.Current, want)
+	}
+
+	// The two slices Build was handed must come back untouched: joining them for
+	// the week comparison used to append onto the caller's backing array.
+	if len(august) != 5 || august[0].Amount != 10000 {
+		t.Errorf("Build scribbled on the caller's entries: %+v", august)
+	}
+}
+
+// A month that has not begun is the opposite of a closed one: nothing measured,
+// everything ahead. They used to share a branch, so asking the bot about next
+// month reported it as finished with no days left to reach its target.
+func TestFutureMonthHasEverythingAheadAndNothingBehind(t *testing.T) {
+	c := newMonthClock("2026-09", at12(t, "2026-08-05"))
+
+	if c.measurable() {
+		t.Errorf("clock = %+v, want nothing measurable in a month that has not begun", c)
+	}
+	if c.remaining != 30 || c.total != 30 {
+		t.Errorf("clock = %+v, want all 30 days of September still to trade", c)
+	}
+	if c.inProgress {
+		t.Error("inProgress = true, want false — September is not the month we are in")
+	}
+}
+
+// The traffic light must not swing to green either. "Boa, 100 pontos" on a
+// month nobody has traded is the same unfounded claim as the "crítico" it
+// replaced, and the score has to be absent rather than zero.
+func TestHealthHasNoVerdictWithoutAFinishedDay(t *testing.T) {
+	health := buildHealth(nil, comparison{clock: clock(t, "2026-08", "2026-08-01")}, WeekComparison{}, Projection{})
+
+	if health.Status != HealthIndefinido {
+		t.Errorf("status = %q, want indefinido", health.Status)
+	}
+	if health.Score != nil {
+		t.Errorf("score = %d, want no score at all", *health.Score)
+	}
+	if len(health.Messages) != 1 || health.Messages[0].Type != InsightMonthStart {
+		t.Errorf("messages = %+v, want just the month-start note", health.Messages)
+	}
+
+	// One finished day is enough to have an opinion again.
+	graded := buildHealth(nil, comparison{clock: clock(t, "2026-08", "2026-08-02")}, WeekComparison{}, Projection{})
+	if graded.Status == HealthIndefinido || graded.Score == nil {
+		t.Errorf("health = %+v, want a real verdict once a day has closed", graded)
+	}
+}

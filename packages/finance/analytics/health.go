@@ -109,9 +109,14 @@ func buildHealth(
 		}
 	}
 
+	// No finished day is no verdict: neither the traffic light nor the score
+	// may claim anything about a month nobody has traded yet.
+	if !compared.clock.measurable() {
+		return Health{Status: HealthIndefinido, Messages: messages}
+	}
 	return Health{
 		Status:   healthStatus(realized, messages),
-		Score:    healthScore(messages),
+		Score:    ptr(healthScore(messages)),
 		Messages: messages,
 	}
 }

@@ -18,6 +18,13 @@ const (
 	HealthBoa     HealthStatus = "boa"
 	HealthAtencao HealthStatus = "atencao"
 	HealthCritico HealthStatus = "critico"
+	// HealthIndefinido is a month with no finished day to judge — its first
+	// day, or one that has not begun. It is not a fourth grade between good and
+	// bad: it is the absence of a grade, and it exists because the alternatives
+	// are both lies. Reporting "crítico" off a month's booked bills is the bug
+	// this package was fixed for; reporting "boa, 100 pontos" instead is the
+	// same claim about the same unmeasured month, only cheerful.
+	HealthIndefinido HealthStatus = "indefinido"
 )
 
 // InsightType names the rule that produced an insight, so consumers can style
@@ -72,7 +79,10 @@ type Health struct {
 	// is 100 and each problem costs what its severity is worth (see
 	// healthScore). It is computed here rather than in each consumer so the
 	// number and the status can never tell different stories.
-	Score    int       `json:"score"`
+	//
+	// It is nil, not 0, when Status is HealthIndefinido — there is no score to
+	// give, and a zero would read as the worst possible month.
+	Score    *int      `json:"score"`
 	Messages []Insight `json:"messages"`
 }
 
@@ -343,8 +353,9 @@ type KPIs struct {
 //
 // 3: added Period; dropped kpis.daysRemaining and
 // kpis.previousMonthRevenueUpToDay (Period and Trends carry them now);
-// weekComparison.previousUpToDay became weekComparison.pace; every
-// retrospective figure now stops at yesterday instead of at today.
+// weekComparison.previousUpToDay became weekComparison.pace; health.status
+// gained "indefinido" and health.score became nullable; every retrospective
+// figure now stops at yesterday instead of at today.
 const SchemaVersion = 3
 
 // Analysis is the full picture of one month — the payload of

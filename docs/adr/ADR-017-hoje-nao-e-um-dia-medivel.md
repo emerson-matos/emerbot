@@ -58,12 +58,19 @@ e exposta no payload como `Analysis.Period`. Ela é derivada do **mês analisado
 não do mês atual: um julho fechado, aberto em agosto, não tem "30 dias
 restantes".
 
-`Period.ThroughDay == 0` com `InProgress` é o primeiro dia do mês: **não há nada
-atrás de nós**. Nesse caso a comparação não é zero e não é queda — ela não
-existe. Os dois lados ficam zerados, `buildTrends` devolve tendências planas,
-`hasBaseline` derruba as recomendações mês a mês, e o veredito de saúde é
-substituído por um único insight `month_start`. Quem consome tem de dizer "o mês
-está começando", nunca desenhar uma queda a zero.
+`Period.ThroughDay == 0` é o primeiro dia do mês (ou um mês que ainda não
+começou): **não há nada atrás de nós**. Nesse caso a comparação não é zero e não
+é queda — ela não existe. Os dois lados ficam zerados, `buildTrends` devolve
+tendências planas, `hasBaseline` derruba as recomendações mês a mês, e o
+veredito de saúde vira `HealthIndefinido` com `score` nulo e um único insight
+`month_start`. Quem consome tem de dizer "o mês está começando", nunca desenhar
+uma queda a zero.
+
+`indefinido` não é uma quarta nota entre boa e ruim: é a **ausência** de nota. A
+tentação era deixar cair em "boa, 100 pontos" na falta de problemas detectados,
+mas isso é exatamente a mesma afirmação sem base que o "crítico" que estamos
+removendo — só que alegre. Um mês sem dia fechado não recebe semáforo nem
+pontuação.
 
 O resumo do WhatsApp passa a ter duas metades explícitas, nessa ordem:
 
@@ -93,3 +100,12 @@ começando" — e a primeira continua inteira.
   não diluírem mais o dia em curso.
 - A regra "não mando nada se não houver alerta" continua valendo. Um dia sem
   pendência e sem meta segue sem mensagem.
+- O KPI "Resultado" passa a se chamar "Resultado previsto" enquanto o mês corre.
+  Ele sempre foi o fechamento *esperado* do mês (contas agendadas incluídas);
+  sem o rótulo, no dia 1º ele era um número vermelho fundo ao lado de um card de
+  saúde que — corretamente — não tinha veredito nenhum a dar.
+- Duas correções da mesma família entraram junto, encontradas na revisão:
+  `buildWeekComparison` lia só os lançamentos do mês analisado, então na
+  primeira semana de cada mês "semana passada" vinha pela metade e o ritmo
+  sumia; e um mês **futuro** era tratado como fechado, o que respondia "setembro
+  não tem mais dias para bater a meta" quando perguntado em agosto.

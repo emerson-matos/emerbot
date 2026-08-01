@@ -48,9 +48,18 @@ func newMonthClock(month string, now time.Time) monthClock {
 	if _, last, err := domain.ParseMonth(month); err == nil {
 		total = last.Day()
 	}
-	if domain.MonthOf(now) != month {
+
+	switch current := domain.MonthOf(now); {
+	case month > current:
+		// A month that has not begun. Nothing to measure and everything still
+		// to trade — the opposite of a closed month, which the two used to
+		// share a branch and get backwards: asking the bot about next month
+		// reported it as finished, with no days left to reach its target.
+		return monthClock{remaining: total, total: total}
+	case month < current:
 		return monthClock{through: total, total: total}
 	}
+
 	return monthClock{
 		inProgress: true,
 		through:    now.Day() - 1,

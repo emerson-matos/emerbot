@@ -251,6 +251,10 @@ describe("Analysis on the first day of a month", () => {
     // month-over-month recommendations never fire; only the weekly pace one,
     // which is about what is still ahead, survives.
     data.recommendations = data.recommendations.slice(0, 1);
+    // No finished day means no verdict and no score — see FinancialHealth.
+    data.health = { ...data.health, status: "indefinido", score: null, messages: [
+      { type: "month_start", severity: "info", title: "Mês começando", description: "Ainda não há dia fechado para avaliar" },
+    ] };
     return data;
   }
 
@@ -266,5 +270,24 @@ describe("Analysis on the first day of a month", () => {
     ).toBeInTheDocument();
     expect(container.textContent).not.toContain("% vs mês passado");
     expect(container.textContent).not.toContain("% vs semana anterior");
+  });
+
+  it("gives no health verdict and no score", () => {
+    const { container } = renderWith(firstOfMonth());
+
+    expect(screen.getByText("· Sem dia fechado para avaliar")).toBeInTheDocument();
+    // A green light and "100 pontos" would be the same unfounded claim as the
+    // "Crítico" this replaced, only cheerful.
+    expect(container.textContent).not.toContain("pontos");
+    expect(container.textContent).not.toContain("Crítico");
+    expect(container.textContent).not.toContain("Boa");
+  });
+
+  it("labels the headline result as a forecast while the month runs", () => {
+    renderWith(firstOfMonth());
+
+    // The KPI is the whole month's expected close, booked bills included — a
+    // deep red number that is not what anyone has earned so far.
+    expect(screen.getByText("Resultado previsto")).toBeInTheDocument();
   });
 });

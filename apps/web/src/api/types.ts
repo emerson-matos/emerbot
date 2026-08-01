@@ -137,10 +137,17 @@ export interface Category {
 
 export type YearMonth = `${number}-${number}`;
 
+/**
+ * `Indefinido` is a month with no finished day to judge — its first day, or one
+ * that has not begun. It is the *absence* of a grade, not a fourth grade:
+ * render it neutrally and without a score. Calling such a month "boa, 100
+ * pontos" is the same unfounded claim as the "crítico" it replaced.
+ */
 export const FinancialHealthStatus = {
   Boa: "boa",
   Atencao: "atencao",
   Critico: "critico",
+  Indefinido: "indefinido",
 } as const;
 export type FinancialHealthStatus =
   (typeof FinancialHealthStatus)[keyof typeof FinancialHealthStatus];
@@ -154,6 +161,7 @@ export const InsightType = {
   WeeklyImprovement: "weekly_improvement",
   WeeklyDecline: "weekly_decline",
   GoalOnTrack: "goal_on_track",
+  MonthStart: "month_start",
 } as const;
 export type InsightType = (typeof InsightType)[keyof typeof InsightType];
 
@@ -181,8 +189,11 @@ export interface FinancialHealth {
    * this page used to derive it here as the share of insights that were
    * informational, which moved the score whenever a rule fired or stopped
    * firing, with nothing financial having changed.
+   *
+   * Null when `status` is `indefinido`: a month with no finished day has no
+   * score, and 0 would render as the worst month on record.
    */
-  score: number;
+  score: number | null;
   messages: Insight[];
 }
 

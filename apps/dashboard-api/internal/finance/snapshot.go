@@ -178,8 +178,12 @@ func buildComparison(date string, current, previous []byte) *comparison {
 
 	c := &comparison{Date: date}
 
-	// Health status delta.
-	if curr.Health.Status != prev.Health.Status {
+	// Health status delta. An "indefinido" on either side is the absence of a
+	// verdict, not a better or worse one — the 1st of a month would otherwise
+	// report "improved" purely because the month before had closed in the red.
+	if curr.Health.Status != prev.Health.Status &&
+		curr.Health.Status != analytics.HealthIndefinido &&
+		prev.Health.Status != analytics.HealthIndefinido {
 		trend := "stable"
 		switch {
 		case healthRank(curr.Health.Status) > healthRank(prev.Health.Status):

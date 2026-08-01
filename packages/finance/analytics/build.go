@@ -85,7 +85,12 @@ func Build(in Input) Analysis {
 	if currentGoal != nil {
 		revenueTarget = currentGoal.RevenueTarget
 	}
-	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
+	// Both months' sales, because a week does not respect the turn of the
+	// month: on the 5th, "last week" started in the previous month, and reading
+	// only the analysed month's entries dropped that half silently — the card
+	// showed a fraction of last week's takings and the pace comparison
+	// disappeared, every first week of every month.
+	week := buildWeekComparison(concat(in.RevenueEntries, in.PreviousRevenueEntries), in.Now, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, clock, faturamento)
 	weekdays := weekdayStats(in.RevenueEntries, in.Now, clock)
 	// One projection of the month, and one per-day ask derived from it, shared
@@ -223,6 +228,16 @@ func MonthRange(month string, count int) []string {
 		months = append(months, domain.MonthOf(t.AddDate(0, -i, 0)))
 	}
 	return months
+}
+
+// concat joins two entry slices into a fresh one. Appending onto the first
+// would write into its backing array whenever it has spare capacity, and
+// Input's slices are read again after this — a caller's ledger is not ours to
+// scribble on.
+func concat(a, b []domain.FinancialEntry) []domain.FinancialEntry {
+	out := make([]domain.FinancialEntry, 0, len(a)+len(b))
+	out = append(out, a...)
+	return append(out, b...)
 }
 
 // at returns the slice element at i, or nil when i is out of range — the

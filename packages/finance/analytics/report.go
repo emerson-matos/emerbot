@@ -19,6 +19,8 @@ func (s HealthStatus) Label() string {
 		return "Atenção"
 	case HealthCritico:
 		return "Crítico"
+	case HealthIndefinido:
+		return "Sem dia fechado para avaliar"
 	default:
 		return string(s)
 	}
@@ -39,7 +41,9 @@ func (s HealthStatus) Label() string {
 // but it is not news, and the digest competes with everything else in the
 // user's WhatsApp.
 func (a Analysis) DigestLines() []string {
-	if a.Period.InProgress && a.Period.ThroughDay == 0 {
+	// ThroughDay 0 means nothing has finished — the first day of a month, or a
+	// month that has not begun. Either way there is no verdict to give.
+	if a.Period.ThroughDay == 0 {
 		return []string{"O mês está começando — ainda não há dia fechado para comparar."}
 	}
 
@@ -75,7 +79,9 @@ func (a Analysis) DigestLines() []string {
 // recommendation follows as the reason. A closed month has nothing ahead of it
 // and yields no lines.
 func (a Analysis) AheadLines() []string {
-	if !a.Period.InProgress {
+	// Days left to trade, not "is this the current month": a month that has not
+	// begun is entirely ahead of us too.
+	if a.Period.DaysRemaining == 0 {
 		return nil
 	}
 
@@ -177,7 +183,7 @@ func (a Analysis) ToolPayload() map[string]any {
 	// comparacao_ate_o_dia being 0, which it does not reliably do: on the first
 	// day of a month it read the empty month-over-month figures as a real
 	// collapse and reported a 100% fall in receita.
-	if a.Period.InProgress && a.Period.ThroughDay == 0 {
+	if a.Period.ThroughDay == 0 {
 		payload["mes_comecando_sem_dia_fechado"] = true
 	}
 	if a.Projection.NeededPerDay > 0 {

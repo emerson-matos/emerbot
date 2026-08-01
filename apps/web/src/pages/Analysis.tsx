@@ -29,11 +29,15 @@ const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
   [Status.Boa]: 'Boa',
   [Status.Atencao]: 'Atenção',
   [Status.Critico]: 'Crítico',
+  [Status.Indefinido]: 'Sem dia fechado para avaliar',
 }
 
 function HealthIcon({ status }: { status: FinancialHealthStatus }) {
   if (status === Status.Boa) return <span className="text-lg">🟢</span>
   if (status === Status.Atencao) return <span className="text-lg">🟡</span>
+  // A month with nothing to judge gets no traffic light at all — a grey dot is
+  // "we have not looked yet", which is exactly what it means.
+  if (status === Status.Indefinido) return <span className="text-lg">⚪</span>
   return <span className="text-lg">🔴</span>
 }
 
@@ -161,7 +165,7 @@ const WEEKDAY_FULL_PT: Record<string, string> = {
 // passado até o dia 1" on every 1st, comparing an empty morning with a whole
 // trading day.
 function trendLabel(trend: MonthTrend, period: Period): string {
-  if (period.inProgress && period.throughDay === 0) return 'Mês começando — sem dia fechado'
+  if (period.throughDay === 0) return 'Mês começando — sem dia fechado'
   if (trend.previous === 0) return 'Sem base no mês passado'
   const window = period.inProgress
     ? `vs mês passado até o dia ${period.throughDay}`
@@ -182,7 +186,14 @@ function KpiSection({ data, goals, trends, period }: {
         className="min-h-26"
       >
         <KpiCardContent icon={Wallet} tone={data.resultado >= 0 ? 'positive' : 'negative'}>
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Resultado</p>
+          {/* "previsto" while the month runs: this is the whole month's
+              expected close, bills already booked included, not what has been
+              earned so far. Unlabelled, it read as a result on the 1st — a deep
+              red number sitting next to a health card that (correctly) had no
+              verdict to give. */}
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            {period.inProgress ? 'Resultado previsto' : 'Resultado'}
+          </p>
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: data.resultado >= 0 ? toneVar.positive : toneVar.negative }}>
             {formatBRL(data.resultado)}
           </p>
@@ -264,12 +275,16 @@ function HealthSection({ data }: { data: Analysis['health'] }) {
           Saúde Financeira
           <span className="font-normal text-muted-foreground">· {HEALTH_LABEL[data.status]}</span>
         </CardTitle>
-        <CardAction>
-          <div className="text-right">
-            <p className="text-3xl font-bold tabular-nums">{data.score}</p>
-            <p className="text-xs text-muted-foreground">pontos</p>
-          </div>
-        </CardAction>
+        {/* No score for a month with no finished day: the backend sends null
+            rather than 0, because 0 reads as the worst month on record. */}
+        {data.score !== null && (
+          <CardAction>
+            <div className="text-right">
+              <p className="text-3xl font-bold tabular-nums">{data.score}</p>
+              <p className="text-xs text-muted-foreground">pontos</p>
+            </div>
+          </CardAction>
+        )}
       </CardHeader>
       <CardContent>
         {data.messages.length === 0 ? (
@@ -377,7 +392,7 @@ function ProjectionSection({ projection, faturamento, period }: {
             <span className="text-sm text-muted-foreground">Faturado até agora</span>
             <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
           </div>
-          {period.inProgress && period.throughDay === 0 ? (
+          {period.throughDay === 0 ? (
             <p className="text-sm text-muted-foreground">
               O mês está começando — ainda não há dia fechado para comparar.
             </p>
