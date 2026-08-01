@@ -12,7 +12,12 @@ import (
 // The average divides by the number of distinct *dates* that saw
 // faturamento, not by the number of entries — three sales on one Tuesday are
 // one Tuesday, otherwise a busy day would drag the average down.
-func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat {
+//
+// Today is left out entirely: it is a day still being traded, and folding a
+// morning's takings in as though it were a whole Tuesday drags that weekday's
+// average — and the projection built on it — down all day, further the earlier
+// the analysis runs.
+func weekdayStats(entries []domain.FinancialEntry, now time.Time, clock monthClock) []WeekdayStat {
 	today := int(now.Weekday())
 
 	type bucket struct {
@@ -25,7 +30,7 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time) []WeekdayStat 
 	}
 
 	for _, e := range entries {
-		if !domain.IsRevenue(e) {
+		if !domain.IsRevenue(e) || e.TransactionDate.Day() > clock.through {
 			continue
 		}
 		date := e.TransactionDate.Time()

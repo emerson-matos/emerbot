@@ -3,17 +3,27 @@ package analytics
 import "math"
 
 // buildTrends expresses the analysed month against the previous one, both
-// measured at the same height of the month — see buildComparison.
+// measured over the same finished days — see buildComparison.
+//
+// A month with no finished day yet gets flat, empty trends rather than a
+// direction: there is nothing behind us to have moved. Consumers tell the two
+// apart through Analysis.Period.ThroughDay, which is 0 in exactly that case.
 func buildTrends(c comparison) Trends {
+	if !c.clock.measurable() {
+		return Trends{
+			Faturamento: MonthTrend{Direction: TrendStable},
+			Despesa:     MonthTrend{Direction: TrendStable},
+			Resultado:   MonthTrend{Direction: TrendStable},
+		}
+	}
 	return Trends{
 		// Faturamento is the performance trend, so it moves with sales only —
 		// a loan must never read as the business growing. Resultado stays on
 		// the broad income figure, because a result is money in minus money
 		// out whatever the money was.
-		Faturamento:        buildTrend(c.current.revenue, c.previous.revenue),
-		Despesa:            buildTrend(c.current.expense, c.previous.expense),
-		Resultado:          buildTrend(c.current.balance, c.previous.balance),
-		ComparedThroughDay: c.throughDay,
+		Faturamento: buildTrend(c.current.revenue, c.previous.revenue),
+		Despesa:     buildTrend(c.current.expense, c.previous.expense),
+		Resultado:   buildTrend(c.current.balance, c.previous.balance),
 	}
 }
 

@@ -22,7 +22,7 @@ import EmptyState from '@/components/EmptyState'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Recommendation } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, Recommendation } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -148,19 +148,33 @@ const WEEKDAY_FULL_PT: Record<string, string> = {
   Sáb: 'sábado',
 }
 
-// The backend compares both months up to the same day, so a percentage from a
-// month in progress must not be presented as a whole-month figure.
+// The backend compares both months over the same finished days, so a percentage
+// from a month in progress must not be presented as a whole-month figure.
 //
 // A previous of zero has no percentage to report: the backend fills in a flat
 // 100% rise there (see buildTrend), which these cards were printing as a real
 // month-over-month move against a month that never traded.
-function trendLabel(trend: MonthTrend, throughDay: number): string {
+//
+// A month on its first day has no finished day at all — period.throughDay is 0
+// while the month is in progress — and the backend zeroes both sides there.
+// Saying so is the only honest label: this card used to read "↓ 100% vs mês
+// passado até o dia 1" on every 1st, comparing an empty morning with a whole
+// trading day.
+function trendLabel(trend: MonthTrend, period: Period): string {
+  if (period.inProgress && period.throughDay === 0) return 'Mês começando — sem dia fechado'
   if (trend.previous === 0) return 'Sem base no mês passado'
-  const window = throughDay > 0 ? `vs mês passado até o dia ${throughDay}` : 'vs mês passado'
+  const window = period.inProgress
+    ? `vs mês passado até o dia ${period.throughDay}`
+    : 'vs mês passado'
   return `${TREND_ARROW[trend.direction]} ${Math.abs(trend.change)}% ${window}`
 }
 
-function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: Analysis['goals']; trends: Analysis['trends'] }) {
+function KpiSection({ data, goals, trends, period }: {
+  data: Analysis['kpis']
+  goals: Analysis['goals']
+  trends: Analysis['trends']
+  period: Period
+}) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
       <KpiCard
@@ -173,7 +187,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.resultado)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trendLabel(trends.resultado, trends.comparedThroughDay)}
+            {trendLabel(trends.resultado, period)}
           </p>
         </KpiCardContent>
       </KpiCard>
@@ -185,7 +199,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.faturamento)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trendLabel(trends.faturamento, trends.comparedThroughDay)}
+            {trendLabel(trends.faturamento, period)}
           </p>
         </KpiCardContent>
       </KpiCard>
@@ -213,7 +227,7 @@ function KpiSection({ data, goals, trends }: { data: Analysis['kpis']; goals: An
             {formatBRL(data.despesa)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {trendLabel(trends.despesa, trends.comparedThroughDay)}
+            {trendLabel(trends.despesa, period)}
           </p>
         </KpiCardContent>
       </KpiCard>
@@ -320,13 +334,18 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
 // which put a second, smaller daily target on the same screen as the one the
 // health insight and the recommendation were quoting, and made the card
 // disagree with what the WhatsApp bot reported for the same month.
-function ProjectionSection({ projection, kpis, comparedThroughDay }: {
+function ProjectionSection({ projection, faturamento, period }: {
   projection: Analysis['projection']
-  kpis: Analysis['kpis']
-  comparedThroughDay: number
+  faturamento: MonthTrend
+  period: Period
 }) {
-  const prevDiff = kpis.previousMonthRevenueUpToDay > 0
-    ? Math.round(((projection.actual - kpis.previousMonthRevenueUpToDay) / kpis.previousMonthRevenueUpToDay) * 100)
+  // Both sides come from the faturamento trend, which the backend measures over
+  // the same finished days of both months. This used to hold projection.actual —
+  // the whole month including a today that had barely been traded — against last
+  // month up to the same date in full, so the card reported a fall every morning
+  // and a 100% one on the 1st.
+  const prevDiff = faturamento.previous > 0
+    ? Math.round(((faturamento.current - faturamento.previous) / faturamento.previous) * 100)
     : null
 
   return (
@@ -355,22 +374,38 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Até hoje</span>
+            <span className="text-sm text-muted-foreground">Faturado até agora</span>
             <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Mês passado (dia {comparedThroughDay})</span>
-            <span className="text-sm tabular-nums">{formatBRL(kpis.previousMonthRevenueUpToDay)}</span>
-          </div>
-          {/* No previous month is not a 0% move: without a baseline there is
-              no percentage to report, and printing one invented a comparison
-              against a month that never traded. */}
-          {prevDiff === null ? (
-            <p className="text-sm text-muted-foreground">Sem faturamento no mês passado para comparar</p>
-          ) : (
-            <p className={`text-sm ${trendTone(prevDiff)}`}>
-              {prevDiff > 0 ? '↑' : '↓'} {Math.abs(prevDiff)}% vs mês passado
+          {period.inProgress && period.throughDay === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              O mês está começando — ainda não há dia fechado para comparar.
             </p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Este mês {period.inProgress ? `(até o dia ${period.throughDay})` : '(fechado)'}
+                </span>
+                <span className="text-sm tabular-nums">{formatBRL(faturamento.current)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Mês passado {period.inProgress ? `(até o dia ${period.throughDay})` : '(fechado)'}
+                </span>
+                <span className="text-sm tabular-nums">{formatBRL(faturamento.previous)}</span>
+              </div>
+              {/* No previous month is not a 0% move: without a baseline there is
+                  no percentage to report, and printing one invented a comparison
+                  against a month that never traded. */}
+              {prevDiff === null ? (
+                <p className="text-sm text-muted-foreground">Sem faturamento no mês passado para comparar</p>
+              ) : (
+                <p className={`text-sm ${trendTone(prevDiff)}`}>
+                  {prevDiff > 0 ? '↑' : '↓'} {Math.abs(prevDiff)}% vs mês passado
+                </p>
+              )}
+            </>
           )}
         </div>
         {projection.onTrack ? (
@@ -392,12 +427,12 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
                     on weekends too, and the label used to say "dia útil" over a
                     figure divided by all of them. */}
                 <p className="text-sm text-muted-foreground">
-                  Necessário por dia ({pluralDias(projection.daysRemaining)})
+                  Necessário por dia ({pluralDias(projection.daysRemaining)}, hoje incluído)
                 </p>
                 <p className="text-base tabular-nums">{formatBRL(projection.neededPerDay)}</p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Último dia do mês — não há mais dias para recuperar.</p>
+              <p className="text-sm text-muted-foreground">Mês encerrado — não há mais dias para recuperar.</p>
             )}
           </div>
         )}
@@ -407,8 +442,12 @@ function ProjectionSection({ projection, kpis, comparedThroughDay }: {
 }
 
 function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekComparison']; recommendation?: Recommendation }) {
-  const pct = data.previousUpToDay !== 0
-    ? Math.round(((data.current - data.previousUpToDay) / data.previousUpToDay) * 100)
+  // The pace pair, not the running totals: both sides cover the same finished
+  // days of the week, so today — still being traded — is in neither. Comparing
+  // this week including today against last week's matching weekday in full read
+  // as a fall every morning, and as a 100% fall on a Monday.
+  const pct = data.pace.days > 0 && data.pace.previous !== 0
+    ? Math.round(((data.pace.current - data.pace.previous) / data.pace.previous) * 100)
     : null
 
   // The backend emits one label per elapsed day of this week, so the last one
@@ -426,10 +465,16 @@ function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekC
             <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Semana passada (até {todayPt})</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.previousUpToDay)}</span>
+            <span className="text-sm text-muted-foreground">Ritmo até ontem ({pluralDias(data.pace.days)})</span>
+            <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
           </div>
-          {pct === null ? (
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Semana passada (mesmos dias)</span>
+            <span className="text-sm tabular-nums">{formatBRL(data.pace.previous)}</span>
+          </div>
+          {data.pace.days === 0 ? (
+            <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
+          ) : pct === null ? (
             <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
           ) : (
             <p className={`text-sm ${trendTone(pct)}`}>
@@ -586,14 +631,19 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
     <>
       {/* The headline numbers first: the cards below break them down, and the
           summary of a page does not belong underneath its own detail. */}
-      <KpiSection data={analysis.kpis} goals={analysis.goals} trends={analysis.trends} />
+      <KpiSection
+        data={analysis.kpis}
+        goals={analysis.goals}
+        trends={analysis.trends}
+        period={analysis.period}
+      />
       <HealthSection data={analysis.health} />
       <RecommendationSection data={otherRecs} />
       <WeekdaySection data={analysis.weekdays} />
       <ProjectionSection
         projection={analysis.projection}
-        kpis={analysis.kpis}
-        comparedThroughDay={analysis.trends.comparedThroughDay}
+        faturamento={analysis.trends.faturamento}
+        period={analysis.period}
       />
       <WeekComparisonSection data={analysis.weekComparison} recommendation={weeklyRec} />
       <CashPositionSection data={analysis.cashPosition} />

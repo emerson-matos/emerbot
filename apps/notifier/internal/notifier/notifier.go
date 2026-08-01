@@ -227,12 +227,13 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	// It is context for the alerts, not a reason to send: a failure here costs
 	// the digest its "how is the month going" section and nothing more, so it
 	// is logged and stepped over rather than aborting the run.
-	var digestInsights []string
+	var digestInsights, digestAhead []string
 	analysis, err := analytics.Assemble(ctx, n.store, shared.FinanceLedgerID, month, nowT)
 	if err != nil {
 		runLog.Warn("notifier digest analysis unavailable, sending alerts alone", "error", err)
 	} else {
 		digestInsights = analysis.DigestLines()
+		digestAhead = analysis.AheadLines()
 
 		// Persist the analysis as a daily snapshot — subproduct of the digest
 		// run, zero extra calculation. The dashboard-api serves this instead of
@@ -297,7 +298,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		msg := n.buildDigest(alerts, digestInsights)
+		msg := n.buildDigest(alerts, digestAhead, digestInsights)
 		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
 			fail(log, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
@@ -349,8 +350,8 @@ func alertKinds(alerts []notifications.Alert) string {
 // model to rewrite; the dashboard call-to-action is appended afterwards, so the
 // link that actually ships is always the configured URL and never something the
 // model paraphrased, dropped or invented.
-func (n *Notifier) buildDigest(alerts []notifications.Alert, insights []string) string {
-	body := buildAlertsBody(alerts, insights)
+func (n *Notifier) buildDigest(alerts []notifications.Alert, ahead, insights []string) string {
+	body := buildAlertsBody(alerts, ahead, insights)
 	if humanized, ok := n.humanize(body); ok {
 		body = humanized
 	}
@@ -375,6 +376,19 @@ func (n *Notifier) humanize(body string) (string, bool) {
 			"Transforme os alertas abaixo em uma mensagem amigável e objetiva em português. " +
 			"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
 			"Não invente informações. Se não houver alertas, diga que está tudo em ordem. " +
+			// The draft is already split into "a partir de agora" and "até
+			// ontem", and the split is the point: the message arrives de manhã,
+			// quando o dia de hoje ainda não aconteceu.
+			"O rascunho vem dividido em duas partes: o que ainda precisa ser feito " +
+			"a partir de agora e como o mês fechou até ontem. Preserve essa " +
+			"divisão e nunca apresente um número do passado como se fosse de hoje. " +
+			// The model turned "Faturamento caiu — 100% abaixo do mês passado
+			// (até o dia 1)" into a bare "queda de 100% em relação ao mês
+			// passado", which reads as the whole month having collapsed.
+			"Se uma linha disser \"até o dia N\" ou \"até ontem\", repita essa " +
+			"ressalva junto do número — sem ela a comparação vira um mês inteiro. " +
+			"Se o rascunho disser que o mês está começando, não invente comparação " +
+			"nem diagnóstico: fale só do que vem pela frente. " +
 			"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
 			"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
 			"depois da sua resposta.",
@@ -442,18 +456,32 @@ func dashboardLink(dashboardURL string) string {
 // buildAlertsBody is the static draft: the message we send verbatim when there
 // is no model to rewrite it, and the input the model rewrites when there is.
 //
-// The alerts come first because they are the things with a deadline; the
-// month's insights follow as the context that answers "and how are we doing
-// overall?" without the user having to open the dashboard.
-func buildAlertsBody(alerts []notifications.Alert, insights []string) string {
+// It is written in the order the day is actually lived. What has to be dealt
+// with from now on comes first — the bills with a deadline, then what the days
+// left have to bring — because that is what the reader can still act on when
+// the digest lands in the morning. How the month has gone follows, and it is
+// explicitly labelled as being about the days that have *finished*: the digest
+// used to lead with a verdict on a day nobody had traded yet, and on the 1st it
+// opened with "saúde crítica" and "receita caiu 100%" against a month whose
+// only content was its own bills.
+func buildAlertsBody(alerts []notifications.Alert, ahead, insights []string) string {
 	var b strings.Builder
-	b.WriteString("🔔 *Farmácia Financeira* — resumo de hoje:\n")
-	for _, a := range alerts {
-		b.WriteString("\n• ")
-		b.WriteString(a.Text)
+	b.WriteString("🔔 *Farmácia Financeira* — resumo do dia\n")
+
+	if len(alerts) > 0 || len(ahead) > 0 {
+		b.WriteString("\n⏭️ *A partir de agora:*\n")
+		for _, a := range alerts {
+			b.WriteString("\n• ")
+			b.WriteString(a.Text)
+		}
+		for _, line := range ahead {
+			b.WriteString("\n• ")
+			b.WriteString(line)
+		}
 	}
+
 	if len(insights) > 0 {
-		b.WriteString("\n\n📊 *Como está o mês:*\n")
+		b.WriteString("\n\n📊 *Como fechamos até ontem:*\n")
 		for _, line := range insights {
 			b.WriteString("\n• ")
 			b.WriteString(line)

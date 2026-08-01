@@ -24,30 +24,79 @@ func (s HealthStatus) Label() string {
 	}
 }
 
-// DigestLines renders the analysis as a few short Portuguese sentences for the
-// daily WhatsApp digest: the traffic light, what is going wrong, and the one
-// thing to do about it.
+// DigestLines renders how the month stands for the daily WhatsApp digest: the
+// traffic light and what is going wrong, over the days that have finished.
+//
+// The digest goes out in the morning, so every line here is explicitly about
+// the past — never about today, which has not been traded yet. On the first day
+// of a month there is no past at all, and saying so is the whole content: the
+// figures that used to be printed there ("saúde crítica", "receita caiu 100%")
+// were the month's booked bills weighed against sales nobody had made yet.
+// What to do from here is a separate half of the message, built from
+// AheadLines.
 //
 // Only warnings and criticals make the cut — "resultado positivo" is good news
 // but it is not news, and the digest competes with everything else in the
 // user's WhatsApp.
 func (a Analysis) DigestLines() []string {
-	lines := []string{fmt.Sprintf("Saúde do mês: %s.", a.Health.Status.Label())}
+	if a.Period.InProgress && a.Period.ThroughDay == 0 {
+		return []string{"O mês está começando — ainda não há dia fechado para comparar."}
+	}
+
+	header := fmt.Sprintf("Saúde do mês: %s.", a.Health.Status.Label())
+	if a.Period.InProgress {
+		header = fmt.Sprintf("Saúde do mês até ontem (dia %d): %s.", a.Period.ThroughDay, a.Health.Status.Label())
+	}
+	lines := []string{header}
 
 	shown := 0
 	for _, m := range a.Health.Messages {
-		if m.Severity == SeverityInfo || shown >= maxDigestInsights {
+		// The goal insights are about the days still to come, and AheadLines
+		// already prices them. Repeating them here put the same "necessário
+		// R$ X/dia" under a heading that says the opposite.
+		if m.Severity == SeverityInfo || m.Type == InsightGoalBehind || m.Type == InsightGoalOnTrack {
 			continue
+		}
+		if shown >= maxDigestInsights {
+			break
 		}
 		lines = append(lines, fmt.Sprintf("%s — %s.", m.Title, m.Description))
 		shown++
 	}
 
-	if len(a.Recommendations) > 0 {
-		r := a.Recommendations[0]
-		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
+	return lines
+}
+
+// AheadLines renders what the days still to come have to bring — the half of
+// the digest that is actionable at the hour it arrives, and the only half that
+// says anything at all on the first day of a month.
+//
+// The per-day ask comes first because it is the number to act on; a
+// recommendation follows as the reason. A closed month has nothing ahead of it
+// and yields no lines.
+func (a Analysis) AheadLines() []string {
+	if !a.Period.InProgress {
+		return nil
 	}
 
+	var lines []string
+	recs := a.Recommendations
+	if a.Projection.Pacing() && a.Projection.NeededPerDay > 0 {
+		lines = append(lines, fmt.Sprintf("Faltam %s para a meta: %s/dia nos %s que restam (hoje incluído).",
+			formatBRL(a.Projection.Target-a.Projection.Actual),
+			formatBRL(a.Projection.NeededPerDay),
+			pluralDias(a.Projection.DaysRemaining)))
+		// Pacing() means recommendations[0] is the weekly-pace one (see
+		// buildRecommendations), and its message is the same per-day ask just
+		// printed. Whatever comes after it is a different point.
+		if len(recs) > 0 {
+			recs = recs[1:]
+		}
+	}
+	if len(recs) > 0 {
+		r := recs[0]
+		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
+	}
 	return lines
 }
 
@@ -69,20 +118,29 @@ func (a Analysis) ToolPayload() map[string]any {
 		// arrived, loans and aportes included. They are different numbers on
 		// purpose and the model must not present either as the other — the
 		// system prompt spells that out.
-		"faturamento":           reais(a.KPIs.Faturamento),
-		"entradas_de_caixa":     reais(a.KPIs.EntradasCaixa),
-		"despesa":               reais(a.KPIs.Despesa),
-		"resultado":             reais(a.KPIs.Resultado),
-		"dias_restantes_no_mes": a.KPIs.DaysRemaining,
+		"faturamento":       reais(a.KPIs.Faturamento),
+		"entradas_de_caixa": reais(a.KPIs.EntradasCaixa),
+		"despesa":           reais(a.KPIs.Despesa),
+		"resultado":         reais(a.KPIs.Resultado),
+		// Today counts as a day still to sell on, so the model never tells
+		// someone on the last day of the month that there is nothing left to do.
+		"dias_restantes_no_mes_com_hoje": a.Period.DaysRemaining,
+		// Every percentage below is measured over both months' finished days,
+		// up to this one. The model must not present it as a whole month, and
+		// the system prompt says so — see apps/notifier.
+		"comparacao_ate_o_dia": a.Period.ThroughDay,
 		"tendencia": map[string]any{
 			"faturamento_pct": a.Trends.Faturamento.Change,
 			"despesa_pct":     a.Trends.Despesa.Change,
 			"resultado_pct":   a.Trends.Resultado.Change,
 		},
 		"semana": map[string]any{
-			"faturamento_atual":           reais(a.WeekComparison.Current),
-			"faturamento_semana_passada":  reais(a.WeekComparison.Previous),
-			"mesmo_dia_da_semana_passada": reais(a.WeekComparison.PreviousUpToDay),
+			"faturamento_atual":          reais(a.WeekComparison.Current),
+			"faturamento_semana_passada": reais(a.WeekComparison.Previous),
+			// Both sides cover the same finished days of the week; today is in
+			// neither.
+			"ritmo_ate_ontem":               reais(a.WeekComparison.Pace.Current),
+			"ritmo_semana_passada_ate_aqui": reais(a.WeekComparison.Pace.Previous),
 		},
 		// The same projection the dashboard draws. It used to be derived here
 		// from last week's flat daily rate while the page used the weekday
@@ -115,6 +173,13 @@ func (a Analysis) ToolPayload() map[string]any {
 		"pior_dia":         dayText(a.Highlights.WorstIncome),
 	}
 
+	// Spelled out rather than left for the model to infer from
+	// comparacao_ate_o_dia being 0, which it does not reliably do: on the first
+	// day of a month it read the empty month-over-month figures as a real
+	// collapse and reported a 100% fall in receita.
+	if a.Period.InProgress && a.Period.ThroughDay == 0 {
+		payload["mes_comecando_sem_dia_fechado"] = true
+	}
 	if a.Projection.NeededPerDay > 0 {
 		payload["necessario_por_dia_para_bater_a_meta"] = reais(a.Projection.NeededPerDay)
 	}

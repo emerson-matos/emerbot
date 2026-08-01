@@ -56,6 +56,11 @@ func Build(in Input) Analysis {
 	months := MonthRange(in.Month, HistoryMonths)
 	current := len(months) - 1
 
+	// Where we stand inside the month, decided once. Everything retrospective
+	// below stops at clock.through (yesterday) and everything forward-looking
+	// starts at clock.today — see monthClock for why the two used to be swapped.
+	clock := newMonthClock(in.Month, in.Now)
+
 	currentSummary := pkgfinance.MonthlySummary{Month: in.Month}
 	if s := at(in.Summaries, current); s != nil {
 		currentSummary = *s
@@ -70,12 +75,10 @@ func Build(in Input) Analysis {
 	faturamento := currentSummary.TotalRevenue
 
 	kpis := KPIs{
-		Resultado:                   currentSummary.ExpectedBalance,
-		Faturamento:                 faturamento,
-		EntradasCaixa:               currentSummary.TotalCashIn,
-		Despesa:                     currentSummary.TotalExpense,
-		DaysRemaining:               daysInMonth(in.Now) - in.Now.Day(),
-		PreviousMonthRevenueUpToDay: revenueUpToDay(in.PreviousRevenueEntries, in.Now.Day()),
+		Resultado:     currentSummary.ExpectedBalance,
+		Faturamento:   faturamento,
+		EntradasCaixa: currentSummary.TotalCashIn,
+		Despesa:       currentSummary.TotalExpense,
 	}
 
 	var revenueTarget int64
@@ -83,25 +86,26 @@ func Build(in Input) Analysis {
 		revenueTarget = currentGoal.RevenueTarget
 	}
 	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
-	goals := goalProgress(currentSummary, currentGoal, in.Now, faturamento)
-	weekdays := weekdayStats(in.RevenueEntries, in.Now)
+	goals := goalProgress(currentSummary, currentGoal, clock, faturamento)
+	weekdays := weekdayStats(in.RevenueEntries, in.Now, clock)
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
 	// the bot — they each used to work one out for themselves and disagreed.
-	projection := buildProjection(weekdays, goals, in.Now)
-	// One month-over-month comparison, measured at the same height of both
-	// months, shared by the trends and the health insights — they used to
+	projection := buildProjection(weekdays, goals, in.Now, clock, revenueOnDay(in.RevenueEntries, clock.today))
+	// One month-over-month comparison, measured over the same finished days of
+	// both months, shared by the trends and the health insights — they used to
 	// derive it separately from the full summaries and both inherited the
 	// partial-month distortion.
-	compared := buildComparison(in.Month, in.Entries, in.PreviousEntries, in.RevenueEntries, in.PreviousRevenueEntries, in.Now)
+	compared := buildComparison(clock, in.Entries, in.PreviousEntries, in.RevenueEntries, in.PreviousRevenueEntries)
 	trends := buildTrends(compared)
 	cashPosition := buildCashPosition(in.CashFlowPoints, in.Now)
 
 	return Analysis{
 		Schema:             SchemaVersion,
 		Month:              in.Month,
+		Period:             clock.period(),
 		KPIs:               kpis,
-		Health:             buildHealth(in.Entries, currentSummary, compared, week, projection),
+		Health:             buildHealth(in.Entries, compared, week, projection),
 		Trends:             trends,
 		Weekdays:           weekdays,
 		WeekComparison:     week,
@@ -112,7 +116,7 @@ func Build(in Input) Analysis {
 		Projection:         projection,
 		History:            buildHistory(months, in.Summaries, in.Goals),
 		CashPosition:       cashPosition,
-		Recommendations:    buildRecommendations(week, projection, trends, cashPosition),
+		Recommendations:    buildRecommendations(week, projection, trends, cashPosition, compared),
 	}
 }
 
@@ -120,6 +124,13 @@ func Build(in Input) Analysis {
 // against the whole of last week, and projects the rest of *this week* from
 // the resulting daily rate. Projecting the month is buildProjection's job, off
 // the weekday averages — this used to do both and the two disagreed.
+//
+// Alongside those totals it fills Pace, the pair the insights and the
+// recommendation actually read: this week and last week over the same
+// *finished* days of the week, Monday through yesterday on both sides. The
+// pace used to be this week including today against last week's matching
+// weekday in full, which is the same partial-day distortion buildComparison
+// carries at the month level — a Monday morning read as "ritmo caiu 100%".
 //
 // Comparisons are done on "YYYY-MM-DD" strings rather than instants: the week
 // boundaries come from now's calendar fields, and an entry's date is a
@@ -140,14 +151,21 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 	lastSundayStr := thisMonday.AddDate(0, 0, -1).Format("2006-01-02")
 	todayStr := now.Format("2006-01-02")
 
-	// The same weekday as today, one week back — the fair mid-week comparison.
-	sameDayOffset := dayOfWeek - 1
+	// Days of this week that have finished: 0 on a Monday, 6 on a Sunday. Both
+	// halves of the pace cover exactly this many days.
+	finished := dayOfWeek - 1
 	if dayOfWeek == 0 {
-		sameDayOffset = 6
+		finished = 6
 	}
-	lastSameDayStr := thisMonday.AddDate(0, 0, -7+sameDayOffset).Format("2006-01-02")
+	// Empty windows when nothing has finished — no date can fall inside them,
+	// so a Monday reports no pace at all rather than a fall against a full day.
+	paceEnd, lastPaceEnd := "", ""
+	if finished > 0 {
+		paceEnd = thisMonday.AddDate(0, 0, finished-1).Format("2006-01-02")
+		lastPaceEnd = thisMonday.AddDate(0, 0, -7+finished-1).Format("2006-01-02")
+	}
 
-	week := WeekComparison{MonthlyTarget: monthlyTarget}
+	week := WeekComparison{MonthlyTarget: monthlyTarget, Pace: WeekPace{Days: finished}}
 	for _, e := range entries {
 		if !domain.IsRevenue(e) {
 			continue
@@ -159,8 +177,13 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 		case date >= lastMondayStr && date <= lastSundayStr:
 			week.Previous += e.Amount
 		}
-		if date >= lastMondayStr && date <= lastSameDayStr {
-			week.PreviousUpToDay += e.Amount
+		if finished > 0 {
+			if date >= thisMondayStr && date <= paceEnd {
+				week.Pace.Current += e.Amount
+			}
+			if date >= lastMondayStr && date <= lastPaceEnd {
+				week.Pace.Previous += e.Amount
+			}
 		}
 	}
 
@@ -200,19 +223,6 @@ func MonthRange(month string, count int) []string {
 		months = append(months, domain.MonthOf(t.AddDate(0, -i, 0)))
 	}
 	return months
-}
-
-// revenueUpToDay sums faturamento falling on or before the given day of the
-// month — how last month is truncated for a like-for-like comparison with a
-// month still in progress. entries must be on the transaction basis.
-func revenueUpToDay(entries []domain.FinancialEntry, day int) int64 {
-	var total int64
-	for _, e := range entries {
-		if domain.IsRevenue(e) && e.TransactionDate.Day() <= day {
-			total += e.Amount
-		}
-	}
-	return total
 }
 
 // at returns the slice element at i, or nil when i is out of range — the
