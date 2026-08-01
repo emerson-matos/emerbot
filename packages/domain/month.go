@@ -46,3 +46,20 @@ func CurrentMonthRange() (from, to time.Time) {
 	from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	return from, from.AddDate(0, 1, -1)
 }
+
+// AddMonths shifts t by n months (n may be negative), clamping the day to the
+// target month's last day and keeping the UTC midnight of a calendar day.
+//
+// This is what every "same day, next month" calculation in the app means:
+// a bill due on the 31st is due on the 28th in February, not on 3 March.
+// time.AddDate overflows instead — 31 January plus one month is 3 March — which
+// skips a month entirely and reorders the occurrences of a series relative to
+// each other.
+func AddMonths(t time.Time, n int) time.Time {
+	year, month, day := t.UTC().Date()
+	firstOfTarget := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).AddDate(0, n, 0)
+	if lastDay := firstOfTarget.AddDate(0, 1, -1).Day(); day > lastDay {
+		day = lastDay
+	}
+	return time.Date(firstOfTarget.Year(), firstOfTarget.Month(), day, 0, 0, 0, 0, time.UTC)
+}

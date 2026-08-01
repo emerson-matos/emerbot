@@ -27,12 +27,20 @@ func seedPaidEntry(t *testing.T, store pkgfinance.Store, date string, amount int
 	if err != nil {
 		t.Fatalf("parse date %q: %v", date, err)
 	}
+	// Income seeded here is a sale, spelled out rather than left to
+	// domain.IsRevenue's migration shim — an entry with no origin is legacy
+	// data, and these tests are about what the app writes today.
+	origin := domain.IncomeOrigin("")
+	if kind == domain.EntryTypeIncome {
+		origin = domain.OriginVenda
+	}
 	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 		UserID:          testUser,
 		TransactionDate: d,
 		Amount:          amount,
 		Category:        category,
 		Type:            kind,
+		Origin:          origin,
 		PaymentStatus:   domain.PaymentStatusPaid,
 		PaymentDate:     &d,
 		Source:          domain.SourceManual,

@@ -501,7 +501,7 @@ func TestResumoMensalToolComMetaIncluiProgresso(t *testing.T) {
 	// Seed entries: R$ 500 income, R$ 200 expense
 	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 	for _, e := range []domain.FinancialEntry{
-		{UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd, Amount: 50000, Type: domain.EntryTypeIncome, Category: "venda_balcao", PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual},
+		{UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd, Amount: 50000, Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginVenda, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual},
 		{UserID: "u1", EntryID: domain.EntryID("exp1"), TransactionDate: cd, Amount: 20000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual},
 	} {
 		if err := store.SaveEntry(ctx, e); err != nil {
@@ -544,8 +544,8 @@ func TestResumoMensalToolSemMetaRetornaGoalNil(t *testing.T) {
 	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 	if err := store.SaveEntry(context.Background(), domain.FinancialEntry{
 		UserID: "u1", EntryID: domain.EntryID("e1"), TransactionDate: cd,
-		Amount: 1000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid,
-		PaymentDate: &cd, Source: domain.SourceManual,
+		Amount: 1000, Type: domain.EntryTypeIncome, Origin: domain.OriginVenda,
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -676,8 +676,8 @@ func TestResumoMensalFaturamentoCappedAt100WhenExceedsTarget(t *testing.T) {
 	cd := domain.NewCalendarDate(time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC))
 	if err := store.SaveEntry(ctx, domain.FinancialEntry{
 		UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd,
-		Amount: 200000, Type: domain.EntryTypeIncome, Category: "venda_balcao", PaymentStatus: domain.PaymentStatusPaid,
-		PaymentDate: &cd, Source: domain.SourceManual,
+		Amount: 200000, Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginVenda,
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -771,8 +771,8 @@ func TestResumoMensalDefaultsToCurrentMonth(t *testing.T) {
 	cd := domain.NewCalendarDate(now)
 	if err := store.SaveEntry(ctx, domain.FinancialEntry{
 		UserID: "u1", EntryID: domain.EntryID("inc1"), TransactionDate: cd,
-		Amount: 50000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPaid,
-		PaymentDate: &cd, Source: domain.SourceManual,
+		Amount: 50000, Type: domain.EntryTypeIncome, Origin: domain.OriginVenda,
+		PaymentStatus: domain.PaymentStatusPaid, PaymentDate: &cd, Source: domain.SourceManual,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -961,7 +961,9 @@ func TestSearchEntriesByPeriod(t *testing.T) {
 	store := NewInMemoryStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
-	lastMonth := now.AddDate(0, -1, 0)
+	// domain.AddMonths, not AddDate: on the 31st the latter overflows back into
+	// the current month, which would put both entries inside the queried window.
+	lastMonth := domain.AddMonths(now, -1)
 	cdNow := domain.NewCalendarDate(now)
 	cdLast := domain.NewCalendarDate(lastMonth)
 

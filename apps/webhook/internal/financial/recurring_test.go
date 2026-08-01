@@ -85,3 +85,30 @@ func TestAddPeriodAdvancesByUnit(t *testing.T) {
 		}
 	}
 }
+
+// A series started on a day that not every month has must still produce one
+// occurrence per month, clamped to each month's last day: 31 January plus one
+// month is 28 February, never 3 March.
+func TestAddPeriodClampsMonthEndStarts(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+
+	want := []time.Time{
+		time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC),
+	}
+	for i, w := range want {
+		if got := addPeriod(start, "mensal", i); !got.Equal(w) {
+			t.Errorf("addPeriod(%v, \"mensal\", %d) = %v, want %v", start, i, got, w)
+		}
+	}
+
+	// 29 February has no counterpart in a common year.
+	leapDay := time.Date(2024, 2, 29, 0, 0, 0, 0, time.UTC)
+	if got, w := addPeriod(leapDay, "anual", 1), time.Date(2025, 2, 28, 0, 0, 0, 0, time.UTC); !got.Equal(w) {
+		t.Errorf("addPeriod(%v, \"anual\", 1) = %v, want %v", leapDay, got, w)
+	}
+}

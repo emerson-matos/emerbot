@@ -97,6 +97,11 @@ func parseRecorrente(text string) (recurrenceRequest, error) {
 
 // addPeriod returns the due date for the ith (0-based) occurrence of a
 // recurrence starting at start.
+//
+// The month-based periods go through domain.AddMonths so a series that starts
+// on the 31st keeps one occurrence per month, clamped to each month's last day.
+// time.AddDate would overflow instead — 31 January plus one month is 3 March —
+// leaving February with no instalment and March with two.
 func addPeriod(start time.Time, period string, i int) time.Time {
 	switch period {
 	case "diario":
@@ -106,9 +111,9 @@ func addPeriod(start time.Time, period string, i int) time.Time {
 	case "quinzenal":
 		return start.AddDate(0, 0, 15*i)
 	case "anual":
-		return start.AddDate(i, 0, 0)
+		return domain.AddMonths(start, 12*i)
 	default: // "mensal"
-		return start.AddDate(0, i, 0)
+		return domain.AddMonths(start, i)
 	}
 }
 

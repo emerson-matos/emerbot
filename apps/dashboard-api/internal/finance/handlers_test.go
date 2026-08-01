@@ -785,7 +785,12 @@ func TestSaveGoalStoreFailureIs500(t *testing.T) {
 
 func TestMonthlySummary(t *testing.T) {
 	store := newStore(t)
-	seedEntry(t, store, "in", "2026-07-05", 100000, func(e *domain.FinancialEntry) { e.Type = domain.EntryTypeIncome })
+	seedEntry(t, store, "in", "2026-07-05", 100000, func(e *domain.FinancialEntry) {
+		e.Type = domain.EntryTypeIncome
+		// A sale, so faturamento is asserted on an origin rather than on
+		// domain.IsRevenue's migration shim.
+		e.Origin = domain.OriginVenda
+	})
 	seedEntry(t, store, "out", "2026-07-10", 30000)
 
 	w := run(NewSummaryHandler(store).Monthly, authed(http.MethodGet, "/summary/monthly?month=2026-07", ""))
