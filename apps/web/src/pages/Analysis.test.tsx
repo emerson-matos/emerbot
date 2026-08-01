@@ -17,12 +17,16 @@ import Analysis from "./Analysis";
 function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
   return {
     month: "2026-07",
+    period: {
+      throughDay: 25,
+      daysRemaining: 6,
+      daysTotal: 31,
+      inProgress: true,
+    },
     kpis: {
       resultado: 900000,
       faturamento: 3600000,
       despesa: 2700000,
-      daysRemaining: 5,
-      previousMonthRevenueUpToDay: 0,
     },
     health: {
       status: "atencao",
@@ -40,13 +44,12 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       faturamento: { current: 0, previous: 0, change: 0, direction: "stable" },
       despesa: { current: 0, previous: 0, change: 0, direction: "stable" },
       resultado: { current: 0, previous: 0, change: 0, direction: "stable" },
-      comparedThroughDay: 26,
     },
     weekdays: [],
     weekComparison: {
       current: 524604,
       previous: 813240,
-      previousUpToDay: 813240,
+      pace: { current: 524604, previous: 813240, days: 3 },
       projectedWeekly: 524604,
       monthlyTarget: 3600000,
       labels: [],
@@ -131,7 +134,7 @@ describe("Analysis page", () => {
   it("labels the per-day ask by every day left, not business days", () => {
     renderWith(analysisData());
 
-    expect(screen.getByText("Necessário por dia (5 dias)")).toBeInTheDocument();
+    expect(screen.getByText("Necessário por dia (5 dias, hoje incluído)")).toBeInTheDocument();
     expect(screen.queryByText(/dia útil/)).not.toBeInTheDocument();
   });
 
@@ -203,8 +206,10 @@ describe("Analysis page", () => {
 
   it("does not invent a percentage against a month that never traded", () => {
     const data = analysisData();
-    data.kpis = { ...data.kpis, previousMonthRevenueUpToDay: 0 };
-    data.weekComparison = { ...data.weekComparison, previousUpToDay: 0 };
+    data.weekComparison = {
+      ...data.weekComparison,
+      pace: { current: 0, previous: 0, days: 3 },
+    };
     // The backend drops its own month-over-month copy without a baseline
     // (hasBaseline); only the weekly recommendation survives.
     data.recommendations = data.recommendations.slice(0, 1);
@@ -222,5 +227,44 @@ describe("Analysis page", () => {
     // month-over-month move.
     expect(screen.getAllByText("Sem base no mês passado")).toHaveLength(3);
     expect(container.textContent).not.toContain("% vs mês passado");
+  });
+});
+
+describe("Analysis on the first day of a month", () => {
+  // The month has not had a finished day, so the backend zeroes every
+  // retrospective figure and reports throughDay 0. The page must say the month
+  // is starting rather than draw a fall to zero — this used to render "↓ 100%
+  // vs mês passado até o dia 1" on every 1st.
+  function firstOfMonth() {
+    const data = analysisData();
+    data.period = { throughDay: 0, daysRemaining: 31, daysTotal: 31, inProgress: true };
+    data.trends = {
+      faturamento: { current: 0, previous: 0, change: 0, direction: "stable" },
+      despesa: { current: 0, previous: 0, change: 0, direction: "stable" },
+      resultado: { current: 0, previous: 0, change: 0, direction: "stable" },
+    };
+    data.weekComparison = {
+      ...data.weekComparison,
+      pace: { current: 0, previous: 0, days: 0 },
+    };
+    // Without a finished day the backend has no baseline, so its own
+    // month-over-month recommendations never fire; only the weekly pace one,
+    // which is about what is still ahead, survives.
+    data.recommendations = data.recommendations.slice(0, 1);
+    return data;
+  }
+
+  it("says the month is starting instead of reporting a collapse", () => {
+    const { container } = renderWith(firstOfMonth());
+
+    expect(screen.getAllByText("Mês começando — sem dia fechado")).toHaveLength(3);
+    expect(
+      screen.getByText("O mês está começando — ainda não há dia fechado para comparar."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("A semana está começando — nenhum dia fechado ainda"),
+    ).toBeInTheDocument();
+    expect(container.textContent).not.toContain("% vs mês passado");
+    expect(container.textContent).not.toContain("% vs semana anterior");
   });
 });

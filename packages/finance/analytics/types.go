@@ -33,6 +33,10 @@ const (
 	InsightWeeklyImprovement InsightType = "weekly_improvement"
 	InsightWeeklyDecline     InsightType = "weekly_decline"
 	InsightGoalOnTrack       InsightType = "goal_on_track"
+	// InsightMonthStart stands in for every retrospective insight on the first
+	// day of a month, where none of them can be computed honestly — see
+	// buildHealth.
+	InsightMonthStart InsightType = "month_start"
 )
 
 // There is deliberately no cash-runway insight: a balance about to go negative
@@ -92,7 +96,11 @@ type MonthTrend struct {
 }
 
 // Trends bundles the three headline metrics, each compared against the
-// previous month at the same height of the month.
+// previous month over the same finished days.
+//
+// The window they were measured over is Analysis.Period — it is a fact about
+// the whole analysis, not about the trends alone, and every consumer must
+// label a percentage with it rather than present it as a whole-month figure.
 type Trends struct {
 	// Faturamento is the growth reading, so it tracks sales only (see
 	// domain.IsRevenue) — a loan is not the business growing. Resultado is the
@@ -100,11 +108,27 @@ type Trends struct {
 	Faturamento MonthTrend `json:"faturamento"`
 	Despesa     MonthTrend `json:"despesa"`
 	Resultado   MonthTrend `json:"resultado"`
-	// ComparedThroughDay is the day of the month both sides were measured up
-	// to, or 0 when both months are closed and were compared whole. The UI
-	// needs it to say which window a percentage refers to — the same number
-	// means something different for "the month so far" than for a full month.
-	ComparedThroughDay int `json:"comparedThroughDay"`
+}
+
+// Period says how far into the analysed month this Analysis stands. It is the
+// one place the split between "what already happened" and "what is still
+// ahead" is written down, and every figure in the Analysis honours it: nothing
+// retrospective counts today, and nothing forward-looking writes today off.
+type Period struct {
+	// ThroughDay is the last day of the month with complete data — yesterday
+	// while the month is running, the month's last day once it is closed. Zero
+	// on the first day of a month: nothing has finished, so every retrospective
+	// figure here is empty and there is no percentage to quote. Consumers must
+	// render that as "the month is starting", never as a fall to zero.
+	ThroughDay int `json:"throughDay"`
+	// DaysRemaining counts the days still to trade, today included — today is a
+	// day the pharmacy can still sell on. Zero for a closed month.
+	DaysRemaining int `json:"daysRemaining"`
+	DaysTotal     int `json:"daysTotal"`
+	// InProgress is true when the analysed month is the one we are in. It is
+	// what tells "compared through the 14th, mid-month" from a closed month
+	// compared whole.
+	InProgress bool `json:"inProgress"`
 }
 
 // WeekdayStat is the counter-sales average for one day of the week across the
@@ -195,13 +219,14 @@ type MonthlySnapshot struct {
 }
 
 // WeekComparison measures this week's faturamento against last week's, and
-// projects the month from the resulting daily rate.
+// projects the rest of this week from the resulting daily rate.
 type WeekComparison struct {
-	Current  int64 `json:"current"`
-	Previous int64 `json:"previous"`
-	// PreviousUpToDay is last week truncated at the same weekday as today —
-	// the only fair comparison mid-week, and what the pace insights use.
-	PreviousUpToDay int64 `json:"previousUpToDay"`
+	// Current is Monday through today, Previous the whole of last week. Both
+	// are totals for the chart; the *comparison* lives in Pace.
+	Current  int64    `json:"current"`
+	Previous int64    `json:"previous"`
+	Pace     WeekPace `json:"pace"`
+
 	ProjectedWeekly int64 `json:"projectedWeekly"`
 	// The month-level projection lives on Projection, not here: this one used
 	// to carry a second one derived from last week's flat daily rate, which
@@ -209,6 +234,19 @@ type WeekComparison struct {
 	// averages.
 	MonthlyTarget int64    `json:"monthlyTarget"`
 	Labels        []string `json:"labels"`
+}
+
+// WeekPace is this week against last week over the same *finished* days —
+// Monday through yesterday on both sides. It is the only week-over-week reading
+// the insights and the recommendation may use: comparing this week including a
+// morning still being traded against last week's matching weekday in full
+// reported "ritmo caiu" every morning, and on a Monday reported a 100% fall.
+type WeekPace struct {
+	Current  int64 `json:"current"`
+	Previous int64 `json:"previous"`
+	// Days is how many finished days of this week both sides cover. Zero on a
+	// Monday, where the week has nothing to compare yet.
+	Days int `json:"days"`
 }
 
 // Projection is where the month lands and what it would take to close the gap
@@ -283,13 +321,13 @@ type KPIs struct {
 	// and it excludes sales that have not been paid yet.
 	EntradasCaixa int64 `json:"entradasCaixa"`
 	Despesa       int64 `json:"despesa"`
-	// DaysRemaining excludes today — it is what is left to trade with.
-	DaysRemaining int `json:"daysRemaining"`
-	// PreviousMonthRevenueUpToDay is last month's faturamento truncated at
-	// today's day number, so "ahead of / behind last month" is a
-	// like-for-like comparison instead of a partial month against a whole
-	// one — and the same figure Projection.Actual is compared to.
-	PreviousMonthRevenueUpToDay int64 `json:"previousMonthRevenueUpToDay"`
+
+	// There is deliberately no "days remaining" or "last month up to today"
+	// here. The first is Period.DaysRemaining, so the whole analysis counts the
+	// days the same way; the second is Trends.Faturamento, whose Current and
+	// Previous are already last month and this month over the same finished
+	// days. Both used to be computed a second time here, off today's day
+	// number, and disagreed with the figures shown beside them.
 }
 
 // SchemaVersion is the shape of the Analysis JSON. It exists because the
@@ -302,7 +340,12 @@ type KPIs struct {
 // Bump it whenever a field is renamed, removed, or changes meaning. Consumers
 // must refuse to compare across versions rather than guess — see
 // apps/dashboard-api/internal/finance/snapshot.go.
-const SchemaVersion = 2
+//
+// 3: added Period; dropped kpis.daysRemaining and
+// kpis.previousMonthRevenueUpToDay (Period and Trends carry them now);
+// weekComparison.previousUpToDay became weekComparison.pace; every
+// retrospective figure now stops at yesterday instead of at today.
+const SchemaVersion = 3
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.
@@ -311,6 +354,7 @@ type Analysis struct {
 	// a snapshot stored before versioning existed, which is never comparable.
 	Schema             int                  `json:"schemaVersion"`
 	Month              string               `json:"month"`
+	Period             Period               `json:"period"`
 	KPIs               KPIs                 `json:"kpis"`
 	Health             Health               `json:"health"`
 	Trends             Trends               `json:"trends"`

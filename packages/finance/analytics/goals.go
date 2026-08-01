@@ -14,13 +14,16 @@ import (
 //
 // Percentages are capped at 100 so a bar cannot overflow its track; the raw
 // amounts stay uncapped for anyone who wants the overshoot.
-func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, now time.Time, revenue int64) GoalProgress {
-	daysTotal := daysInMonth(now)
+func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, clock monthClock, revenue int64) GoalProgress {
 	progress := GoalProgress{
 		RevenueActual: revenue,
 		ExpenseActual: summary.TotalExpense,
-		DaysRemaining: daysTotal - now.Day(),
-		DaysTotal:     daysTotal,
+		// Today counts as a day still to trade, and a closed month has none —
+		// the day numbers used to be read off now's calendar whatever month was
+		// being analysed, so a finished July opened in August still had "30
+		// dias" to reach its target in.
+		DaysRemaining: clock.remaining,
+		DaysTotal:     clock.total,
 	}
 	if goal == nil {
 		return progress

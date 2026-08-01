@@ -588,15 +588,23 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 	}
 
 	body := wa.sent[0].body
-	// The alerts still lead — the analysis is context, not a replacement.
+	// What has to be dealt with from here leads the message, and the bill with
+	// a deadline leads that.
+	agora := strings.Index(body, "A partir de agora")
+	ontem := strings.Index(body, "Como fechamos até ontem")
+	if agora < 0 || ontem < 0 {
+		t.Fatalf("digest lost one of its two halves:\n%s", body)
+	}
+	if agora > ontem {
+		t.Errorf("what is still to do must come before how the month has gone:\n%s", body)
+	}
 	if !strings.Contains(body, "vence hoje") {
 		t.Errorf("digest lost its alert:\n%s", body)
 	}
-	if !strings.Contains(body, "Como está o mês") {
-		t.Errorf("digest has no analysis section:\n%s", body)
-	}
-	if !strings.Contains(body, "Saúde do mês:") {
-		t.Errorf("digest has no health status:\n%s", body)
+	// The retrospective half names the window it measured, so a percentage in
+	// it can never read as a whole month.
+	if !strings.Contains(body, "Saúde do mês até ontem (dia ") {
+		t.Errorf("digest does not say which days its verdict covers:\n%s", body)
 	}
 	// R$1.000 of a R$50.000 target with most of the month gone.
 	if !strings.Contains(body, "/dia") {
@@ -649,5 +657,84 @@ func TestRunPersistsInsightSnapshot(t *testing.T) {
 	}
 	if snap.ComputedAt.IsZero() {
 		t.Error("computedAt is zero")
+	}
+}
+
+// TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead reproduces the
+// message that went out on 1 August: two overdue bills, and then "saúde
+// crítica", "fluxo de caixa negativo" and "receita caiu 100% vs mês passado" —
+// about a month whose only content that morning was its own booked expenses.
+//
+// The overdue bills were the one true thing in it, and they belong to what has
+// to be dealt with from here.
+func TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	ctx := context.Background()
+
+	firstOfMonth := day("2026-08-01")
+
+	overdue := func(id string, dueOn string, amount int64) domain.FinancialEntry {
+		d := day(dueOn)
+		return domain.FinancialEntry{
+			UserID: shared.FinanceLedgerID, EntryID: domain.EntryID(id), Description: id, Amount: amount,
+			TransactionDate: domain.NewCalendarDate(d), Type: domain.EntryTypeExpense,
+			PaymentStatus: domain.PaymentStatusPending, DueDate: ptrCD(d), Source: domain.SourceManual,
+		}
+	}
+	// July traded every single day; August has nothing but its own bills.
+	entries := []domain.FinancialEntry{
+		overdue("Assinatura do app painel financeiro", "2026-07-31", 9900),
+		overdue("Folha de pagamento", "2026-07-30", 900000),
+		overdue("Aluguel de agosto", "2026-08-05", 300000),
+	}
+	for d := 1; d <= 31; d++ {
+		date := day("2026-07-01").AddDate(0, 0, d-1)
+		entries = append(entries, domain.FinancialEntry{
+			UserID: shared.FinanceLedgerID, EntryID: domain.EntryID("venda-" + date.Format("02")),
+			Description: "venda", Amount: 50000, TransactionDate: domain.NewCalendarDate(date),
+			Type: domain.EntryTypeIncome, Category: "venda_balcao", Origin: domain.OriginVenda,
+			PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(date), Source: domain.SourceManual,
+		})
+	}
+
+	seedUser(
+		t, s, firstOfMonth.Add(-6*time.Hour),
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
+		entries...,
+	)
+	if err := s.fin.SaveGoal(ctx, domain.Goal{
+		UserID: shared.FinanceLedgerID, Month: "2026-08", RevenueTarget: 1550000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
+	n.SetClock(func() time.Time { return firstOfMonth.Add(9 * time.Hour) })
+	if _, err := n.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	body := wa.sent[0].body
+
+	// The pendências are real and still lead the message.
+	if !strings.Contains(body, "Folha de pagamento está vencida") {
+		t.Errorf("digest lost the overdue bills:\n%s", body)
+	}
+	// The month has one day, it has not been traded, and no percentage may be
+	// quoted about it.
+	for _, banned := range []string{"%", "Crítico", "Fluxo negativo", "caiu"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("digest still judges an untraded month (%q):\n%s", banned, body)
+		}
+	}
+	if !strings.Contains(body, "começando") {
+		t.Errorf("digest does not say the month is just starting:\n%s", body)
+	}
+	// R$15.500,00 over all 31 days of August, today included.
+	if !strings.Contains(body, "R$ 500,00/dia nos 31 dias") {
+		t.Errorf("digest does not price the target over the whole month ahead:\n%s", body)
 	}
 }

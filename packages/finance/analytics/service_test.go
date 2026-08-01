@@ -47,10 +47,15 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 	if got.KPIs.Faturamento != 350000 || got.KPIs.Despesa != 90000 {
 		t.Errorf("KPIs = %+v, want July's totals", got.KPIs)
 	}
-	// June's income, truncated at day 15 — the whole 800000 falls on the
-	// 10th, so all of it counts.
-	if got.KPIs.PreviousMonthRevenueUpToDay != 800000 {
-		t.Errorf("PreviousMonthRevenueUpToDay = %d, want 800000", got.KPIs.PreviousMonthRevenueUpToDay)
+	// June's faturamento over the same finished days — through the 14th, since
+	// the 15th is still being traded. The whole 800000 falls on the 10th, so
+	// all of it counts.
+	if got.Trends.Faturamento.Previous != 800000 {
+		t.Errorf("Trends.Faturamento.Previous = %d, want 800000", got.Trends.Faturamento.Previous)
+	}
+	// July's own side stops there too: the 14th sale counts, and only it.
+	if got.Trends.Faturamento.Current != 350000 {
+		t.Errorf("Trends.Faturamento.Current = %d, want July through the 14th", got.Trends.Faturamento.Current)
 	}
 	if got.Goals.RevenueTarget != 1000000 {
 		t.Errorf("IncomeTarget = %d, want the stored goal", got.Goals.RevenueTarget)

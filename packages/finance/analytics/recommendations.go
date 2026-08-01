@@ -17,7 +17,10 @@ const (
 // The first recommendation is always the weekly one when a goal exists: the
 // dashboard pulls recommendations[0] out to caption the week-comparison card,
 // and the notifier leads its digest with it.
-func buildRecommendations(week WeekComparison, projection Projection, trends Trends, cash CashPosition) []Recommendation {
+// window is the comparison the trends were measured over; its suffix is
+// repeated in every month-over-month message, because a percentage from half a
+// month presented as a whole one is how "receita caiu 100%" reached a WhatsApp.
+func buildRecommendations(week WeekComparison, projection Projection, trends Trends, cash CashPosition, window comparison) []Recommendation {
 	recs := []Recommendation{}
 
 	if projection.Pacing() {
@@ -28,8 +31,8 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		recs = append(recs, Recommendation{
 			Severity: RecWarning,
 			Title:    "Despesas acima do normal",
-			Message: fmt.Sprintf("Cresceram %d%% vs mês passado. Revise gastos para manter a margem.",
-				trends.Despesa.Change),
+			Message: fmt.Sprintf("Cresceram %d%% vs mês passado%s. Revise gastos para manter a margem.",
+				trends.Despesa.Change, window.suffix()),
 		})
 	}
 
@@ -37,8 +40,8 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",
-			Message: fmt.Sprintf("%d%% abaixo do mês passado. Identifique causas e aja rapidamente.",
-				abs(trends.Faturamento.Change)),
+			Message: fmt.Sprintf("%d%% abaixo do mês passado%s. Identifique causas e aja rapidamente.",
+				abs(trends.Faturamento.Change), window.suffix()),
 		})
 	}
 
@@ -61,6 +64,10 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 // passado" against a month that saw no expenses at all. The health insights
 // already require a real baseline; these say the same thing to the same person
 // on the same page, so they require one too.
+//
+// It also covers the month's first day, where buildTrends zeroes both sides
+// because nothing has finished — that is what used to open the 1st with
+// "Receita caiu 100% abaixo do mês passado".
 func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 
 // weeklyPaceRecommendation crosses this week's pace with whether the month is
@@ -70,8 +77,8 @@ func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 // than collapsing into "good" and "bad".
 func weeklyPaceRecommendation(week WeekComparison, projection Projection) Recommendation {
 	var weekPct float64
-	if week.PreviousUpToDay != 0 {
-		weekPct = percentChange(week.Current, week.PreviousUpToDay)
+	if week.Pace.Days > 0 && week.Pace.Previous != 0 {
+		weekPct = percentChange(week.Pace.Current, week.Pace.Previous)
 	}
 	improved := weekPct > weekPacePct
 	behind := weekPct < -weekPacePct

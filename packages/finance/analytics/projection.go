@@ -19,7 +19,10 @@ import "time"
 // days left must each bring to reach the target, measured from real
 // faturamento, not from a projection — because that is the number a person
 // can act on, and every consumer now quotes this one.
-func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time) Projection {
+// todayRevenue is what has already been sold today; it is subtracted from
+// today's own weekday average so the day is not counted twice — once inside
+// Actual, once again as a day still expected to bring a full day's takings.
+func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time, clock monthClock, todayRevenue int64) Projection {
 	projection := Projection{
 		Actual:        goals.RevenueActual,
 		Projected:     goals.RevenueActual,
@@ -32,12 +35,21 @@ func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time) 
 		avgByWeekday[w.Day] = w.Avg
 	}
 
+	// From today, inclusive: today is a day the pharmacy can still sell on.
+	// Starting at tomorrow wrote today off before it had happened, and on the
+	// last day of the month left nothing at all to project.
+	//
 	// Noon, like every other date this package builds, so a DST jump cannot
 	// land the day on its neighbour.
-	lastDay := daysInMonth(now)
-	for day := now.Day() + 1; day <= lastDay; day++ {
+	for day := clock.today; clock.inProgress && day <= clock.total; day++ {
 		d := time.Date(now.Year(), now.Month(), day, 12, 0, 0, 0, now.Location())
-		projection.Remaining += avgByWeekday[int(d.Weekday())]
+		avg := avgByWeekday[int(d.Weekday())]
+		if day == clock.today {
+			// Only the part of an ordinary day that has not happened yet is
+			// still ahead of us.
+			avg = max(0, avg-todayRevenue)
+		}
+		projection.Remaining += avg
 	}
 	projection.Projected += projection.Remaining
 
@@ -45,9 +57,8 @@ func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time) 
 		return projection
 	}
 
-	// The verdict stands on the last day of the month too — the month either
-	// reached its target or it did not. Only the per-day ask needs days left to
-	// spread over.
+	// The verdict stands on a closed month too — it either reached its target
+	// or it did not. Only the per-day ask needs days left to spread over.
 	projection.OnTrack = projection.Projected >= projection.Target
 	if gap := projection.Target - projection.Projected; gap > 0 {
 		projection.Gap = gap

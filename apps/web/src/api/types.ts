@@ -193,16 +193,35 @@ export interface MonthTrend {
   direction: "up" | "down" | "stable";
 }
 
+/**
+ * Each metric against the previous month, both sides measured over the same
+ * *finished* days. The window is `Analysis['period']` — label every percentage
+ * with it rather than presenting it as a whole month.
+ */
 export interface Trends {
   faturamento: MonthTrend;
   despesa: MonthTrend;
   resultado: MonthTrend;
+}
+
+/**
+ * How far into the analysed month this payload stands. Nothing retrospective
+ * in the analysis counts today (it is still being traded), and nothing
+ * forward-looking writes today off (it can still be sold on).
+ */
+export interface Period {
   /**
-   * Day of the month both sides were measured up to, or 0 when both months
-   * are closed and were compared whole. A month in progress is never held
-   * against a month that already finished — label the window when this is set.
+   * Last day of the month with complete data — yesterday while the month runs,
+   * its last day once closed. 0 on the first day of a month: nothing has
+   * finished, every retrospective figure is empty, and the UI must say the
+   * month is starting rather than draw a fall to zero.
    */
-  comparedThroughDay: number;
+  throughDay: number;
+  /** Days still to trade, today included. 0 for a closed month. */
+  daysRemaining: number;
+  daysTotal: number;
+  /** True when the analysed month is the one we are in. */
+  inProgress: boolean;
 }
 
 export interface WeekdayStat {
@@ -261,12 +280,26 @@ export interface MonthlySnapshot {
 }
 
 export interface WeekComparison {
+  /** Monday through today, and the whole of last week — totals for the chart. */
   current: number;
   previous: number;
-  previousUpToDay: number;
+  pace: WeekPace;
   projectedWeekly: number;
   monthlyTarget: number;
   labels: string[];
+}
+
+/**
+ * This week against last week over the same *finished* days — Monday through
+ * yesterday on both sides. The only week-over-week reading to render as a
+ * percentage: comparing a morning still being traded against a full day
+ * reported "ritmo caiu" every morning, and 100% down on a Monday.
+ */
+export interface WeekPace {
+  current: number;
+  previous: number;
+  /** Finished days of this week both sides cover; 0 on a Monday. */
+  days: number;
 }
 
 /**
@@ -325,6 +358,7 @@ export interface Analysis {
    */
   schemaVersion: number;
   month: YearMonth;
+  period: Period;
   kpis: {
     resultado: number;
     /** What the pharmacy sold this month. Every performance reading uses this. */
@@ -332,8 +366,10 @@ export interface Analysis {
     /** Every centavo that actually arrived — loans and aportes included. */
     entradasCaixa: number;
     despesa: number;
-    daysRemaining: number;
-    previousMonthRevenueUpToDay: number;
+    // No "days remaining" or "last month up to today" here: they are
+    // `period.daysRemaining` and `trends.faturamento` (whose current/previous
+    // are both months over the same finished days). They used to be derived a
+    // second time here and disagreed with the figures rendered beside them.
   };
   health: FinancialHealth;
   trends: Trends;
