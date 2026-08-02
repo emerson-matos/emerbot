@@ -293,8 +293,8 @@ func TestAmountReais(t *testing.T) {
 
 func TestDefaultCategories(t *testing.T) {
 	cats := DefaultCategories("u1")
-	if len(cats) != 16 {
-		t.Fatalf("got %d categories, want 15", len(cats))
+	if len(cats) != 18 {
+		t.Fatalf("got %d categories, want 18", len(cats))
 	}
 	for _, c := range cats {
 		if c.UserID != "u1" {
@@ -314,6 +314,78 @@ func TestDefaultCategories(t *testing.T) {
 	if last.Slug != "outros_receitas" {
 		t.Errorf("last slug = %q, want %q", last.Slug, "outros_receitas")
 	}
+}
+
+func TestReconcileDefaultCategories(t *testing.T) {
+	def := DefaultCategories("u1")
+	first := def[0]
+
+	// clone returns a full copy so mutating one category cannot alias the
+	// shared `def` slice between subtests.
+	clone := func() []Category { return append([]Category(nil), def...) }
+
+	t.Run("missing default is returned", func(t *testing.T) {
+		got := ReconcileDefaultCategories("u1", def[1:])
+		if len(got) != 1 || got[0].Slug != first.Slug {
+			t.Fatalf("got %+v, want the missing %q", got, first.Slug)
+		}
+		if got[0].UserID != "u1" {
+			t.Errorf("UserID = %q, want %q", got[0].UserID, "u1")
+		}
+	})
+
+	t.Run("drifted label is returned with the new label", func(t *testing.T) {
+		have := clone()
+		have[0].Label = "Rent (old)"
+		got := ReconcileDefaultCategories("u1", have)
+		if len(got) != 1 || got[0].Label != first.Label {
+			t.Fatalf("got %+v, want the refreshed %q", got, first.Label)
+		}
+	})
+
+	t.Run("drifted type is returned with the new type", func(t *testing.T) {
+		have := clone()
+		have[0].Type = EntryTypeIncome
+		got := ReconcileDefaultCategories("u1", have)
+		if len(got) != 1 || got[0].Type != first.Type {
+			t.Fatalf("got %+v, want the refreshed %v", got, first.Type)
+		}
+	})
+
+	t.Run("default flag is restored when the definition still matches", func(t *testing.T) {
+		have := clone()
+		have[0].Default = false
+		got := ReconcileDefaultCategories("u1", have)
+		if len(got) != 1 || !got[0].Default {
+			t.Fatalf("got %+v, want the default flag restored", got)
+		}
+	})
+
+	t.Run("up-to-date set needs no changes", func(t *testing.T) {
+		if got := ReconcileDefaultCategories("u1", def); len(got) != 0 {
+			t.Fatalf("got %d changes for an up-to-date set: %+v", len(got), got)
+		}
+	})
+
+	t.Run("user-created category with a default slug is preserved", func(t *testing.T) {
+		have := clone()
+		have[0].Default = false
+		have[0].Label = "Minha Categoria"
+		if got := ReconcileDefaultCategories("u1", have); len(got) != 0 {
+			t.Fatalf("user-created category was returned as a change: %+v", got)
+		}
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		state := def[1:]
+		if got := ReconcileDefaultCategories("u1", state); len(got) != 1 {
+			t.Fatalf("first pass returned %d changes, want 1", len(got))
+		}
+		merged := append(append([]Category{}, state...), ReconcileDefaultCategories("u1", state)...)
+		if got := ReconcileDefaultCategories("u1", merged); len(got) != 0 {
+			t.Fatalf("second pass returned %d changes, want 0", len(got))
+		}
+	})
 }
 
 func TestMemoryKey(t *testing.T) {
