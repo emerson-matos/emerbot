@@ -1,5 +1,6 @@
+import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
-import { ArrowDownRight, ArrowUpRight, Check, Trash2 } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Check, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -84,6 +85,19 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
           {isIncome ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
           {formatBRL(entry.Amount)}
         </span>
+
+        {/* A link rather than a callback, so every list that renders a card
+            gets it without threading a handler through the group. */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-muted-foreground hover:text-foreground"
+          render={<Link to={`/transacoes/${entry.EntryID}/editar`} />}
+          nativeButton={false}
+          aria-label={`Editar ${entry.Description || 'transação'}`}
+        >
+          <Pencil className="size-3.5" />
+        </Button>
 
         {onDelete && (
           <AlertDialog>

@@ -9,7 +9,12 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { addMonths, endOfMonth, format, startOfMonth } from "date-fns";
 import { CognitoAuthError } from "./types";
-import type { CreateEntryInput, Entry, NotificationPrefs } from "./types";
+import type {
+  CreateEntryInput,
+  Entry,
+  NotificationPrefs,
+  UpdateEntryInput,
+} from "./types";
 import { api } from "./http";
 import { useAuth } from "@/lib/auth";
 
@@ -21,6 +26,7 @@ export const queryKeys = {
   analysis: (month: string) => ["analysis", "monthly", month] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesByMonth: () => ["entries", "byMonth"] as const,
+  entry: (id: string) => ["entries", "byId", id] as const,
   goal: (month: string) => ["goal", month] as const,
   notificationPrefs: () => ["notifications", "preferences"] as const,
   categories: () => ["categories"] as const,
@@ -242,6 +248,37 @@ export function useMarkPaidMutation() {
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       queryClient.invalidateQueries({ queryKey: ["analysis"] });
       queryClient.invalidateQueries(entriesKey);
+    },
+  });
+}
+
+// A single entry, for the edit page opened by URL: the list is paged by month
+// and a bookmarked or reloaded /transacoes/:id/editar has no page to read from.
+export function useEntry(id: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.entry(id ?? ""),
+    queryFn: () => api.entries.get(id!),
+    enabled: Boolean(id),
+    retry: false,
+  });
+}
+
+export function useUpdateEntryMutation(id: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: UpdateEntryInput) => api.entries.update(id, data),
+    onError: () => {
+      toast.error("Não foi possível salvar as alterações.");
+    },
+    onSuccess: (entry) => {
+      queryClient.setQueryData(queryKeys.entry(id), entry);
+      toast.success("Transação atualizada.");
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
 }

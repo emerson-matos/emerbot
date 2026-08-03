@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import AppLayout from './components/layout/AppLayout';
 import Transactions from './pages/Transactions';
 import NovaTransacao from './pages/NovaTransacao';
+import EditarTransacao from './pages/EditarTransacao';
 import Goals from './pages/Goals';
 import Adquirentes from './pages/Adquirentes';
 import Analysis from './pages/Analysis';
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="nova-transacao" element={<NovaTransacao />} />
               <Route path="transacoes" element={<Transactions />} />
+              <Route path="transacoes/:id/editar" element={<EditarTransacao />} />
             </Route>
           </Route >
 
