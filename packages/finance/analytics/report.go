@@ -130,8 +130,13 @@ func (a Analysis) ToolPayload() map[string]any {
 		// system prompt spells that out.
 		"faturamento":       reais(a.KPIs.Faturamento),
 		"entradas_de_caixa": reais(a.KPIs.EntradasCaixa),
-		"despesa":           reais(a.KPIs.Despesa),
-		"resultado":         reais(a.KPIs.Resultado),
+		// despesa is what has actually left the account so far; despesa_agendada
+		// is what is booked for the days still to come. Kept apart because the
+		// model was handed their sum and reported the month's spending as
+		// already done — on the 3rd, every bill of August.
+		"despesa":          reais(a.KPIs.Despesa),
+		"despesa_agendada": reais(a.KPIs.DespesaAgendada),
+		"resultado":        reais(a.KPIs.Resultado),
 		// Today counts as a day still to sell on, so the model never tells
 		// someone on the last day of the month that there is nothing left to do.
 		"dias_restantes_no_mes_com_hoje": a.Period.DaysRemaining,

@@ -144,6 +144,27 @@ func (c monthClock) comparableThrough() int {
 	return c.through - c.through%daysInWeek
 }
 
+// elapsed is the last day of the month that has arrived, today included — the
+// month's last day once it is closed. It is a third line, and the one the KPI
+// row stands on: those cards are the state of the month *now*, not a
+// measurement of it, so unlike `through` they do count today. A pharmacist
+// looking at the page at six in the evening is owed the day's takings.
+//
+// What they are emphatically not is the whole month. The KPIs used to be read
+// straight off MonthlySummary, which totals every entry that *falls in* the
+// month — including the rent due on the 25th, booked on the 1st. Faturamento and
+// entradas de caixa cannot contain a future day, so two cards of the row were
+// "so far" and two were "everything scheduled", and Resultado subtracted one
+// kind from the other: on 3 August, R$ 16.200,00 of despesa against R$ 200,00
+// actually spent, and a resultado of minus R$ 14.800,00 for a month running
+// R$ 1.200,00 up.
+func (c monthClock) elapsed() int {
+	if !c.inProgress {
+		return c.total
+	}
+	return c.today
+}
+
 // period exports the clock for consumers, so the dashboard can label a window
 // and the digest can say which days it is talking about.
 func (c monthClock) period() Period {
