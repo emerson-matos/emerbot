@@ -343,6 +343,12 @@ export const ProjectionBasis = {
   Partial: "parcial",
   /** Nothing traded in the window at all. */
   None: "sem_base",
+  /**
+   * The month has ended: nothing was estimated and `projected` is its own
+   * faturamento. Carries no caption — the one figure here that is not a
+   * forecast must not be captioned as one.
+   */
+  Closed: "fechado",
 } as const;
 export type ProjectionBasis =
   (typeof ProjectionBasis)[keyof typeof ProjectionBasis];

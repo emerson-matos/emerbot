@@ -267,6 +267,12 @@ const (
 	// projection to speak of, and consumers must say that rather than print a
 	// figure that is only the month's actual takings wearing a different label.
 	ProjectionNoBasis ProjectionBasis = "sem_base"
+	// ProjectionClosed is a month that has already ended: nothing was estimated,
+	// Projected is the month's own faturamento. It is a basis of its own rather
+	// than one of the above because a closed month's window is full of trading
+	// and would otherwise report "janela" — labelling a realised total as an
+	// eight-week estimate, on the one figure that is not an estimate at all.
+	ProjectionClosed ProjectionBasis = "fechado"
 )
 
 // Projection is where the month lands and what it would take to close the gap

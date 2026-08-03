@@ -62,10 +62,17 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 	// a cheap one: on the transaction basis the range goes straight into a
 	// BETWEEN on the table's own sort key, so a window crossing month boundaries
 	// costs the same as a single month.
-	windowFrom, windowTo := newMonthClock(month, now).projectionWindow()
-	windowRevenueEntries, err := rangeEntries(ctx, store, userID, windowFrom.Time(), windowTo.Time(), pkgfinance.BasisTransaction)
-	if err != nil {
-		return Analysis{}, err
+	//
+	// A closed month has no day left to price, so it does not pay for the window
+	// at all — and every month but the current one is closed, which is most of
+	// what the dashboard asks for when someone browses back through the year.
+	var windowRevenueEntries []domain.FinancialEntry
+	if clock := newMonthClock(month, now); clock.inProgress {
+		windowFrom, windowTo := clock.projectionWindow()
+		windowRevenueEntries, err = rangeEntries(ctx, store, userID, windowFrom.Time(), windowTo.Time(), pkgfinance.BasisTransaction)
+		if err != nil {
+			return Analysis{}, err
+		}
 	}
 
 	summaryByMonth, err := store.MultiMonthlySummary(ctx, userID, months)

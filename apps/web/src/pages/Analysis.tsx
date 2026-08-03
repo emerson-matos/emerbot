@@ -331,7 +331,11 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
 // What the projection is standing on, in the user's words. The backend decides
 // which one applies (Projection.basis) — the card must not infer confidence
 // from the amounts, since only the backend knows how much of the window traded.
-const projectionBasisNote: Record<ProjectionBasis, string> = {
+//
+// A closed month has no note: nothing was estimated, the figure *is* the month's
+// faturamento, and captioning it "pela média das últimas 8 semanas" would
+// present the one number that is not a forecast as though it were one.
+const projectionBasisNote: Partial<Record<ProjectionBasis, string>> = {
   janela: 'Pela média de cada dia da semana nas últimas 8 semanas.',
   parcial: 'Menos de uma semana de vendas registradas — ainda vai mudar bastante.',
   sem_base: 'Sem vendas registradas nas últimas 8 semanas para projetar.',
@@ -372,14 +376,16 @@ function ProjectionSection({ projection, faturamento, period }: {
             <p className="truncate text-lg tabular-nums">
               {formatBRL(projection.projected)}
             </p>
-            {/* How the number was reached, stated plainly and always. The days
-                still to come used to be priced from this month's own finished
-                days, so on the 3rd every weekday the month had not reached yet
-                counted as zero and the projection came in at a quarter of the
-                goal — a figure the card presented with no qualification at all. */}
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {projectionBasisNote[projection.basis] ?? projectionBasisNote.janela}
-            </p>
+            {/* How the number was reached. The days still to come used to be
+                priced from this month's own finished days, so on the 3rd every
+                weekday the month had not reached yet counted as zero and the
+                projection came in at a quarter of the goal — a figure the card
+                presented with no qualification at all. */}
+            {projectionBasisNote[projection.basis] && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {projectionBasisNote[projection.basis]}
+              </p>
+            )}
           </div>
 
           <div className="text-right">

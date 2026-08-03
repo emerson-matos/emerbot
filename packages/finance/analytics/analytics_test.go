@@ -742,6 +742,19 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	if got.NeededPerDay != 0 {
 		t.Errorf("NeededPerDay = %d, want 0 with no days left", got.NeededPerDay)
 	}
+	// And nothing was estimated: Projected is July's own faturamento. Reading
+	// the basis off the rates called that "janela" — an eight-week estimate,
+	// stamped on the one figure in this struct that is not an estimate — and the
+	// card captioned a realised total as a forecast.
+	if got.Basis != ProjectionClosed {
+		t.Errorf("Basis = %q, want %q for a month that has already ended", got.Basis, ProjectionClosed)
+	}
+	// It says so even when no window was fetched, so a caller that skips the
+	// read for a closed month cannot turn the label into "sem_base".
+	unfetched := buildProjection(dailyRates{}, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
+	if unfetched.Basis != ProjectionClosed {
+		t.Errorf("Basis = %q without a window, want %q", unfetched.Basis, ProjectionClosed)
+	}
 }
 
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {

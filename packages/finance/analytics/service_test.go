@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -118,6 +119,56 @@ func TestAssembleProjectsTheStartOfAMonthFromEarlierWeeks(t *testing.T) {
 	}
 	if got.ToolPayload()["projecao_base"] != string(ProjectionFromWindow) {
 		t.Errorf("projecao_base = %v, want the basis spelled out for the bot", got.ToolPayload()["projecao_base"])
+	}
+}
+
+// countingReader records every range ListEntries was asked for, so a test can
+// assert what the assembly actually paid for rather than infer it from output.
+type countingReader struct {
+	LedgerReader
+	ranges []string
+}
+
+func (c *countingReader) ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error) {
+	span := "open"
+	if filter.From != nil && filter.To != nil {
+		span = filter.From.Format("2006-01-02") + ".." + filter.To.Format("2006-01-02")
+	}
+	c.ranges = append(c.ranges, span)
+	return c.LedgerReader.ListEntries(ctx, userID, filter)
+}
+
+// A closed month has no day left to price, so buildProjection never reads the
+// rates — and the assembly must not pay for the window that builds them. Every
+// month but the current one is closed, which is most of what the dashboard asks
+// for when someone browses back through the year.
+func TestAssembleSkipsTheProjectionWindowForAClosedMonth(t *testing.T) {
+	ctx := context.Background()
+	store := &countingReader{LedgerReader: pkgfinance.NewInMemoryStore()}
+
+	closed, err := Assemble(ctx, store, "u1", "2026-07", at12(t, "2026-08-03"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	// July and June, on both bases: four reads, none of them the window.
+	if len(store.ranges) != 4 {
+		t.Errorf("ranges = %v, want only the two months on both bases", store.ranges)
+	}
+	if closed.Projection.Basis != ProjectionClosed {
+		t.Errorf("Basis = %q, want %q — and not %q, which skipping the read would give if the label came off the rates",
+			closed.Projection.Basis, ProjectionClosed, ProjectionNoBasis)
+	}
+
+	// The month in progress still pays for it: that is the whole point.
+	store.ranges = nil
+	if _, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03")); err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if len(store.ranges) != 5 {
+		t.Errorf("ranges = %v, want the window read as well", store.ranges)
+	}
+	if !slices.Contains(store.ranges, "2026-06-08..2026-08-02") {
+		t.Errorf("ranges = %v, want the eight-week window among them", store.ranges)
 	}
 }
 

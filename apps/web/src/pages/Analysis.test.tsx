@@ -152,6 +152,19 @@ describe("Analysis page", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not caption a closed month as a forecast", () => {
+    // A month that has ended projected nothing: `projected` is its own
+    // faturamento. Captioning it "pela média das últimas 8 semanas" put an
+    // estimate label on the one figure on this card that is not an estimate.
+    const closed = analysisData();
+    closed.projection = { ...closed.projection, basis: "fechado" };
+    const { container } = renderWith(closed);
+
+    expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
+      "últimas 8 semanas",
+    );
+  });
+
   it("labels the per-day ask by every day left, not business days", () => {
     renderWith(analysisData());
 

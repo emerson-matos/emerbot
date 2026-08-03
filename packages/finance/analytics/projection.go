@@ -27,12 +27,22 @@ import "time"
 // rather than from the analysed month — see projectionRates for why a month's
 // own first days cannot price themselves.
 func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock monthClock, todayRevenue int64) Projection {
+	// A closed month says so before the rates are consulted at all. Its window is
+	// full of trading, so asking them would report "janela" over a Projected that
+	// is the month's realised faturamento and nothing else — and it lets callers
+	// skip fetching a window they cannot use, without that turning into a
+	// "sem_base" label.
+	basis := ProjectionClosed
+	if clock.inProgress {
+		basis = rates.basis()
+	}
+
 	projection := Projection{
 		Actual:        goals.RevenueActual,
 		Projected:     goals.RevenueActual,
 		Target:        goals.RevenueTarget,
 		DaysRemaining: goals.DaysRemaining,
-		Basis:         rates.basis(),
+		Basis:         basis,
 	}
 
 	// From today, inclusive: today is a day the pharmacy can still sell on.
