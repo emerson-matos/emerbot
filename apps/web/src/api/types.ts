@@ -451,13 +451,27 @@ export interface Analysis {
   schemaVersion: number;
   month: YearMonth;
   period: Period;
+  /**
+   * The state of the month *now*, today included — not a measurement of it
+   * (that is `trends`, over its own labelled window) and not the whole month.
+   * Every figure covers the days that have arrived and no others.
+   */
   kpis: {
+    /** What came in minus what went out, over the days so far. */
     resultado: number;
     /** What the pharmacy sold this month. Every performance reading uses this. */
     faturamento: number;
     /** Every centavo that actually arrived — loans and aportes included. */
     entradasCaixa: number;
+    /** What has actually left the account so far. */
     despesa: number;
+    /**
+     * Booked for the days still to come. A commitment, not a spend: render it
+     * beside `despesa`, never added into it — the whole month's bills are
+     * booked on the 1st, and counting them as money gone reported a month as
+     * lost on its 3rd day.
+     */
+    despesaAgendada: number;
     // No "days remaining" or "last month up to today" here: they are
     // `period.daysRemaining` and `trends.faturamento` (whose current/previous
     // are both months over the same finished days). They used to be derived a

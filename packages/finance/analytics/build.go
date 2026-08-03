@@ -92,11 +92,25 @@ func Build(in Input) Analysis {
 	// what arrived, not what was sold.
 	faturamento := currentSummary.TotalRevenue
 
+	// Despesa and Resultado are re-totalled over the days that have arrived
+	// rather than read off the summary, which covers the whole month including
+	// what is merely booked for later in it. The other two cards physically
+	// cannot hold a future day — a sale is recorded when it happens, a payment
+	// when it clears — so reading the summary put two "so far" figures and two
+	// "everything scheduled" ones in the same row, and made Resultado the one
+	// minus the other. See monthClock.elapsed.
+	sofar := totalsThroughDay(in.Entries, clock.elapsed())
+
 	kpis := KPIs{
-		Resultado:     currentSummary.ExpectedBalance,
+		Resultado:     sofar.balance,
 		Faturamento:   faturamento,
 		EntradasCaixa: currentSummary.TotalCashIn,
-		Despesa:       currentSummary.TotalExpense,
+		Despesa:       sofar.expense,
+		// What the summary's despesa figure carried that this row no longer
+		// does. It is real and worth seeing — the rent is coming whether or not
+		// it has left yet — but it is a commitment, not a spend, and it must not
+		// be added to one or subtracted inside a result.
+		DespesaAgendada: currentSummary.TotalExpense - sofar.expense,
 	}
 
 	var revenueTarget int64

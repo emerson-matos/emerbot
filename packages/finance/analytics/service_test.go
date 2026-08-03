@@ -263,3 +263,79 @@ func TestThirdOfAugustHasNothingToAlarmAbout(t *testing.T) {
 		t.Errorf("digest ends with %q, want the reason the comparison is missing", last)
 	}
 }
+
+// The KPI row, end to end. On 3 August the cards read "Despesa R$ 16.200,00" and
+// "Resultado −R$ 14.800,00" for a pharmacy that had spent R$ 200,00 and was
+// R$ 1.200,00 up: the whole month's bills, booked on the 1st, counted as money
+// already gone. Faturamento and entradas de caixa cannot hold a future day, so
+// two cards of the row were "so far" and two were "everything scheduled", and
+// resultado subtracted one kind from the other.
+func TestKPIsCoverTheDaysThatHaveArrived(t *testing.T) {
+	ctx := context.Background()
+	store := pkgfinance.NewInMemoryStore()
+
+	seed(t, store,
+		sale(t, "2026-08-01", 70000),
+		sale(t, "2026-08-02", 70000),
+		expense(t, "2026-08-02", "fornecedor_geral", 20000),
+		// The month's bills, booked for later in it.
+		expense(t, "2026-08-05", "aluguel", 500000),
+		expense(t, "2026-08-10", "salarios", 800000),
+		expense(t, "2026-08-25", "fornecedor_geral", 300000),
+	)
+
+	got, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	if want := int64(20000); got.KPIs.Despesa != want {
+		t.Errorf("Despesa = %d, want only what has left the account (%d)", got.KPIs.Despesa, want)
+	}
+	if want := int64(120000); got.KPIs.Resultado != want {
+		t.Errorf("Resultado = %d, want the month running up (%d), not the whole bill list", got.KPIs.Resultado, want)
+	}
+	// The commitment is not lost, just moved out of the spend figure.
+	if want := int64(1600000); got.KPIs.DespesaAgendada != want {
+		t.Errorf("DespesaAgendada = %d, want what is booked for the rest of the month (%d)",
+			got.KPIs.DespesaAgendada, want)
+	}
+	// And the row is now internally consistent: every card covers the same days.
+	if got.KPIs.Faturamento != 140000 || got.KPIs.EntradasCaixa != 140000 {
+		t.Errorf("KPIs = %+v, want the inflow cards unchanged", got.KPIs)
+	}
+}
+
+// Today counts. The KPI row is the state of the month now, not a measurement of
+// it — a pharmacist looking at the page in the evening is owed the day's
+// takings, and the trend caption carries its own, narrower window.
+func TestKPIsCountToday(t *testing.T) {
+	ctx := context.Background()
+	store := pkgfinance.NewInMemoryStore()
+
+	seed(t, store,
+		sale(t, "2026-08-10", 50000),
+		expense(t, "2026-08-12", "aluguel", 30000), // today
+	)
+
+	got, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-12"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if got.KPIs.Despesa != 30000 {
+		t.Errorf("Despesa = %d, want today's payment counted (30000)", got.KPIs.Despesa)
+	}
+	if got.KPIs.DespesaAgendada != 0 {
+		t.Errorf("DespesaAgendada = %d, want nothing booked ahead", got.KPIs.DespesaAgendada)
+	}
+
+	// A closed month has arrived in full: every day of it counts, and nothing
+	// is still "scheduled".
+	closed, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-09-04"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if closed.KPIs.Despesa != 30000 || closed.KPIs.DespesaAgendada != 0 {
+		t.Errorf("closed month KPIs = %+v, want the whole month and nothing pending", closed.KPIs)
+	}
+}

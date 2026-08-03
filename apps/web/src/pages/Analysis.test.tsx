@@ -29,6 +29,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       resultado: 900000,
       faturamento: 3600000,
       despesa: 2700000,
+      despesaAgendada: 0,
     },
     health: {
       status: "atencao",
@@ -337,6 +338,28 @@ describe("Analysis in the opening week of a month", () => {
     // And not the first-day copy: two days really have closed.
     expect(container.textContent).not.toContain("ainda não há dia fechado");
     expect(container.textContent).not.toContain("% vs mês passado");
+  });
+});
+
+describe("the KPI row", () => {
+  // The cards used to read the whole month's booked expenses, so on the 3rd
+  // "Despesa" showed every bill of August against two days of sales and
+  // "Resultado" reported the month lost. The commitment is still shown — beside
+  // the figure, never inside it.
+  it("shows what is still to fall due beside the spend, not inside it", () => {
+    const data = analysisData();
+    data.kpis = { ...data.kpis, despesa: 20000, despesaAgendada: 1600000 };
+
+    renderWith(data);
+
+    expect(screen.getByText("R$ 200,00")).toBeInTheDocument();
+    expect(screen.getByText("+ R$ 16.000,00 a vencer")).toBeInTheDocument();
+  });
+
+  it("says nothing about pending bills when there are none", () => {
+    const { container } = renderWith(analysisData());
+
+    expect(container.textContent).not.toContain("a vencer");
   });
 });
 
