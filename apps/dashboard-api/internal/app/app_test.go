@@ -190,14 +190,38 @@ func TestEntriesCRUD(t *testing.T) {
 		t.Fatalf("expected 1 entry after create, got %d", got)
 	}
 
+	// One entry is addressed by transaction date *and* id — together they are
+	// its row key. Building the path here the way the dashboard does is what
+	// keeps this test honest about the routes the mux actually serves.
+	address := "/entries/2026-07-10/" + string(created.EntryID)
+
+	// Read back.
+	rec = do(t, app, http.MethodGet, address, token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var fetched domain.FinancialEntry
+	if err := json.Unmarshal(rec.Body.Bytes(), &fetched); err != nil {
+		t.Fatalf("decode fetched entry: %v", err)
+	}
+	if fetched.EntryID != created.EntryID || fetched.Amount != 50000 {
+		t.Fatalf("get returned %+v, want the created entry", fetched)
+	}
+
+	// The date is half the address, so the right id under the wrong date is a
+	// 404 rather than somebody else's row.
+	if rec := do(t, app, http.MethodGet, "/entries/2026-01-01/"+string(created.EntryID), token, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("get under the wrong date: expected 404, got %d", rec.Code)
+	}
+
 	// Update.
-	rec = do(t, app, http.MethodPut, "/entries/"+string(created.EntryID), token, map[string]any{"amount": 75000})
+	rec = do(t, app, http.MethodPut, address, token, map[string]any{"amount": 75000})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
 	// Delete -> 204, then list is empty.
-	if rec := do(t, app, http.MethodDelete, "/entries/"+string(created.EntryID), token, nil); rec.Code != http.StatusNoContent {
+	if rec := do(t, app, http.MethodDelete, address, token, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", rec.Code)
 	}
 	if got := listCount(t, app, token); got != 0 {

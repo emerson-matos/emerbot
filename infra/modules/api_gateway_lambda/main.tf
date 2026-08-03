@@ -404,7 +404,13 @@ resource "aws_apigatewayv2_authorizer" "dashboard_jwt" {
 # checking the other.
 locals {
   dashboard_protected_routes = toset([
-    "GET /entries", "POST /entries", "PUT /entries/{id}", "DELETE /entries/{id}",
+    # Um lançamento é endereçado por data + id, que juntos são a chave da linha
+    # na tabela (ver apifinance.entryAddress). Estas rotas são enumeradas uma a
+    # uma: um handler novo em apps/dashboard-api sem a rota correspondente aqui
+    # vira 404 no gateway, antes de a Lambda ser chamada — e sem header de CORS,
+    # porque o gateway só os anexa a rotas que existem.
+    "GET /entries", "POST /entries",
+    "GET /entries/{date}/{id}", "PUT /entries/{date}/{id}", "DELETE /entries/{date}/{id}",
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
     "GET /analysis/monthly", "GET /analysis", "POST /analysis",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
