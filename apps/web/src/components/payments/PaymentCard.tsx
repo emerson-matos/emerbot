@@ -34,7 +34,12 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
   const categoryLabels = categoryLabelMap(categoriesQuery.data ?? [])
 
   return (
-    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 py-3.5 sm:grid-cols-[1fr_116px_120px] sm:gap-4">
+    // Uma coluna para cada coisa: descrição, quitação, valor e ações. Dividindo
+    // a célula com o botão de quitar, o valor começava onde o botão terminava —
+    // e como o botão nem sempre está lá, cada linha punha o número num lugar
+    // diferente. Numa lista de valores, a coluna dos números é justamente a que
+    // não pode dançar.
+    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 py-3.5 sm:grid-cols-[1fr_128px_140px_auto] sm:gap-4">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{entry.Description || '—'}</p>
         <p className={cn('mt-0.5 truncate text-xs', isOverdue ? 'text-destructive' : 'text-muted-foreground')}>
@@ -45,7 +50,7 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
 
       <div className="flex justify-start">
         {entry.PaymentStatus === 'paid' ? (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs whitespace-nowrap text-muted-foreground">
             {isIncome ? 'recebido' : 'pago'} {formatPaidAt(entry)}
           </span>
         ) : onMarkPaid ? (
@@ -75,17 +80,17 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
         ) : null}
       </div>
 
-      <div className="flex items-center justify-end gap-1.5">
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 text-sm font-semibold tabular-nums',
-            isIncome ? 'text-success' : 'text-destructive',
-          )}
-        >
-          {isIncome ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-          {formatBRL(entry.Amount)}
-        </span>
+      <span
+        className={cn(
+          'flex items-center justify-end gap-1 text-sm font-semibold tabular-nums',
+          isIncome ? 'text-success' : 'text-destructive',
+        )}
+      >
+        {isIncome ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+        {formatBRL(entry.Amount)}
+      </span>
 
+      <div className="flex items-center justify-end gap-1.5">
         {/* A link rather than a callback, so every list that renders a card
             gets it without threading a handler through the group. */}
         <Button

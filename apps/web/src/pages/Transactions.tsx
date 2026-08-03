@@ -1,7 +1,6 @@
 import { type SyntheticEvent, useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
 import { CalendarIcon, ChevronDown, ChevronUp, Plus, Receipt, Search, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -14,20 +13,19 @@ import {
 } from '@/components/ui/select'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { type DateRange } from 'react-day-picker'
-import { useCategories, useEntriesByMonth, useMarkPaidMutation, useDeleteEntryMutation } from '../api/queries'
+import {
+  useCategories, useEntriesByMonth, useEntriesInRange, useMarkPaidMutation, useDeleteEntryMutation,
+} from '../api/queries'
 import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
-import type { PaymentGroupData } from '../components/payments/PaymentGroup'
-import { bucketByUrgency, effectiveDate, netAmount } from '@/lib/entries'
 import { formatBRL, formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
-import type { Entry, IncomeOrigin } from '../api/types'
+import {
+  activeFilterCount, buildGroups, compileFilters, defaultFilters, formatRangeLabel,
+  groupIntoMonthPages, ledgerTotals, toISORange,
+  type FilterState, type OriginFilter, type StatusFilter, type TypeFilter,
+} from '@/lib/transaction-filters'
 import { incomeOriginLabels } from '../api/types'
-
-type TypeFilter = 'all' | 'income' | 'expense'
-type OriginFilter = 'all' | IncomeOrigin
-type StatusFilter = 'all' | 'paid' | 'pending' | 'overdue'
 
 const typeLabels: Record<TypeFilter, string> = {
   all: 'Todos os tipos',
@@ -47,38 +45,7 @@ const statusLabels: Record<StatusFilter, string> = {
   overdue: 'Vencido',
 }
 
-type FilterState = {
-  search: string
-  type: TypeFilter
-  status: StatusFilter
-  category: string
-  origin: OriginFilter
-  date: DateRange | undefined
-  minAmount: string
-  maxAmount: string
-}
-
-const defaultFilters: FilterState = {
-  search: '',
-  type: 'all',
-  status: 'all',
-  category: 'all',
-  origin: 'all',
-  date: undefined,
-  minAmount: '',
-  maxAmount: '',
-}
-
-function monthLabel(monthKey: string): string {
-  return format(new Date(`${monthKey}-01T00:00:00`), 'MMMM yyyy', { locale: ptBR })
-}
-
 export default function Transactions() {
-  const {
-    data, isLoading,
-    fetchNextPage, hasNextPage, isFetchingNextPage,
-    fetchPreviousPage, hasPreviousPage, isFetchingPreviousPage,
-  } = useEntriesByMonth()
   const categoriesQuery = useCategories()
   const allCategories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
   const markPaid = useMarkPaidMutation()
@@ -91,47 +58,61 @@ export default function Transactions() {
     setPending(prev => ({ ...prev, ...partial }))
   }, [])
 
-  // Amounts are compared in centavos, the unit the API stores. An unparseable
-  // field parses to null and simply doesn't constrain the list — the input is
-  // flagged instead, so a typo never looks like "no results".
-  const minCents = parseAmountToCents(filters.minAmount)
-  const maxCents = parseAmountToCents(filters.maxAmount)
+  // Two ways to read the ledger, chosen by whether a period is applied.
+  //
+  // Without one, the page browses outward from the current month and the user
+  // pulls in more with the load buttons. With one, that horizon is exactly the
+  // problem — months never paged to would come back empty — so the window goes
+  // to the server instead, which answers over the whole history.
+  const appliedRange = useMemo(() => toISORange(filters.date), [filters.date])
+  const rangeMode = appliedRange !== null
+
+  const browse = useEntriesByMonth()
+  const ranged = useEntriesInRange(appliedRange)
+
+  const isLoading = rangeMode ? ranged.isLoading : browse.isLoading
+  const isError = rangeMode ? ranged.isError : browse.isError
+
   const minInvalid = pending.minAmount.trim() !== '' && parseAmountToCents(pending.minAmount) === null
   const maxInvalid = pending.maxAmount.trim() !== '' && parseAmountToCents(pending.maxAmount) === null
 
-  const pages = useMemo(() => data?.pages ?? [], [data])
   const currentMonthKey = format(new Date(), 'yyyy-MM')
   const todayISO = format(new Date(), 'yyyy-MM-dd')
+
+  // Both sources reduce to the same one-month-per-page shape, so grouping and
+  // the summary strip below never need to know which one they came from.
+  const pages = useMemo(
+    () => (rangeMode ? groupIntoMonthPages(ranged.data?.entries ?? []) : (browse.data?.pages ?? [])),
+    [rangeMode, ranged.data, browse.data],
+  )
   const allEntries = useMemo(() => pages.flatMap(p => p.entries), [pages])
 
-  const matchesFilters = useCallback((e: Entry) => {
-    if (filters.type !== 'all' && e.Type !== filters.type) return false
-    if (filters.status === 'overdue') {
-      const overdue = e.PaymentStatus === 'pending' && (effectiveDate(e) ?? '') < todayISO
-      if (!overdue) return false
-    } else if (filters.status !== 'all' && e.PaymentStatus !== filters.status) return false
-    if (filters.category !== 'all' && e.Category !== filters.category) return false
-    if (filters.origin !== 'all' && e.Origin !== filters.origin) return false
-    if (filters.date?.from) {
-      const d = effectiveDate(e)
-      if (!d) return false
-      if (d < format(filters.date.from, 'yyyy-MM-dd')) return false
-      if (filters.date.to && d > format(filters.date.to, 'yyyy-MM-dd')) return false
-    }
-    if (minCents !== null && e.Amount < minCents) return false
-    if (maxCents !== null && e.Amount > maxCents) return false
-    if (filters.search !== '' && !e.Description.toLowerCase().includes(filters.search.toLowerCase())) return false
-    return true
-  }, [filters, minCents, maxCents, todayISO])
+  const categoryLabels = useMemo(
+    () => new Map(allCategories.map(c => [c.Slug, c.Label])),
+    [allCategories],
+  )
+  const matchesFilters = useMemo(
+    () => compileFilters(filters, {
+      todayISO,
+      categoryLabel: slug => categoryLabels.get(slug) ?? slug,
+    }),
+    [filters, todayISO, categoryLabels],
+  )
 
   const categoryOptions = useMemo(() => {
     const list = pending.type === 'all' ? allCategories : categoriesByType(allCategories, pending.type)
     return list.map(c => [c.Slug, c.Label] as const).sort((a, b) => a[1].localeCompare(b[1]))
   }, [allCategories, pending.type])
 
-  const hasActiveFilters = filters.search !== '' || filters.type !== 'all' || filters.status !== 'all'
-    || filters.category !== 'all' || filters.origin !== 'all' || filters.date !== undefined
-    || filters.minAmount !== '' || filters.maxAmount !== ''
+  // "Limpar" reads both states: a form edited but not yet applied still has
+  // something to clear, and leaving the button dead in that moment was one of
+  // the ways the controls and the list could get stuck disagreeing.
+  const appliedCount = activeFilterCount(filters)
+  const hasActiveFilters = appliedCount > 0 || activeFilterCount(pending) > 0
+  const isDirty = useMemo(
+    () => JSON.stringify(pending) !== JSON.stringify(filters),
+    [pending, filters],
+  )
 
   function handleSubmit(e: SyntheticEvent) {
     e.preventDefault()
@@ -143,69 +124,28 @@ export default function Transactions() {
     setPending(defaultFilters)
   }
 
-  const groups: PaymentGroupData[] = useMemo(() => {
-    const result: PaymentGroupData[] = []
-
-    const futurePages = pages.filter(p => p.month > currentMonthKey).sort((a, b) => a.month.localeCompare(b.month))
-    for (const p of futurePages) {
-      const items = p.entries.filter(matchesFilters)
-      if (items.length) {
-        result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'info', items })
-      }
-    }
-
-    const currentPage = pages.find(p => p.month === currentMonthKey)
-    if (currentPage) {
-      const filtered = currentPage.entries.filter(matchesFilters)
-      const { overdue, dueToday, upcoming, history } = bucketByUrgency(filtered, todayISO)
-      if (upcoming.length) {
-        result.push({ key: 'upcoming', label: 'Próximos vencimentos', kind: 'status', tone: 'info', items: upcoming })
-      }
-      if (dueToday.length) {
-        result.push({
-          key: 'today',
-          label: `Hoje · ${format(new Date(), 'dd/MM')}`,
-          kind: 'status',
-          tone: 'warning',
-          items: dueToday,
-        })
-      }
-      if (overdue.length) {
-        result.push({ key: 'overdue', label: 'Em atraso', kind: 'status', tone: 'negative', items: overdue })
-      }
-      if (history.length) {
-        result.push({ key: 'history', label: 'Histórico do mês', kind: 'status', tone: 'neutral', items: history })
-      }
-    }
-
-    const pastPages = pages.filter(p => p.month < currentMonthKey).sort((a, b) => b.month.localeCompare(a.month))
-    for (const p of pastPages) {
-      const items = p.entries.filter(matchesFilters)
-      if (items.length) {
-        result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'neutral', items })
-      }
-    }
-
-    return result
-  }, [pages, currentMonthKey, todayISO, matchesFilters])
+  const groups = useMemo(
+    () => buildGroups(pages, currentMonthKey, todayISO, matchesFilters),
+    [pages, currentMonthKey, todayISO, matchesFilters],
+  )
 
   const filteredEntries = useMemo(
     () => allEntries.filter(matchesFilters),
     [allEntries, matchesFilters],
   )
-  const summaryCount = filteredEntries.length
-  const summaryNet = netAmount(filteredEntries)
-  // The ledger strip splits the filtered set the way a caixa is read: money in,
-  // money out, and the balance between them.
-  const { entradas, saidas } = useMemo(() => {
-    let entradas = 0
-    let saidas = 0
-    for (const e of filteredEntries) {
-      if (e.Type === 'income') entradas += e.Amount
-      else saidas += e.Amount
+  const { count: summaryCount, entradas, saidas, saldo: summaryNet } = ledgerTotals(filteredEntries)
+
+  // An empty list has three different causes and only one of them means "you
+  // have no transactions". The middle case is the one that used to read as a
+  // missing record: the filters are fine, they just ran against the months
+  // loaded so far, and picking a period is what widens the search.
+  const emptyMessage = useMemo(() => {
+    if (appliedRange) return `Nenhum lançamento em ${formatRangeLabel(appliedRange)}.`
+    if (appliedCount > 0) {
+      return 'Nenhum lançamento nos meses carregados. Escolha um período para buscar em todo o histórico.'
     }
-    return { entradas, saidas }
-  }, [filteredEntries])
+    return 'Nenhuma transação registrada.'
+  }, [appliedRange, appliedCount])
 
   // Dropping a chip clears one applied filter and its pending twin together, so
   // the list and the controls never disagree about what's active.
@@ -394,7 +334,16 @@ export default function Transactions() {
                   />
                 </div>
               </div>
-              <div className="flex gap-2 sm:ml-auto">
+              {/* Os filtros só valem depois de aplicados, então enquanto houver
+                  edição pendente o formulário diz isso — sem o aviso, mexer num
+                  select e esquecer de aplicar faz a lista parecer errada. */}
+              {isDirty && (
+                <span className="flex items-center gap-1.5 text-sm text-muted-foreground sm:ml-auto">
+                  <span className="size-1.5 rounded-full bg-warning" aria-hidden />
+                  Filtros alterados — aplique para atualizar a lista.
+                </span>
+              )}
+              <div className={`flex gap-2 ${isDirty ? '' : 'sm:ml-auto'}`}>
                 <Button variant="secondary" type="button" className="h-8" onClick={clearFilters} disabled={!hasActiveFilters}>
                   <X className="size-3.5" /> Limpar
                 </Button>
@@ -456,15 +405,27 @@ export default function Transactions() {
                 <Skeleton key={i} className="h-9 rounded-md" />
               ))}
             </div>
+          ) : isError ? (
+            <p className="px-6 py-10 text-center text-sm text-destructive">
+              Erro ao carregar lançamentos.
+            </p>
           ) : groups.length === 0 ? (
-            <EmptyState icon={Receipt} message="Nenhuma transação encontrada." />
+            <EmptyState icon={Receipt} message={emptyMessage} />
           ) : (
             <>
-              {hasNextPage && (
+              {/* Os botões de carregar avançam mês a mês a partir de hoje, que é
+                  a paginação do modo navegação. Com um período aplicado a busca
+                  já cobre todo o histórico, então eles não teriam o que fazer. */}
+              {!rangeMode && browse.hasNextPage && (
                 <div className="flex justify-center pb-1">
-                  <Button variant="ghost" size="sm" disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={browse.isFetchingNextPage}
+                    onClick={() => browse.fetchNextPage()}
+                  >
                     <ChevronUp className="size-3.5" />
-                    {isFetchingNextPage ? 'Carregando...' : 'Carregar registros futuros'}
+                    {browse.isFetchingNextPage ? 'Carregando...' : 'Carregar registros futuros'}
                   </Button>
                 </div>
               )}
@@ -473,16 +434,16 @@ export default function Transactions() {
                 onMarkPaid={entry => markPaid.mutate(entry)}
                 onDelete={entry => deleteEntry.mutate(entry)}
               />
-              {hasPreviousPage && (
+              {!rangeMode && browse.hasPreviousPage && (
                 <div className="flex justify-center pt-1">
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={isFetchingPreviousPage}
-                    onClick={() => fetchPreviousPage()}
+                    disabled={browse.isFetchingPreviousPage}
+                    onClick={() => browse.fetchPreviousPage()}
                   >
                     <ChevronDown className="size-3.5" />
-                    {isFetchingPreviousPage ? 'Carregando...' : 'Carregar registros anteriores'}
+                    {browse.isFetchingPreviousPage ? 'Carregando...' : 'Carregar registros anteriores'}
                   </Button>
                 </div>
               )}

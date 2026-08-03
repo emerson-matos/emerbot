@@ -83,6 +83,35 @@ export function useEntries(from: string, to: string) {
   });
 }
 
+/**
+ * Entries for an arbitrary window, fetched only while one is set — the query
+ * the Transações page runs once the user picks a period.
+ *
+ * It exists because useEntriesByMonth can only reach the months the user has
+ * paged to, so filtering its cache by date silently reports "no results" for
+ * any period outside them. GET /entries?from&to has no such horizon: the API
+ * drops its row limit for date-bounded requests and ranges over the same
+ * effective date (DueDate, else TransactionDate) the client filters on.
+ *
+ * An open-ended range sends only `from`, which the API reads as "onwards".
+ * The key stays under ["entries"], so both entry mutations already invalidate
+ * it and mark-as-paid's optimistic update already patches it.
+ */
+export function useEntriesInRange(range: { from: string; to?: string } | null) {
+  return useQuery({
+    queryKey: queryKeys.entries(range?.from ?? "", range?.to ?? ""),
+    queryFn: () =>
+      api.entries.list(
+        range?.to ? { from: range.from, to: range.to } : { from: range!.from },
+      ),
+    enabled: range !== null,
+    // Deliberately no keepPreviousData: the page re-applies the period to
+    // whatever rows it holds, so serving the old window's rows while the new
+    // one loads would filter them all out and flash "nothing in this period"
+    // — the very claim this query exists to stop the page from making.
+  });
+}
+
 const MAX_MONTHS_FORWARD = 12;
 const MAX_MONTHS_BACK = 18;
 
