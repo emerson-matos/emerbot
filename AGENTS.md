@@ -21,7 +21,7 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 
 ## Deploy / infra
 
-- `make build-lambdas` cross-compiles `GOOS=linux GOARCH=arm64` (reproducibly: `-trimpath`, CGO off, zeroed zip mtime), names the binary `bootstrap`, zips it into `infra/opentofu/environments/dev/.lambdas/`. Lambdas run on `provided.al2`/arm64.
+- `make build-lambdas` cross-compiles `GOOS=linux GOARCH=arm64` (reproducibly: `-trimpath`, CGO off, zeroed zip mtime), names the binary `bootstrap`, zips it into `infra/opentofu/environments/dev/.lambdas/`. Lambdas run on `provided.al2023`/arm64.
 - `make tofu-plan` / `make tofu-apply` — depend on `build-lambdas` first and inject AWS creds via `aws configure export-credentials`. The zips list the Go sources as prerequisites, so they **rebuild automatically** whenever code changes — no need to `rm` them by hand anymore. Because the build is reproducible, an unrelated rebuild that yields the same binary keeps `source_code_hash` stable, so Tofu only redeploys Lambdas whose code actually changed. (`make clean-lambdas` force-clears the zips if ever needed.)
 - Prod secrets (`GEMINI_API_KEY`, `META_GRAPH_API_TOKEN`, etc.) are injected as **plain Lambda env vars** by OpenTofu from `TF_VAR_*` (see `infra/modules/api_gateway_lambda`) — there is no Secrets Manager.
 - **Shipping**: deploys run from **GitHub Actions** (`.github/workflows/deploy.yml`) via **GitHub OIDC** (no stored AWS keys). PRs get a `tofu plan` comment; `apply` is a **manual button** (`workflow_dispatch`), never on merge. `make tofu-apply` still works locally as break-glass. Full runbook: `docs/deploy.md` (ADR-009).
@@ -31,7 +31,7 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 ## Conventions
 
 - **Conventional Commits** (`feat:`, `fix(infra):`, `refactor:`, `chore:`, `docs:`). Work on feature branches (`feat-*`, `fix/*`), merge via GitHub PRs to `main`.
-- Go apps split entrypoints: `cmd/lambda` (Lambda handler) vs `cmd/local` (local HTTP server). Shared domain logic lives in `packages/`.
+- Go apps with HTTP handlers split entrypoints: `cmd/lambda` (Lambda handler) vs `cmd/local` (local HTTP server). Shared domain logic lives in `packages/`.
 
 ## Testing conventions (ADR-014)
 
@@ -39,4 +39,13 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 - **Test stores against `packages/dynamostore/dynamotest`**, an in-memory table that really evaluates key/filter/condition expressions, GSIs, sort order, `Limit`-before-filter and pagination. It **errors** on anything it does not model rather than silently matching — if you add a DynamoDB operation or expression, extend the fake. `dynamodb-local` (via `make demo`) stays the integration test.
 - **Behaviour shared by several implementations of an interface is written once.** The finance summaries (including `MultiMonthlySummary`) live in `packages/finance/summaries.go` and both stores delegate; `store_conformance_test.go` runs the same scenario against every `Store` implementation, so a divergence is a red test rather than an environment-specific bug.
 - **Consumers declare the narrow interface they use** (e.g. `notifier.LedgerReader`, `analytics.LedgerReader`, `finance.GoalStore`) instead of depending on the 18-method `finance.Store`.
-- **Dates go through `packages/domain`**: `ParseMonth`, `ParseDay`, `CurrentMonth`, `CurrentMonthRange`. Malformed input is an error, never a silent fallback to the current period — on a financial view, "no data" and "you typed it wrong" must not render the same. Handlers read query params via `internal/httpx` (`DateRange`, `Month`).
+- **Dates go through `packages/domain`**: `ParseMonth`, `ParseDay`, `CurrentMonth`, `CurrentMonthRange`. Malformed input is an error, never a silent fallback to the current period — on a financial view, "no data" and "you typed it wrong" must not render the same. Handlers read query params via `apps/dashboard-api/internal/httpx` (`DateRange`, `Month`).
+
+## ADRs
+
+Key decisions beyond the basics above:
+
+- **ADR-015** (tool results never silently truncate): `list_due_entries` and `search_entries` always surface a `warning` when results are capped — never present partial totals as the full picture.
+- **ADR-016** (revenue vs. cash-inflow are distinct): faturamento (`IsRevenue`, `Origin == venda`) and entradas de caixa (all income) are separate metrics. `Origin`, not category, decides.
+- **ADR-017** ("today" is not a measurable day): the daily notification and analysis tools report through yesterday; today is not yet a fact.
+- **ADR-018** (a week is the smallest comparable unit): month-over-month comparisons only activate after the first full week; before that, trends show the current month's own numbers without drawing conclusions.
