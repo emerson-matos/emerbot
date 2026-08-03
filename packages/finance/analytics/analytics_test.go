@@ -51,6 +51,20 @@ func expense(t *testing.T, date, category string, amount int64) domain.Financial
 	}
 }
 
+// ratesFor builds the per-weekday rates a projection is priced from, Sunday
+// first, so a test can state what a day of the week is worth without going
+// through a window of fixture sales. sample is set past a week so the rates
+// read as an ordinary, fully-backed projection.
+func ratesFor(avgs ...int64) dailyRates {
+	rates := dailyRates{sample: daysInWeek}
+	copy(rates.avg[:], avgs)
+	return rates
+}
+
+// fridayOnly is the shape most projection tests want: an ordinary Friday worth
+// R$1.000,00 and nothing else in the week.
+var fridayOnly = ratesFor(0, 0, 0, 0, 0, 100000, 0)
+
 func at12(t *testing.T, date string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse("2006-01-02", date)
@@ -639,22 +653,14 @@ func TestRecommendationsNeedARealBaseline(t *testing.T) {
 func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 	// Sunday 2026-07-26: five days left in the month (Mon–Fri the 27th–31st).
 	now := at12(t, "2026-07-26")
-	weekdays := []WeekdayStat{
-		{Day: 0, Avg: 100000},
-		{Day: 1, Avg: 100000},
-		{Day: 2, Avg: 100000},
-		{Day: 3, Avg: 100000},
-		{Day: 4, Avg: 100000},
-		{Day: 5, Avg: 100000},
-		{Day: 6, Avg: 100000},
-	}
+	rates := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	// The 26th through the 31st is six days, today included.
 	goals := GoalProgress{
 		RevenueTarget: 3600000, RevenueActual: 2777500,
 		DaysTotal: 31, DaysRemaining: 6,
 	}
 
-	got := buildProjection(weekdays, goals, now, clock(t, "2026-07", "2026-07-26"), 0)
+	got := buildProjection(rates, goals, now, clock(t, "2026-07", "2026-07-26"), 0)
 
 	if want := int64(600000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want six days at R$1.000,00 (%d)", got.Remaining, want)
@@ -682,7 +688,7 @@ func TestProjectionCountsTodayAsADayStillToTrade(t *testing.T) {
 	now := at12(t, "2026-07-31")
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 1}
 
-	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now, clock(t, "2026-07", "2026-07-31"), 0)
+	got := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 0)
 
 	if want := int64(100000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want today's Friday average (%d)", got.Remaining, want)
@@ -702,7 +708,7 @@ func TestProjectionDoesNotCountTodayTwice(t *testing.T) {
 	now := at12(t, "2026-07-31")
 	goals := GoalProgress{RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 1}
 
-	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now, clock(t, "2026-07", "2026-07-31"), 40000)
+	got := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 40000)
 
 	if want := int64(60000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want the rest of today (%d)", got.Remaining, want)
@@ -710,7 +716,7 @@ func TestProjectionDoesNotCountTodayTwice(t *testing.T) {
 
 	// And a day that has already beaten its average has nothing left to add,
 	// rather than a negative amount.
-	beaten := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, now, clock(t, "2026-07", "2026-07-31"), 150000)
+	beaten := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 150000)
 	if beaten.Remaining != 0 {
 		t.Errorf("Remaining = %d, want 0 once today has passed its average", beaten.Remaining)
 	}
@@ -721,7 +727,7 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	// project into and no per-day ask to make of it.
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}
 
-	got := buildProjection([]WeekdayStat{{Day: 5, Avg: 100000}}, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
+	got := buildProjection(fridayOnly, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
 
 	if got.Remaining != 0 {
 		t.Errorf("Remaining = %d, want nothing left to project", got.Remaining)
@@ -736,13 +742,26 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	if got.NeededPerDay != 0 {
 		t.Errorf("NeededPerDay = %d, want 0 with no days left", got.NeededPerDay)
 	}
+	// And nothing was estimated: Projected is July's own faturamento. Reading
+	// the basis off the rates called that "janela" — an eight-week estimate,
+	// stamped on the one figure in this struct that is not an estimate — and the
+	// card captioned a realised total as a forecast.
+	if got.Basis != ProjectionClosed {
+		t.Errorf("Basis = %q, want %q for a month that has already ended", got.Basis, ProjectionClosed)
+	}
+	// It says so even when no window was fetched, so a caller that skips the
+	// read for a closed month cannot turn the label into "sem_base".
+	unfetched := buildProjection(dailyRates{}, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
+	if unfetched.Basis != ProjectionClosed {
+		t.Errorf("Basis = %q without a window, want %q", unfetched.Basis, ProjectionClosed)
+	}
 }
 
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
 	now := at12(t, "2026-07-26")
-	weekdays := []WeekdayStat{{Day: 1, Avg: 100000}}
+	mondayOnly := ratesFor(0, 100000, 0, 0, 0, 0, 0)
 
-	got := buildProjection(weekdays, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
+	got := buildProjection(mondayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
 
 	if got.Pacing() {
 		t.Error("Pacing = true, want false with no target")
@@ -754,6 +773,223 @@ func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
 	// with an average.
 	if want := int64(150000); got.Projected != want {
 		t.Errorf("Projected = %d, want %d", got.Projected, want)
+	}
+}
+
+// The bug this window exists for. On 3 August the pharmacy had traded one
+// Saturday and one Sunday; every other day of the week had never been seen
+// *this month*, so the twenty-one weekdays still to come were each priced at
+// zero and the month projected a quarter of its goal. A day of the week is a
+// property of the pharmacy, not of the calendar month.
+func TestProjectionRatesLearnTheWeekFromTheTrailingWindow(t *testing.T) {
+	// July traded every weekday; August has only had its opening weekend.
+	window := []domain.FinancialEntry{
+		sale(t, "2026-07-06", 150000), // Monday
+		sale(t, "2026-07-07", 150000), // Tuesday
+		sale(t, "2026-07-08", 150000), // Wednesday
+		sale(t, "2026-07-09", 150000), // Thursday
+		sale(t, "2026-07-10", 150000), // Friday
+		sale(t, "2026-07-11", 100000), // Saturday
+		sale(t, "2026-07-12", 50000),  // Sunday
+		sale(t, "2026-08-01", 120000), // Saturday
+		sale(t, "2026-08-02", 60000),  // Sunday
+	}
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	rates := projectionRates(window, from, to)
+
+	for day := 1; day <= 5; day++ {
+		if rates.avg[day] == 0 {
+			t.Errorf("weekday %d priced at 0, want July's average — this is the start-of-month blank", day)
+		}
+	}
+	// Saturday appears in both months, so its rate is the average of the two.
+	if want := int64(110000); rates.avg[6] != want {
+		t.Errorf("Saturday = %d, want both Saturdays averaged (%d)", rates.avg[6], want)
+	}
+	if rates.basis() != ProjectionFromWindow {
+		t.Errorf("basis = %q, want an ordinary projection", rates.basis())
+	}
+}
+
+func TestProjectionWindowEndsOnTheLastFinishedDay(t *testing.T) {
+	tests := []struct {
+		name             string
+		month, now       string
+		wantFrom, wantTo string
+	}{
+		// Eight whole weeks back from yesterday.
+		{"mid-month", "2026-08", "2026-08-03", "2026-06-08", "2026-08-02"},
+		// Nothing of the month has finished, so the window ends the day before
+		// it began — and the projection is fully priced from the moment the
+		// month opens.
+		{"the first day", "2026-08", "2026-08-01", "2026-06-06", "2026-07-31"},
+		// A closed month is priced from its own last day, never from today:
+		// July opened in August must not be projected out of August's sales.
+		{"a closed month", "2026-07", "2026-08-03", "2026-06-06", "2026-07-31"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			from, to := clock(t, tc.month, tc.now).projectionWindow()
+			if from.String() != tc.wantFrom || to.String() != tc.wantTo {
+				t.Errorf("window = %s..%s, want %s..%s", from, to, tc.wantFrom, tc.wantTo)
+			}
+			// Whole weeks, so no day of the week gets more chances than another.
+			days := int(to.Time().Sub(from.Time()).Hours()/24) + 1
+			if days != projectionWindowWeeks*daysInWeek {
+				t.Errorf("window = %d days, want %d", days, projectionWindowWeeks*daysInWeek)
+			}
+		})
+	}
+}
+
+func TestProjectionRatesIgnoreWhatFallsOutsideTheWindow(t *testing.T) {
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow() // 08/06..02/08
+	window := []domain.FinancialEntry{
+		sale(t, "2026-06-01", 900000), // a Monday one week too old
+		sale(t, "2026-06-15", 100000), // a Monday inside
+		sale(t, "2026-08-03", 900000), // today, still being traded
+	}
+
+	rates := projectionRates(window, from, to)
+
+	if want := int64(100000); rates.avg[1] != want {
+		t.Errorf("Monday = %d, want only the Monday inside the window (%d)", rates.avg[1], want)
+	}
+	if rates.sample != 1 {
+		t.Errorf("sample = %d, want the single day inside the window", rates.sample)
+	}
+}
+
+func TestProjectionRatesKeepADayTheShopNeverOpensAtZero(t *testing.T) {
+	// Eight weeks of Mondays and Sundays, and never a Wednesday: the pharmacy
+	// does not open on Wednesdays, so projecting takings for one would overstate
+	// every month.
+	var window []domain.FinancialEntry
+	for _, d := range []string{"06-15", "06-22", "06-29", "07-06", "07-13", "07-20", "07-27"} {
+		window = append(window, sale(t, "2026-"+d, 100000))
+	}
+	for _, d := range []string{"06-14", "06-21", "06-28", "07-05", "07-12", "07-19", "07-26"} {
+		window = append(window, sale(t, "2026-"+d, 60000))
+	}
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	rates := projectionRates(window, from, to)
+
+	if rates.avg[3] != 0 {
+		t.Errorf("Wednesday = %d, want 0 — the shop never opened on one in eight weeks", rates.avg[3])
+	}
+	if rates.avg[1] != 100000 {
+		t.Errorf("Monday = %d, want 100000", rates.avg[1])
+	}
+}
+
+// A thin window under-projects rather than over-projects, and says so through
+// the basis. An unobserved weekday used to take the overall daily average
+// whenever fewer than seven days had traded — which could not tell a new user
+// from a shop that opens twice a week, and put the overstating side of a
+// sixfold step in front of whoever had the least data.
+func TestProjectionRatesDoNotInventTakingsForAThinWindow(t *testing.T) {
+	window := []domain.FinancialEntry{
+		sale(t, "2026-08-01", 100000), // Saturday
+		sale(t, "2026-08-02", 200000), // Sunday
+	}
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	rates := projectionRates(window, from, to)
+
+	if rates.avg[3] != 0 {
+		t.Errorf("an unobserved Wednesday = %d, want 0 rather than a spread average", rates.avg[3])
+	}
+	// The days that *were* observed keep their own figures.
+	if rates.avg[6] != 100000 || rates.avg[0] != 200000 {
+		t.Errorf("observed weekdays = %d/%d, want their own averages", rates.avg[6], rates.avg[0])
+	}
+	if rates.basis() != ProjectionPartial {
+		t.Errorf("basis = %q, want %q", rates.basis(), ProjectionPartial)
+	}
+
+	if empty := projectionRates(nil, from, to); empty.basis() != ProjectionNoBasis {
+		t.Errorf("basis = %q, want %q with nothing in the window", empty.basis(), ProjectionNoBasis)
+	}
+}
+
+// The step that removing the spread got rid of. A pharmacy that only opens on
+// Saturdays must project the same whether six or seven of the window's
+// Saturdays are on record — one more day of data must not move the month.
+func TestProjectionRatesDoNotLurchOnOneMoreTradingDay(t *testing.T) {
+	saturdays := []string{"2026-06-13", "2026-06-20", "2026-06-27", "2026-07-04", "2026-07-11", "2026-07-18"}
+	var six []domain.FinancialEntry
+	for _, d := range saturdays {
+		six = append(six, sale(t, d, 1000000))
+	}
+	seven := append(append([]domain.FinancialEntry{}, six...), sale(t, "2026-07-25", 1000000))
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	withSix := projectionRates(six, from, to)
+	withSeven := projectionRates(seven, from, to)
+
+	for d := 0; d < daysInWeek; d++ {
+		if d == 6 {
+			continue
+		}
+		if withSix.avg[d] != 0 {
+			t.Errorf("weekday %d = %d on six Saturdays, want 0 — the shop does not open then", d, withSix.avg[d])
+		}
+	}
+	if withSix.avg[6] != withSeven.avg[6] {
+		t.Errorf("Saturday = %d then %d; one more Saturday must not change its average",
+			withSix.avg[6], withSeven.avg[6])
+	}
+}
+
+// The weekday card is a factual reading of the analysed month — its empty state
+// says "neste mês" — so it must not quietly start showing figures from weeks
+// the user is not looking at. Only the projection widened its window.
+func TestWeekdayStatsStayAboutTheAnalysedMonth(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		// A Wednesday in *July*, on a day number that falls inside August's
+		// finished days. Filtering on the day number alone let this through into
+		// August's card — and a test built on a later July date passed without
+		// exercising the rule at all.
+		sale(t, "2026-07-01", 500000),
+		sale(t, "2026-08-01", 100000), // a Saturday, this month
+	}
+
+	stats := weekdayStats(entries, at12(t, "2026-08-03"), clock(t, "2026-08", "2026-08-03"))
+
+	if stats[3].Count != 0 || stats[3].Avg != 0 {
+		t.Errorf("Wednesday = %+v, want nothing — that sale belongs to July", stats[3])
+	}
+	if stats[1].Count != 0 {
+		t.Errorf("Monday = %+v, want nothing — August has not traded a Monday yet", stats[1])
+	}
+	if stats[6].Avg != 100000 {
+		t.Errorf("Saturday = %d, want August's own figure", stats[6].Avg)
+	}
+}
+
+// Input.Now is already in the pharmacy's timezone, so the month it falls in must
+// be read off its own calendar. Reading it in UTC disagreed with every other
+// field on the clock for the last hours of each Brazilian evening.
+func TestMonthClockReadsNowInItsOwnTimezone(t *testing.T) {
+	saoPaulo := time.FixedZone("-03", -3*3600)
+	lateOnTheLastOfJuly := time.Date(2026, 7, 31, 22, 0, 0, 0, saoPaulo) // already 1 August in UTC
+
+	if c := newMonthClock("2026-07", lateOnTheLastOfJuly); !c.inProgress || c.today != 31 {
+		t.Errorf("July = %+v, want the month still in progress on its last evening", c)
+	}
+	// And August has not started, so it must not be reported as in progress —
+	// which used to hand it today=31, through=30 and a projection window running
+	// thirty days into the future, plus the store read that goes with one.
+	//
+	// (A month that has not begun still lands in the same branch as a closed one,
+	// which is why its window is meaningless rather than empty. That predates
+	// this and costs nothing now: only a month in progress is ever priced, or
+	// fetched for.)
+	august := newMonthClock("2026-08", lateOnTheLastOfJuly)
+	if august.inProgress {
+		t.Errorf("August = %+v, want a month that has not begun to be treated as not in progress", august)
 	}
 }
 

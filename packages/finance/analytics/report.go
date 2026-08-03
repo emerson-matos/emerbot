@@ -147,6 +147,11 @@ func (a Analysis) ToolPayload() map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
+		// How the projection was arrived at, and how much trading it stands on.
+		// Spelled out because the model reads the figure aloud, and a projection
+		// built on a user's first three days must not be quoted with the same
+		// confidence as one built on eight weeks.
+		"projecao_base": string(a.Projection.Basis),
 		// The goal is a sales target, so it is measured against faturamento —
 		// see domain.IsRevenue. It can differ from "faturamento" above only in
 		// that the goal is capped at 100%.
@@ -179,6 +184,13 @@ func (a Analysis) ToolPayload() map[string]any {
 	// collapse and reported a 100% fall in receita.
 	if a.Period.InProgress && a.Period.ThroughDay == 0 {
 		payload["mes_comecando_sem_dia_fechado"] = true
+	}
+	// Only where a window was actually consulted. A closed month projected
+	// nothing and an empty window measured nothing, and quoting "janela de 8
+	// semanas" beside either invites the model to describe a figure as an
+	// eight-week estimate when no window produced it.
+	if a.Projection.Basis == ProjectionFromWindow || a.Projection.Basis == ProjectionPartial {
+		payload["projecao_janela_em_semanas"] = projectionWindowWeeks
 	}
 	if a.Projection.NeededPerDay > 0 {
 		payload["necessario_por_dia_para_bater_a_meta"] = reais(a.Projection.NeededPerDay)

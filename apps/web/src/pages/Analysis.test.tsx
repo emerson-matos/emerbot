@@ -81,6 +81,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       onTrack: false,
       daysRemaining: 5,
       neededPerDay: 164500,
+      basis: "janela",
     },
     history: [],
     cashPosition: {
@@ -128,6 +129,39 @@ describe("Analysis page", () => {
     expect(screen.getByText("R$ 1.645,00")).toBeInTheDocument();
     expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
       "R$ 459,00",
+    );
+  });
+
+  it("says what the projection is built from", () => {
+    const { rerender } = renderWith(analysisData());
+
+    // The projection used to be a bare figure. It is an estimate off a
+    // trailing window, and the card has to say so — the same number means
+    // something different when it stands on two days than on eight weeks.
+    expect(
+      screen.getByText("Pela média de cada dia da semana nas últimas 8 semanas."),
+    ).toBeInTheDocument();
+
+    const thin = analysisData();
+    thin.projection = { ...thin.projection, basis: "parcial" };
+    useMonthlyAnalysis.mockReturnValue({ data: thin, isError: false, refetch: vi.fn() });
+    rerender(<Analysis />);
+
+    expect(
+      screen.getByText(/Menos de uma semana de vendas registradas/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not caption a closed month as a forecast", () => {
+    // A month that has ended projected nothing: `projected` is its own
+    // faturamento. Captioning it "pela média das últimas 8 semanas" put an
+    // estimate label on the one figure on this card that is not an estimate.
+    const closed = analysisData();
+    closed.projection = { ...closed.projection, basis: "fechado" };
+    const { container } = renderWith(closed);
+
+    expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
+      "últimas 8 semanas",
     );
   });
 

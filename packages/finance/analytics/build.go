@@ -37,6 +37,16 @@ type Input struct {
 	// about which month a sale belonged to.
 	RevenueEntries         []domain.FinancialEntry
 	PreviousRevenueEntries []domain.FinancialEntry
+	// WindowRevenueEntries are faturamento over the projection's trailing
+	// window (monthClock.projectionWindow), also on the transaction-date basis.
+	// It reaches further back than PreviousRevenueEntries and is not aligned to
+	// a month, which is the point: a day of the week is a property of the
+	// pharmacy, not of the calendar month, and the month's own first days cannot
+	// price the ones still to come.
+	//
+	// It may carry days from outside the window — projectionRates applies the
+	// range itself, so an over-fetching caller cannot widen the averages.
+	WindowRevenueEntries []domain.FinancialEntry
 	// Summaries and Goals run oldest-first over the trailing HistoryMonths
 	// window ending at Month, so the analysed month is the *last* slot. A month
 	// with no data is a nil hole rather than a shorter slice — collapsing it
@@ -91,7 +101,14 @@ func Build(in Input) Analysis {
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
 	// the bot — they each used to work one out for themselves and disagreed.
-	projection := buildProjection(weekdays, goals, in.Now, clock, revenueOnDay(in.RevenueEntries, clock.today))
+	//
+	// The rates come from the trailing window rather than from `weekdays`, which
+	// is the card and stays about this month alone: reading the month's own
+	// finished days priced every weekday it had not reached yet at zero, so the
+	// projection was worth least on the days it was consulted most.
+	windowFrom, windowTo := clock.projectionWindow()
+	rates := projectionRates(in.WindowRevenueEntries, windowFrom, windowTo)
+	projection := buildProjection(rates, goals, in.Now, clock, revenueOnDay(in.RevenueEntries, clock.today))
 	// One month-over-month comparison, measured over the same finished days of
 	// both months, shared by the trends and the health insights — they used to
 	// derive it separately from the full summaries and both inherited the

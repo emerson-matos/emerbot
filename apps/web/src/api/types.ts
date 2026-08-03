@@ -331,6 +331,28 @@ export interface WeekPace {
  * screen. It is computed once in Go now; render these fields, don't re-derive
  * them.
  */
+/**
+ * How much trading the projection stands on. The days still to come are priced
+ * from a trailing eight-week window, and a window with barely anything in it
+ * must not read as confidently as one built on two months of sales.
+ */
+export const ProjectionBasis = {
+  /** A week or more of trading days in the window — the ordinary case. */
+  Window: "janela",
+  /** Fewer than seven days traded in eight weeks; the figure will still move. */
+  Partial: "parcial",
+  /** Nothing traded in the window at all. */
+  None: "sem_base",
+  /**
+   * The month has ended: nothing was estimated and `projected` is its own
+   * faturamento. Carries no caption — the one figure here that is not a
+   * forecast must not be captioned as one.
+   */
+  Closed: "fechado",
+} as const;
+export type ProjectionBasis =
+  (typeof ProjectionBasis)[keyof typeof ProjectionBasis];
+
 export interface Projection {
   actual: number;
   remaining: number;
@@ -342,6 +364,12 @@ export interface Projection {
   daysRemaining: number;
   /** What each day left must bring, measured from `actual`, to reach `target`. */
   neededPerDay: number;
+  /**
+   * Render this as a qualifier; do not re-derive one from the amounts. The
+   * backend is the only thing that knows how wide the window was and how much
+   * of it traded.
+   */
+  basis: ProjectionBasis;
 }
 
 export const RecommendationSeverity = {

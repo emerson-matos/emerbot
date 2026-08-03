@@ -38,6 +38,11 @@ type monthClock struct {
 	today int
 	// total is the number of days in the analysed month.
 	total int
+	// first is the analysed month's first day, at noon like every other date
+	// this package builds. The projection window is measured back from it, so
+	// the clock has to know where the month sits on the calendar and not just
+	// how long it is.
+	first time.Time
 }
 
 // newMonthClock places now inside the analysed month. An unparseable month
@@ -45,11 +50,19 @@ type monthClock struct {
 // Assemble parses the month before it gets here.
 func newMonthClock(month string, now time.Time) monthClock {
 	total := daysInMonth(now)
-	if _, last, err := domain.ParseMonth(month); err == nil {
+	first := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, now.Location())
+	if start, last, err := domain.ParseMonth(month); err == nil {
 		total = last.Day()
+		first = time.Date(start.Year(), start.Month(), 1, 12, 0, 0, 0, now.Location())
 	}
-	if domain.MonthOf(now) != month {
-		return monthClock{through: total, total: total}
+	// now's own calendar, not domain.MonthOf, which reads it in UTC. Input.Now is
+	// already in the pharmacy's timezone and every other field here is taken from
+	// its local fields, so comparing a UTC month against them disagreed with
+	// itself for the last hours of each evening in Brazil: at 22:00 on 31 July,
+	// asking for August answered "in progress, today is the 31st", and the
+	// projection window that follows from it ran thirty days into the future.
+	if now.Format(domain.MonthLayout) != month {
+		return monthClock{through: total, total: total, first: first}
 	}
 	return monthClock{
 		inProgress: true,
@@ -57,7 +70,40 @@ func newMonthClock(month string, now time.Time) monthClock {
 		remaining:  total - now.Day() + 1,
 		today:      now.Day(),
 		total:      total,
+		first:      first,
 	}
+}
+
+// projectionWindowWeeks is how far back the projection looks to learn what a
+// day of the week is worth. Whole weeks rather than a round number of days, so
+// every weekday gets exactly the same number of chances to be observed: over 60
+// days four weekdays would come up nine times and three only eight.
+//
+// Eight of them is roughly two months — enough that one unusual Tuesday moves
+// the Tuesday rate by an eighth rather than a quarter, and short enough to
+// follow the pharmacy when its trading level actually shifts.
+const projectionWindowWeeks = 8
+
+// projectionWindow is the stretch of days the per-weekday rates are averaged
+// over, inclusive at both ends.
+//
+// It ends on the last day with complete data *relative to the analysed month* —
+// yesterday while the month runs, the day before the month started on its first
+// day, the month's own last day once it is closed. Never on "today": the
+// dashboard renders past months too, and a window counted off the clock would
+// price a closed July from August's sales.
+//
+// This is what stops the start of a month from projecting nothing. Reading only
+// the month's own finished days, a 3 August had seen one Saturday and one
+// Sunday, so the twenty-one weekdays still to come were each projected at zero
+// and the month's projection came in at a quarter of the goal.
+func (c monthClock) projectionWindow() (from, to domain.CalendarDate) {
+	// through counts finished days, so first+through-1 is the last of them;
+	// through == 0 lands on the day before the month began, which is exactly
+	// what "nothing of this month has finished" should look back to.
+	end := c.first.AddDate(0, 0, c.through-1)
+	start := end.AddDate(0, 0, -(projectionWindowWeeks*daysInWeek - 1))
+	return domain.NewCalendarDate(start), domain.NewCalendarDate(end)
 }
 
 // measurable reports whether the month has a finished day to report on. Only
