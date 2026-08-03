@@ -452,20 +452,46 @@ func TestSaveEntriesReportsFailingChunk(t *testing.T) {
 	}
 }
 
-func TestGetEntry(t *testing.T) {
-	s, _ := newStore(t, 0)
+func TestGetEntryReadsOneItemByItsKey(t *testing.T) {
+	s, tbl := newStore(t, 0)
+	ctx := context.Background()
 	save(t, s, entry(t, "e1", "2026-07-10", 100), entry(t, "e2", "2026-07-11", 200))
 
-	got, err := s.GetEntry(context.Background(), "u1", "e2")
+	got, err := s.GetEntry(ctx, "u1", date(t, "2026-07-11"), "e2")
 	if err != nil {
 		t.Fatalf("get entry: %v", err)
 	}
 	if got.Amount != 200 {
 		t.Fatalf("amount = %d, want 200", got.Amount)
 	}
+	// The point of carrying the date: the row is addressed, not searched for.
+	// This used to read the user's whole partition on every lookup.
+	if tbl.Calls("GetItem") != 1 || tbl.Calls("Query") != 0 {
+		t.Fatalf("GetItem=%d Query=%d, want exactly one keyed read",
+			tbl.Calls("GetItem"), tbl.Calls("Query"))
+	}
 
-	if _, err := s.GetEntry(context.Background(), "u1", "missing"); err == nil {
-		t.Fatal("expected an error for an unknown entry id")
+	if _, err := s.GetEntry(ctx, "u1", date(t, "2026-07-11"), "missing"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("unknown id error = %v, want ErrEntryNotFound", err)
+	}
+	// The date is half the key, so the right id under the wrong date addresses
+	// a row that does not exist.
+	if _, err := s.GetEntry(ctx, "u1", date(t, "2026-07-10"), "e2"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("wrong-date error = %v, want ErrEntryNotFound", err)
+	}
+}
+
+func TestFindEntryByIDScansThePartition(t *testing.T) {
+	s, _ := newStore(t, 0)
+	ctx := context.Background()
+	save(t, s, entry(t, "e1", "2026-07-10", 100), entry(t, "e2", "2026-07-11", 200))
+
+	got, err := s.FindEntryByID(ctx, "u1", "e2")
+	if err != nil || got.Amount != 200 {
+		t.Fatalf("find = %+v (err %v), want the entry with no date supplied", got, err)
+	}
+	if _, err := s.FindEntryByID(ctx, "u1", "missing"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("error = %v, want ErrEntryNotFound", err)
 	}
 }
 
@@ -474,8 +500,9 @@ func TestUpdateEntryInPlaceWhenDateUnchanged(t *testing.T) {
 	ctx := context.Background()
 	save(t, s, entry(t, "e1", "2026-07-10", 100))
 
+	previous := entry(t, "e1", "2026-07-10", 100)
 	updated := entry(t, "e1", "2026-07-10", 999, withDescription("corrigido"))
-	if err := s.UpdateEntry(ctx, updated); err != nil {
+	if err := s.UpdateEntry(ctx, previous, updated); err != nil {
 		t.Fatalf("update entry: %v", err)
 	}
 
@@ -483,9 +510,14 @@ func TestUpdateEntryInPlaceWhenDateUnchanged(t *testing.T) {
 	if len(got) != 1 || got[0].Amount != 999 || got[0].Description != "corrigido" {
 		t.Fatalf("got %+v, want a single entry updated to 999/corrigido", got)
 	}
-	// Same sort key, so a plain put suffices — no transaction needed.
+	// Same sort key, so a plain conditional put suffices — no transaction, and
+	// no read: the caller already handed over the row being replaced.
 	if tbl.Calls("TransactWriteItems") != 0 {
 		t.Fatal("an in-place update must not open a transaction")
+	}
+	if tbl.Calls("Query") != 1 || tbl.Calls("GetItem") != 0 {
+		t.Fatalf("Query=%d GetItem=%d, want no read beyond the list this test makes itself",
+			tbl.Calls("Query"), tbl.Calls("GetItem"))
 	}
 }
 
@@ -494,8 +526,9 @@ func TestUpdateEntryMovesItemWhenDateChanges(t *testing.T) {
 	ctx := context.Background()
 	save(t, s, entry(t, "e1", "2026-07-10", 100))
 
+	previous := entry(t, "e1", "2026-07-10", 100)
 	moved := entry(t, "e1", "2026-08-20", 100)
-	if err := s.UpdateEntry(ctx, moved); err != nil {
+	if err := s.UpdateEntry(ctx, previous, moved); err != nil {
 		t.Fatalf("update entry: %v", err)
 	}
 
@@ -517,12 +550,25 @@ func TestUpdateEntryRejectsUnknownAndInvalid(t *testing.T) {
 	s, _ := newStore(t, 0)
 	ctx := context.Background()
 
-	if err := s.UpdateEntry(ctx, entry(t, "ghost", "2026-07-10", 100)); err == nil {
-		t.Fatal("expected an error updating an entry that does not exist")
+	// Existence is enforced by a condition on the write rather than by a read
+	// first, so this must still fail instead of creating the row.
+	ghost := entry(t, "ghost", "2026-07-10", 100)
+	if err := s.UpdateEntry(ctx, ghost, ghost); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("error = %v, want ErrEntryNotFound updating an entry that does not exist", err)
+	}
+	// Same for a move whose source row is not there: the transaction must be
+	// cancelled, not land a duplicate under the new date.
+	movedGhost := entry(t, "ghost", "2026-08-20", 100)
+	if err := s.UpdateEntry(ctx, ghost, movedGhost); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("error = %v, want ErrEntryNotFound moving an entry that does not exist", err)
+	}
+	if got := list(t, s, EntryFilter{}); len(got) != 0 {
+		t.Fatalf("table has %v, want nothing written for a failed update", ids(got))
 	}
 
-	save(t, s, entry(t, "e1", "2026-07-10", 100))
-	if err := s.UpdateEntry(ctx, entry(t, "e1", "2026-07-10", -1)); err == nil {
+	previous := entry(t, "e1", "2026-07-10", 100)
+	save(t, s, previous)
+	if err := s.UpdateEntry(ctx, previous, entry(t, "e1", "2026-07-10", -1)); err == nil {
 		t.Fatal("expected an error updating with an invalid amount")
 	}
 }
@@ -532,14 +578,20 @@ func TestDeleteEntry(t *testing.T) {
 	ctx := context.Background()
 	save(t, s, entry(t, "e1", "2026-07-10", 100), entry(t, "e2", "2026-07-11", 200))
 
-	if err := s.DeleteEntry(ctx, "u1", "e1"); err != nil {
+	if err := s.DeleteEntry(ctx, "u1", date(t, "2026-07-10"), "e1"); err != nil {
 		t.Fatalf("delete entry: %v", err)
 	}
 	assertIDs(t, list(t, s, EntryFilter{}), "e2")
 
-	if err := s.DeleteEntry(ctx, "u1", "missing"); err == nil {
-		t.Fatal("expected an error deleting an unknown entry")
+	if err := s.DeleteEntry(ctx, "u1", date(t, "2026-07-10"), "missing"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("error = %v, want ErrEntryNotFound deleting an unknown entry", err)
 	}
+	// DynamoDB's delete is idempotent, so without the condition a wrong date
+	// would answer success and leave the row where it is.
+	if err := s.DeleteEntry(ctx, "u1", date(t, "2026-01-01"), "e2"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("error = %v, want ErrEntryNotFound deleting under the wrong date", err)
+	}
+	assertIDs(t, list(t, s, EntryFilter{}), "e2")
 }
 
 // --- summaries ---

@@ -218,10 +218,16 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 				return nil, fmt.Errorf("entry_id is required")
 			}
 
-			entry, err := store.GetEntry(ctx, userID, args.EntryID)
+			// By ID alone: the model is handed entry IDs by search_entries and
+			// has no dependable transaction date to pair them with, so this is
+			// the one caller that pays for the partition read.
+			entry, err := store.FindEntryByID(ctx, userID, args.EntryID)
 			if err != nil {
 				return nil, fmt.Errorf("get entry: %w", err)
 			}
+			// Kept before the edits below so the store knows which row to
+			// replace — args.Date may move the entry to another sort key.
+			previous := entry
 
 			if args.Amount != 0 {
 				if args.Amount <= 0 || args.Amount > maxEntryAmountReais {
@@ -265,7 +271,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 
 			entry.UpdatedAt = time.Now().UTC()
 
-			if err := store.UpdateEntry(ctx, entry); err != nil {
+			if err := store.UpdateEntry(ctx, previous, entry); err != nil {
 				return nil, fmt.Errorf("update entry: %w", err)
 			}
 

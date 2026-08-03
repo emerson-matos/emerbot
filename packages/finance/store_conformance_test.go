@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -255,9 +256,10 @@ func TestStoresAgreeOnRevenueAndCashBases(t *testing.T) {
 
 		// Settled late, in March. Only the cash side moves; the sale stays in
 		// January forever.
-		crediario.PaymentStatus = domain.PaymentStatusPaid
-		crediario.PaymentDate = dateP(t, "2026-03-11")
-		if err := s.UpdateEntry(ctx, crediario); err != nil {
+		settled := crediario
+		settled.PaymentStatus = domain.PaymentStatusPaid
+		settled.PaymentDate = dateP(t, "2026-03-11")
+		if err := s.UpdateEntry(ctx, crediario, settled); err != nil {
 			t.Fatalf("settle crediario: %v", err)
 		}
 
@@ -433,23 +435,30 @@ func TestStoresAgreeOnEntryLifecycle(t *testing.T) {
 		if err := s.SaveEntry(ctx, e); err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		got, err := s.GetEntry(ctx, "u1", "e1")
+		day := date(t, "2026-07-10")
+		got, err := s.GetEntry(ctx, "u1", day, "e1")
 		if err != nil || got.Amount != 1000 {
 			t.Fatalf("get = %+v (err %v), want the saved entry", got, err)
 		}
+		// The same row, reached without its date: the expensive lookup the AI
+		// tool uses must agree with the keyed one.
+		if found, err := s.FindEntryByID(ctx, "u1", "e1"); err != nil || found.Amount != 1000 {
+			t.Fatalf("find by id = %+v (err %v), want the same entry", found, err)
+		}
 
-		e.Amount = 2000
-		if err := s.UpdateEntry(ctx, e); err != nil {
+		updated := e
+		updated.Amount = 2000
+		if err := s.UpdateEntry(ctx, e, updated); err != nil {
 			t.Fatalf("update: %v", err)
 		}
-		if got, _ = s.GetEntry(ctx, "u1", "e1"); got.Amount != 2000 {
+		if got, _ = s.GetEntry(ctx, "u1", day, "e1"); got.Amount != 2000 {
 			t.Fatalf("amount after update = %d, want 2000", got.Amount)
 		}
 
-		if err := s.DeleteEntry(ctx, "u1", "e1"); err != nil {
+		if err := s.DeleteEntry(ctx, "u1", day, "e1"); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
-		if _, err := s.GetEntry(ctx, "u1", "e1"); err == nil {
+		if _, err := s.GetEntry(ctx, "u1", day, "e1"); err == nil {
 			t.Fatal("expected an error getting a deleted entry")
 		}
 	})
@@ -458,13 +467,24 @@ func TestStoresAgreeOnEntryLifecycle(t *testing.T) {
 func TestStoresAgreeOnMissingEntryErrors(t *testing.T) {
 	eachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
+		ghost := entry(t, "ghost", "2026-07-10", 100)
+		day := date(t, "2026-07-10")
 		for name, call := range map[string]func() error{
-			"get":    func() error { _, err := s.GetEntry(ctx, "u1", "ghost"); return err },
-			"update": func() error { return s.UpdateEntry(ctx, entry(t, "ghost", "2026-07-10", 100)) },
-			"delete": func() error { return s.DeleteEntry(ctx, "u1", "ghost") },
+			"get":        func() error { _, err := s.GetEntry(ctx, "u1", day, "ghost"); return err },
+			"find by id": func() error { _, err := s.FindEntryByID(ctx, "u1", "ghost"); return err },
+			"update":     func() error { return s.UpdateEntry(ctx, ghost, ghost) },
+			"delete":     func() error { return s.DeleteEntry(ctx, "u1", day, "ghost") },
 		} {
-			if err := call(); err == nil {
+			// Both stores must report it as absence, not as some other failure:
+			// the API turns exactly this into a 404 and everything else into a
+			// 500, so a store that reports it differently makes an outage look
+			// like a deleted lançamento.
+			err := call()
+			if err == nil {
 				t.Fatalf("%s on a missing entry returned no error", name)
+			}
+			if !errors.Is(err, ErrEntryNotFound) {
+				t.Fatalf("%s error = %v, want it to wrap ErrEntryNotFound", name, err)
 			}
 		}
 	})

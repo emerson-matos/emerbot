@@ -182,10 +182,10 @@ func TestInMemoryStoreUpdateAndDeleteMissingEntry(t *testing.T) {
 	ctx := context.Background()
 	entry := testEntry("u1", "missing", "2026-07-10", 10000, "aluguel", domain.EntryTypeExpense)
 
-	if err := store.UpdateEntry(ctx, entry); err == nil {
+	if err := store.UpdateEntry(ctx, entry, entry); err == nil {
 		t.Fatal("expected UpdateEntry to fail for missing entry")
 	}
-	if err := store.DeleteEntry(ctx, "u1", "missing"); err == nil {
+	if err := store.DeleteEntry(ctx, "u1", date(t, "2026-07-10"), "missing"); err == nil {
 		t.Fatal("expected DeleteEntry to fail for missing entry")
 	}
 	if _, err := store.GetGoal(ctx, "u1", "2026-07"); err == nil {

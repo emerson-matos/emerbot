@@ -477,6 +477,42 @@ func TestTransactWriteRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+// Callers tell a failed condition ("the row is not there") from an outage by
+// reading the cancellation codes, so the fake has to carry them: one per
+// transact item, "None" for the ones that were fine.
+func TestTransactWriteReportsWhichItemFailedItsCondition(t *testing.T) {
+	tbl := newTable(t, Config{})
+	seed(t, tbl, item("u1", "b"))
+
+	_, err := tbl.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{TableName: aws.String(tbl.Name()), Item: item("u1", "a")}},
+			{Delete: &types.Delete{
+				TableName:           aws.String(tbl.Name()),
+				Key:                 map[string]types.AttributeValue{"PK": s("u1"), "SK": s("ghost")},
+				ConditionExpression: aws.String("attribute_exists(PK)"),
+			}},
+		},
+	})
+
+	var cancelled *types.TransactionCanceledException
+	if !errors.As(err, &cancelled) {
+		t.Fatalf("expected TransactionCanceledException, got %v", err)
+	}
+	if len(cancelled.CancellationReasons) != 2 {
+		t.Fatalf("got %d cancellation reasons, want one per transact item", len(cancelled.CancellationReasons))
+	}
+	if code := cancelled.CancellationReasons[0].Code; code == nil || *code != "None" {
+		t.Fatalf("reason[0] = %v, want \"None\" for the item that was fine", code)
+	}
+	if code := cancelled.CancellationReasons[1].Code; code == nil || *code != "ConditionalCheckFailed" {
+		t.Fatalf("reason[1] = %v, want \"ConditionalCheckFailed\"", code)
+	}
+	if tbl.Len() != 1 {
+		t.Fatalf("table has %d items, want the original 1 untouched", tbl.Len())
+	}
+}
+
 func TestTransactWriteRejectsOversizedTransaction(t *testing.T) {
 	tbl := newTable(t, Config{})
 	items := make([]types.TransactWriteItem, 101)

@@ -382,7 +382,7 @@ func TestEditEntryToolUpdatesFields(t *testing.T) {
 		"description": "new",
 	})
 
-	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	entry, err := store.FindEntryByID(context.Background(), "u1", "e1")
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestEditEntryToolMarkingPaidSetsPaymentDate(t *testing.T) {
 	h := handlerFor(t, store, "edit_financial_entry")
 	callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": false})
 
-	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	entry, err := store.FindEntryByID(context.Background(), "u1", "e1")
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestEditEntryToolPaysOnThePharmacysCalendarDay(t *testing.T) {
 	h := handlerForIn(t, store, "edit_financial_entry", loc)
 	callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": false})
 
-	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	entry, err := store.FindEntryByID(context.Background(), "u1", "e1")
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestEditEntryToolRejectsAmountOverCap(t *testing.T) {
 		t.Fatal("expected an error for an amount over the cap")
 	}
 
-	entry, err := store.GetEntry(context.Background(), "u1", "e1")
+	entry, err := store.FindEntryByID(context.Background(), "u1", "e1")
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
 	}
