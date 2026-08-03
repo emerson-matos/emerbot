@@ -10,6 +10,7 @@ import {
   Combobox, ComboboxInput, ComboboxContent, ComboboxList, ComboboxItem, ComboboxEmpty,
 } from '@/components/ui/combobox'
 import { categoriesByType } from '@/lib/categories'
+import { amountToCents, entryFormErrors } from '@/lib/entry-form'
 import { useCategories, useCreateEntryMutation } from '../api/queries'
 import type { Category } from '../api/types'
 import { IncomeOrigin, incomeOriginLabels } from '../api/types'
@@ -57,14 +58,15 @@ export default function NovaTransacao() {
     [categories],
   )
 
-  const amountValue = Number.parseFloat(amount)
-  const validAmount = Number.isFinite(amountValue) && amountValue > 0
-
+  // Validation lives in lib/entry-form so this page and the edit page cannot
+  // disagree about what a valid lançamento is.
+  const amountCents = amountToCents(amount)
+  const formErrors = entryFormErrors({ type, description: desc, category, amount, date })
   const errors = {
-    desc: !desc.trim(),
-    category: !category,
-    amount: !validAmount,
-    date: !date,
+    desc: formErrors.description,
+    category: formErrors.category,
+    amount: formErrors.amount,
+    date: formErrors.date,
   }
 
   const invalid = Object.values(errors).some(Boolean)
@@ -99,7 +101,7 @@ export default function NovaTransacao() {
   }, [category, categoriesForType])
 
   async function submit() {
-    if (invalid) {
+    if (invalid || amountCents === null) {
       setTouched({ desc: true, category: true, amount: true })
       return
     }
@@ -107,7 +109,7 @@ export default function NovaTransacao() {
     try {
       await createEntry.mutateAsync({
         date,
-        amount: Math.round(amountValue * 100),
+        amount: amountCents,
         category,
         type,
         description: desc.trim(),

@@ -105,6 +105,7 @@ export const api = {
       const qs = params ? "?" + new URLSearchParams(params).toString() : "";
       return httpClient<{ entries: Entry[]; count: number }>(`/entries${qs}`);
     },
+    get: (id: string) => httpClient<Entry>(`/entries/${id}`),
     create: (data: CreateEntryInput) =>
       httpClient<Entry>("/entries", {
         method: "POST",

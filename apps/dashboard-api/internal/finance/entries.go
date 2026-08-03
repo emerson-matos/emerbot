@@ -3,6 +3,7 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -287,6 +288,141 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, responseEntry(entry))
 }
 
+// Get handles GET /entries/{id}
+func (h *EntriesHandler) Get(w http.ResponseWriter, r *http.Request) {
+	claims, ok := apiauth.ClaimsFromContext(r.Context())
+	if !ok {
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	entryID := r.PathValue("id")
+	if entryID == "" {
+		httpx.Error(w, "entry id is required", http.StatusBadRequest)
+		return
+	}
+
+	entry, err := h.store.GetEntry(r.Context(), claims.UserID, entryID)
+	if err != nil {
+		httpx.Error(w, "entry not found", http.StatusNotFound)
+		return
+	}
+	httpx.OK(w, responseEntry(entry))
+}
+
+// updateEntryRequest is the PUT /entries/{id} body. Every field is a pointer
+// because a patch has to tell "leave this alone" apart from "make this empty":
+// the endpoint used to share createEntryRequest, where both read as the empty
+// string, so a due date or a supplier typed by mistake could never be removed —
+// and a mistyped transaction date could not be corrected at all, since the
+// whole Date field was silently ignored.
+type updateEntryRequest struct {
+	Date          *string `json:"date"`   // "YYYY-MM-DD"
+	Amount        *int64  `json:"amount"` // centavos
+	Category      *string `json:"category"`
+	Type          *string `json:"type"` // "expense" | "income"
+	Description   *string `json:"description"`
+	DueDate       *string `json:"due_date"`       // "YYYY-MM-DD", or "" to clear
+	PaymentStatus *string `json:"payment_status"` // "pending" | "paid"
+	Supplier      *string `json:"supplier"`
+	Origin        *string `json:"origin"`
+}
+
+// apply writes the patch onto e, reporting the first field the client got
+// wrong.
+//
+// Amount, Category, Type and PaymentStatus cannot be cleared — an entry always
+// has all four, so an explicitly empty one is a client bug and answers 400
+// rather than quietly changing nothing.
+//
+// It edits exactly the entry it is given. An occurrence of a /recorrente series
+// is edited on its own like any other lançamento; applying a change across a
+// whole series is deliberately not offered yet.
+func (req updateEntryRequest) apply(e *domain.FinancialEntry, loc *time.Location) error {
+	if req.Amount != nil {
+		if *req.Amount <= 0 {
+			return errors.New("amount must be positive (in centavos)")
+		}
+		e.Amount = *req.Amount
+	}
+	if req.Category != nil {
+		if strings.TrimSpace(*req.Category) == "" {
+			return errors.New("category is required")
+		}
+		e.Category = *req.Category
+	}
+	if req.Type != nil {
+		t := domain.EntryType(*req.Type)
+		if t != domain.EntryTypeExpense && t != domain.EntryTypeIncome {
+			return errors.New("type must be 'expense' or 'income'")
+		}
+		e.Type = t
+	}
+	if req.Description != nil {
+		e.Description = *req.Description
+	}
+	if req.Supplier != nil {
+		e.Supplier = *req.Supplier
+	}
+	// Correcting the origin is the whole point of having the field: a loan
+	// mislabelled as a sale has to be fixable, or it inflates faturamento
+	// forever.
+	//
+	// An absent origin is left alone. Defaulting it to "venda" here would
+	// silently relabel every pre-migration entry the first time anyone edited
+	// its description — a loan filed under "Outros (Receita)", which
+	// domain.IsRevenue's shim correctly keeps out of faturamento, would walk
+	// into it. An entry with no origin stays that way until the backfill or a
+	// deliberate edit gives it one. An explicitly empty origin *is* that
+	// deliberate edit, and clears the field.
+	if req.Origin != nil {
+		raw := strings.TrimSpace(*req.Origin)
+		origin := domain.NormalizeIncomeOrigin(raw)
+		if string(origin) != raw {
+			return fmt.Errorf("invalid origin %q", raw)
+		}
+		e.Origin = origin
+	}
+	if req.Date != nil {
+		t, err := domain.ParseDay(*req.Date)
+		if err != nil {
+			return errors.New("invalid date format, use YYYY-MM-DD")
+		}
+		e.TransactionDate = domain.NewCalendarDate(t)
+	}
+	if req.DueDate != nil {
+		if *req.DueDate == "" {
+			e.DueDate = nil
+		} else {
+			t, err := domain.ParseDay(*req.DueDate)
+			if err != nil {
+				return errors.New("invalid due_date format, use YYYY-MM-DD")
+			}
+			d := domain.NewCalendarDate(t)
+			e.DueDate = &d
+		}
+	}
+	if req.PaymentStatus != nil {
+		status := domain.PaymentStatus(*req.PaymentStatus)
+		switch status {
+		case domain.PaymentStatusPaid:
+			if e.PaymentStatus != status || e.PaymentDate == nil {
+				// Settling an entry happens now, not on the day the expense was
+				// incurred. Using the transaction date made a bill registered on
+				// the 14th and paid on the 26th report "pago em 14/07".
+				d := domain.NewCalendarDate(time.Now().In(loc))
+				e.PaymentDate = &d
+			}
+		case domain.PaymentStatusPending:
+			e.PaymentDate = nil
+		default:
+			return errors.New("payment_status must be 'pending' or 'paid'")
+		}
+		e.PaymentStatus = status
+	}
+	return nil
+}
+
 // Update handles PUT /entries/{id}
 func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
@@ -307,69 +443,22 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req createEntryRequest
+	var req updateEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Apply updates, keep existing values for empty fields.
-	if req.Amount > 0 {
-		existing.Amount = req.Amount
-	}
-	if req.Category != "" {
-		existing.Category = req.Category
-	}
-	if req.Description != "" {
-		existing.Description = req.Description
-	}
-	if req.Type != "" {
-		existing.Type = domain.EntryType(req.Type)
-	}
-	if req.PaymentStatus != "" {
-		existing.PaymentStatus = domain.PaymentStatus(req.PaymentStatus)
-		if req.PaymentStatus == "paid" && existing.PaymentDate == nil {
-			// Settling an entry happens now, not on the day the expense was
-			// incurred. Using the transaction date made a bill registered on
-			// the 14th and paid on the 26th report "pago em 14/07".
-			d := domain.NewCalendarDate(time.Now().In(h.loc))
-			existing.PaymentDate = &d
-		}
-		if req.PaymentStatus == "pending" {
-			existing.PaymentDate = nil
-		}
-	}
-	if req.Supplier != "" {
-		existing.Supplier = req.Supplier
-	}
-	// Correcting the origin is the whole point of having the field: a loan
-	// mislabelled as a sale has to be fixable, or it inflates faturamento
-	// forever.
-	//
-	// Only an explicit origin is applied. Defaulting an empty one to "venda"
-	// here would silently relabel every pre-migration entry the first time
-	// anyone edited its description — a loan filed under "Outros (Receita)",
-	// which domain.IsRevenue's shim correctly keeps out of faturamento, would
-	// walk into it. An entry with no origin stays that way until the backfill
-	// or a deliberate edit gives it one.
-	if req.Origin != "" {
-		origin, err := req.incomeOrigin(existing.Type)
-		if err != nil {
-			httpx.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		existing.Origin = origin
-	}
-	if req.DueDate != "" {
-		t, err := domain.ParseDay(req.DueDate)
-		if err != nil {
-			httpx.Error(w, "invalid due_date format, use YYYY-MM-DD", http.StatusBadRequest)
-			return
-		}
-		d := domain.NewCalendarDate(t)
-		existing.DueDate = &d
+	if err := req.apply(&existing, h.loc); err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	existing.UpdatedAt = time.Now().UTC()
+	// Normalize before validating so switching an entry from income to expense
+	// drops the origin it can no longer have, instead of failing on
+	// "expense entry cannot have an income origin" with nothing the client can
+	// send to fix it.
+	existing.Normalize()
 
 	// Validate before writing: the reverse order persisted the bad entry and
 	// only then answered 400, leaving the caller with a rejection and the

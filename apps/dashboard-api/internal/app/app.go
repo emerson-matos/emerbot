@@ -65,6 +65,7 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 
 	// Protected routes — wrapped with JWT middleware.
 	mux.Handle("GET /entries", authMw(http.HandlerFunc(entriesHandler.List)))
+	mux.Handle("GET /entries/{id}", authMw(http.HandlerFunc(entriesHandler.Get)))
 	mux.Handle("POST /entries", authMw(http.HandlerFunc(entriesHandler.Create)))
 	mux.Handle("PUT /entries/{id}", authMw(http.HandlerFunc(entriesHandler.Update)))
 	mux.Handle("DELETE /entries/{id}", authMw(http.HandlerFunc(entriesHandler.Delete)))

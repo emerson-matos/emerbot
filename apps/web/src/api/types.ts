@@ -30,6 +30,15 @@ export interface Entry {
    * field existed — see the shim in lib/notifications.ts.
    */
   Origin?: IncomeOrigin | "";
+  /**
+   * Set on the occurrences /recorrente generated together, empty on a one-off
+   * entry. Editing one instalment of a series edits the whole agreement — see
+   * the scope option on api.entries.update.
+   */
+  RecurrenceID?: string;
+  /** 1-based position within the series. */
+  RecurrenceIndex?: number;
+  RecurrenceTotal?: number;
 }
 
 /** Only IncomeOrigin.Venda counts toward faturamento; see domain.IsRevenue. */
@@ -66,8 +75,16 @@ export interface CreateEntryInput {
   origin?: IncomeOrigin;
 }
 
+/**
+ * A patch, not a whole entry: an omitted key keeps what is stored, and an
+ * explicitly empty description, supplier or due_date clears it. Send only what
+ * actually changed — a key you did not mean to touch is an edit.
+ */
 export type UpdateEntryInput = Partial<CreateEntryInput> & {
   payment_status?: "pending" | "paid";
+  /** "" clears the due date. */
+  due_date?: string;
+  supplier?: string;
 };
 
 /**

@@ -185,6 +185,7 @@ func TestEveryEndpointRequiresClaims(t *testing.T) {
 		target string
 	}{
 		"list entries":     {entries.List, http.MethodGet, "/entries"},
+		"get entry":        {entries.Get, http.MethodGet, "/entries/e1"},
 		"create entry":     {entries.Create, http.MethodPost, "/entries"},
 		"update entry":     {entries.Update, http.MethodPut, "/entries/e1"},
 		"delete entry":     {entries.Delete, http.MethodDelete, "/entries/e1"},
@@ -456,6 +457,124 @@ func TestUpdateEntryAppliesOnlySuppliedFields(t *testing.T) {
 	}
 }
 
+// A patch has to distinguish "leave this alone" from "make this empty". These
+// are the fields where the two used to be indistinguishable, so a due date or a
+// supplier entered by mistake was permanent.
+func TestUpdateEntryClearsExplicitlyEmptyFields(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+		d, _ := domain.ParseCalendarDate("2026-07-20")
+		e.Description = "original"
+		e.Supplier = "fornecedor"
+		e.DueDate = &d
+	})
+
+	r := authed(http.MethodPut, "/entries/e1", `{"description":"","supplier":"","due_date":""}`)
+	r.SetPathValue("id", "e1")
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
+	assertStatus(t, w, http.StatusOK)
+
+	var got entryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Description != "" || got.Supplier != "" || got.DueDate != nil {
+		t.Fatalf("response = %+v, want description, supplier and due date all cleared", got)
+	}
+}
+
+// Correcting a mistyped date is the commonest reason to edit a lançamento at
+// all, and the field used to be dropped on the floor: the request answered 200
+// with the old date still stored.
+func TestUpdateEntryMovesTheTransactionDate(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+	r := authed(http.MethodPut, "/entries/e1", `{"date":"2026-08-03"}`)
+	r.SetPathValue("id", "e1")
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
+	assertStatus(t, w, http.StatusOK)
+
+	stored, err := store.GetEntry(context.Background(), testUser, "e1")
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if stored.TransactionDate.String() != "2026-08-03" {
+		t.Fatalf("stored transaction date = %q, want 2026-08-03", stored.TransactionDate.String())
+	}
+}
+
+// An origin is meaningless on money going out, so turning an income entry into
+// an expense has to drop it. Validating without normalizing first answered 400
+// ("expense entry cannot have an income origin") with nothing the client could
+// send to get past it.
+func TestUpdateEntryToExpenseDropsTheIncomeOrigin(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+		e.Type = domain.EntryTypeIncome
+		e.Origin = domain.OriginVenda
+	})
+
+	r := authed(http.MethodPut, "/entries/e1", `{"type":"expense"}`)
+	r.SetPathValue("id", "e1")
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
+	assertStatus(t, w, http.StatusOK)
+
+	var got entryResponse
+	json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+	if got.Type != domain.EntryTypeExpense || got.Origin != "" {
+		t.Fatalf("response type/origin = %q/%q, want expense with no origin", got.Type, got.Origin)
+	}
+}
+
+// An entry written before Origin existed must not acquire one just because
+// somebody fixed its description — domain.IsRevenue's shim keeps such an entry
+// out of faturamento, and defaulting it to "venda" here would walk a loan into
+// the sales figure.
+func TestUpdateEntryLeavesAnAbsentOriginAlone(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+		e.Type = domain.EntryTypeIncome
+	})
+
+	r := authed(http.MethodPut, "/entries/e1", `{"description":"corrigido"}`)
+	r.SetPathValue("id", "e1")
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
+	assertStatus(t, w, http.StatusOK)
+
+	var got entryResponse
+	json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+	if got.Origin != "" {
+		t.Fatalf("origin = %q, want it still unset", got.Origin)
+	}
+}
+
+func TestUpdateEntryRejectsEmptyRequiredFields(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000)
+	h := NewEntriesHandler(store, time.UTC)
+
+	// A lançamento always has an amount, a category, a type and a status, so an
+	// explicitly empty one is a client bug — answering 200 and changing nothing
+	// would report success for an edit that did not happen.
+	for name, body := range map[string]string{
+		"zero amount":     `{"amount":0}`,
+		"negative amount": `{"amount":-100}`,
+		"category":        `{"category":"  "}`,
+		"type":            `{"type":""}`,
+		"payment status":  `{"payment_status":""}`,
+		"date":            `{"date":"03/08/2026"}`,
+		"due date":        `{"due_date":"agosto"}`,
+		"origin":          `{"origin":"pix"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := authed(http.MethodPut, "/entries/e1", body)
+			r.SetPathValue("id", "e1")
+			assertStatus(t, run(h.Update, r), http.StatusBadRequest)
+		})
+	}
+}
+
 func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 	t.Run("pending to paid records today, not the transaction date", func(t *testing.T) {
 		store := newStore(t)
@@ -595,6 +714,40 @@ func TestUpdateEntryErrors(t *testing.T) {
 		r.SetPathValue("id", "e1")
 		w := run(failing.Update, r)
 		assertStatus(t, w, http.StatusInternalServerError)
+	})
+}
+
+func TestGetEntry(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+		e.Description = "aluguel"
+	})
+	h := NewEntriesHandler(store, time.UTC)
+
+	t.Run("found", func(t *testing.T) {
+		r := authed(http.MethodGet, "/entries/e1", "")
+		r.SetPathValue("id", "e1")
+		w := run(h.Get, r)
+		assertStatus(t, w, http.StatusOK)
+		assertJSONContentType(t, w)
+
+		var got entryResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.EntryID != "e1" || got.Description != "aluguel" || got.Amount != 1000 {
+			t.Fatalf("response = %+v, want the seeded entry", got)
+		}
+	})
+
+	t.Run("unknown entry", func(t *testing.T) {
+		r := authed(http.MethodGet, "/entries/ghost", "")
+		r.SetPathValue("id", "ghost")
+		assertStatus(t, run(h.Get, r), http.StatusNotFound)
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		assertStatus(t, run(h.Get, authed(http.MethodGet, "/entries/", "")), http.StatusBadRequest)
 	})
 }
 
