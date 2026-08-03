@@ -14,7 +14,7 @@ import {
 import EmptyState from '../components/EmptyState'
 import { categoriesByType } from '@/lib/categories'
 import {
-  editEntryPatch, entryFormErrors, entryToEditValues, isEmptyPatch,
+  editEntryErrors, editEntryPatch, entryToEditValues, isEmptyPatch,
   type EditEntryValues,
 } from '@/lib/entry-form'
 import { useCategories, useEntry, useUpdateEntryMutation } from '../api/queries'
@@ -38,7 +38,6 @@ export default function EditarTransacao() {
   // is only seeded once and edits are never overwritten by a refetch.
   const [initial, setInitial] = useState<EditEntryValues | null>(null)
   const [values, setValues] = useState<EditEntryValues | null>(null)
-  const [touched, setTouched] = useState(false)
 
   const entry = entryQuery.data
   if (entry && !initial) {
@@ -85,7 +84,7 @@ export default function EditarTransacao() {
     )
   }
 
-  const errors = entryFormErrors(values)
+  const errors = editEntryErrors(values)
   const patch = editEntryPatch(initial, values)
   const nothingToSave = isEmptyPatch(patch)
   const invalid = Object.values(errors).some(Boolean)
@@ -104,7 +103,6 @@ export default function EditarTransacao() {
   }
 
   async function submit() {
-    setTouched(true)
     if (invalid || nothingToSave) return
 
     try {
@@ -168,12 +166,7 @@ export default function EditarTransacao() {
                 value={values.description}
                 onChange={e => update({ description: e.target.value })}
                 placeholder="Ex.: Venda Balcão — Semana 3"
-                aria-invalid={touched && errors.description}
-                aria-describedby={touched && errors.description ? 'desc-error' : undefined}
               />
-              {touched && errors.description && (
-                <p id="desc-error" className="mt-1 text-xs text-destructive">Campo obrigatório</p>
-              )}
             </div>
 
             <div>
@@ -185,7 +178,7 @@ export default function EditarTransacao() {
               >
                 <ComboboxInput
                   placeholder="Buscar categoria..."
-                  aria-invalid={touched && errors.category}
+                  aria-invalid={errors.category}
                 />
                 <ComboboxContent>
                   <ComboboxList>
@@ -198,7 +191,7 @@ export default function EditarTransacao() {
                   <ComboboxEmpty>Nenhuma categoria encontrada</ComboboxEmpty>
                 </ComboboxContent>
               </Combobox>
-              {touched && errors.category && (
+              {errors.category && (
                 <p className="mt-1 text-xs text-destructive">Selecione uma categoria</p>
               )}
             </div>
@@ -243,11 +236,11 @@ export default function EditarTransacao() {
                   value={values.amount}
                   onChange={e => update({ amount: e.target.value })}
                   placeholder="0,00"
-                  aria-invalid={touched && errors.amount}
-                  aria-describedby={touched && errors.amount ? 'amount-error' : undefined}
+                  aria-invalid={errors.amount}
+                  aria-describedby={errors.amount ? 'amount-error' : undefined}
                 />
-                {touched && errors.amount && (
-                  <p id="amount-error" className="mt-1 text-xs text-destructive">Valor obrigatório</p>
+                {errors.amount && (
+                  <p id="amount-error" className="mt-1 text-xs text-destructive">Informe um valor maior que zero</p>
                 )}
               </div>
               <div>
@@ -259,9 +252,9 @@ export default function EditarTransacao() {
                   type="date"
                   value={values.date}
                   onChange={e => update({ date: e.target.value })}
-                  aria-invalid={touched && errors.date}
+                  aria-invalid={errors.date}
                 />
-                {touched && errors.date && (
+                {errors.date && (
                   <p className="mt-1 text-xs text-destructive">Data obrigatória</p>
                 )}
               </div>
@@ -332,7 +325,7 @@ export default function EditarTransacao() {
             </div>
 
             <div className="flex items-center gap-3 pt-2">
-              <Button type="submit" disabled={updateEntry.isPending || nothingToSave}>
+              <Button type="submit" disabled={updateEntry.isPending || invalid || nothingToSave}>
                 Salvar alterações
               </Button>
               <Button
@@ -343,7 +336,7 @@ export default function EditarTransacao() {
               >
                 Cancelar
               </Button>
-              {nothingToSave && (
+              {nothingToSave && !invalid && (
                 <span className="text-xs text-muted-foreground">Nada alterado</span>
               )}
             </div>

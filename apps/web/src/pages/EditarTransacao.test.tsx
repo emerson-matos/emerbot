@@ -100,14 +100,28 @@ describe('EditarTransacao', () => {
     expect(mutateAsync).toHaveBeenCalledWith({ due_date: '' })
   })
 
-  it('refuses to save an entry with no description', () => {
+  /**
+   * Neither the API nor the AI's add_entry tool requires a description, so
+   * entries reach this page without one. Requiring it back would block the
+   * correction the user actually came to make on a field they never touched.
+   */
+  it('saves a correction to an entry that has no description', () => {
+    renderPage(loaded({ Description: '' }))
+
+    fireEvent.change(screen.getByLabelText('Valor (R$)'), { target: { value: '99.90' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar alterações' }))
+
+    expect(mutateAsync).toHaveBeenCalledWith({ amount: 9990 })
+  })
+
+  it('refuses to save an amount that is not a positive number', () => {
     renderPage(loaded())
 
-    fireEvent.change(description(), { target: { value: '  ' } })
+    fireEvent.change(screen.getByLabelText('Valor (R$)'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salvar alterações' }))
 
     expect(mutateAsync).not.toHaveBeenCalled()
-    expect(screen.getByText('Campo obrigatório')).toBeInTheDocument()
+    expect(screen.getByText('Informe um valor maior que zero')).toBeInTheDocument()
   })
 
   it('has nothing to save until something changes', () => {

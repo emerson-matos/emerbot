@@ -43,8 +43,21 @@ export function entryFormErrors(values: EntryFormValues): Record<EntryFormField,
   }
 }
 
-export function hasEntryFormErrors(values: EntryFormValues): boolean {
-  return Object.values(entryFormErrors(values)).some(Boolean)
+/**
+ * What blocks a save on the edit page — the create rules minus the
+ * description.
+ *
+ * Requiring one there is right: it is our form, and an unlabelled row in a
+ * ledger is bad data. Requiring it *here* would be a trap. Neither the API nor
+ * the AI's add_entry tool has ever required a description (see the tool's
+ * Required list in packages/finance/tools.go), so entries reach this page
+ * without one — and demanding it back means somebody who opened the page to fix
+ * a wrong amount cannot save until they also invent a label for an entry the
+ * bot wrote. A correction must never be blocked by a field the user did not
+ * come to touch.
+ */
+export function editEntryErrors(values: EntryFormValues): Record<EntryFormField, boolean> {
+  return { ...entryFormErrors(values), description: false }
 }
 
 /** The form values that describe an existing entry, ready to be edited. */
