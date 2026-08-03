@@ -21,10 +21,16 @@ type SummaryStore interface {
 
 type SummaryHandler struct {
 	store SummaryStore
+	// loc is the calendar the pharmacy reasons about days in, for "current
+	// month" defaults. See shared.PharmacyLocation.
+	loc *time.Location
 }
 
-func NewSummaryHandler(store SummaryStore) *SummaryHandler {
-	return &SummaryHandler{store: store}
+func NewSummaryHandler(store SummaryStore, loc *time.Location) *SummaryHandler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &SummaryHandler{store: store, loc: loc}
 }
 
 // Monthly handles GET /summary/monthly?month=2026-07
@@ -35,7 +41,7 @@ func (h *SummaryHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month, err := httpx.Month(r)
+	month, err := httpx.Month(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -58,7 +64,7 @@ func (h *SummaryHandler) Categories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to, err := httpx.DateRange(r)
+	from, to, err := httpx.DateRange(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -84,7 +90,7 @@ func (h *SummaryHandler) CashFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month, err := httpx.Month(r)
+	month, err := httpx.Month(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return

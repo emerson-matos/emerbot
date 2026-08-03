@@ -14,18 +14,18 @@ func request(target string) *http.Request {
 }
 
 func TestDateRangeDefaultsToTheCurrentMonth(t *testing.T) {
-	from, to, err := DateRange(request("/x"))
+	from, to, err := DateRange(request("/x"), time.UTC)
 	if err != nil {
 		t.Fatalf("DateRange: %v", err)
 	}
-	wantFrom, wantTo := domain.CurrentMonthRange()
+	wantFrom, wantTo := domain.CurrentMonthRange(time.UTC)
 	if !from.Equal(wantFrom) || !to.Equal(wantTo) {
 		t.Fatalf("range = %v..%v, want %v..%v", from, to, wantFrom, wantTo)
 	}
 }
 
 func TestDateRangeReadsBothParams(t *testing.T) {
-	from, to, err := DateRange(request("/x?from=2026-07-01&to=2026-07-31"))
+	from, to, err := DateRange(request("/x?from=2026-07-01&to=2026-07-31"), time.UTC)
 	if err != nil {
 		t.Fatalf("DateRange: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestDateRangeRejectsBadInput(t *testing.T) {
 	}
 	for name, target := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := DateRange(request(target)); err == nil {
+			if _, _, err := DateRange(request(target), time.UTC); err == nil {
 				t.Fatalf("DateRange(%q) returned no error", target)
 			}
 		})
@@ -58,37 +58,37 @@ func TestDateRangeAllowsExactlyTheMaximumWindow(t *testing.T) {
 	to := from.Add(MaxRangeDays * 24 * time.Hour)
 	target := "/x?from=" + from.Format("2006-01-02") + "&to=" + to.Format("2006-01-02")
 
-	if _, _, err := DateRange(request(target)); err != nil {
+	if _, _, err := DateRange(request(target), time.UTC); err != nil {
 		t.Fatalf("a window of exactly %d days was rejected: %v", MaxRangeDays, err)
 	}
 }
 
 func TestCalendarDateRange(t *testing.T) {
-	from, to, err := CalendarDateRange(request("/x?from=2026-07-01&to=2026-07-31"))
+	from, to, err := CalendarDateRange(request("/x?from=2026-07-01&to=2026-07-31"), time.UTC)
 	if err != nil {
 		t.Fatalf("CalendarDateRange: %v", err)
 	}
 	if from.String() != "2026-07-01" || to.String() != "2026-07-31" {
 		t.Fatalf("range = %s..%s, want 2026-07-01..2026-07-31", from, to)
 	}
-	if _, _, err := CalendarDateRange(request("/x?from=julho")); err == nil {
+	if _, _, err := CalendarDateRange(request("/x?from=julho"), time.UTC); err == nil {
 		t.Fatal("expected the underlying validation to apply")
 	}
 }
 
 func TestMonth(t *testing.T) {
-	got, err := Month(request("/x?month=2026-07"))
+	got, err := Month(request("/x?month=2026-07"), time.UTC)
 	if err != nil || got != "2026-07" {
 		t.Fatalf("Month = %q (err %v), want 2026-07", got, err)
 	}
 
-	got, err = Month(request("/x"))
-	if err != nil || got != domain.CurrentMonth() {
+	got, err = Month(request("/x"), time.UTC)
+	if err != nil || got != domain.CurrentMonth(time.UTC) {
 		t.Fatalf("Month = %q (err %v), want the current month", got, err)
 	}
 
 	for _, bad := range []string{"julho", "2026", "2026-13", "2026-07-01"} {
-		if _, err := Month(request("/x?month=" + bad)); err == nil {
+		if _, err := Month(request("/x?month="+bad), time.UTC); err == nil {
 			t.Fatalf("Month(%q) returned no error", bad)
 		}
 	}

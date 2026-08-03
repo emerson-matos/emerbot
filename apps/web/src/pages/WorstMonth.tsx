@@ -2,13 +2,14 @@ import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { CalendarX } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
+import { currentMonthKey } from '@/lib/entries'
 import KpiCard, { KpiCardContent } from '@/components/KpiCard'
 import { useMonthlyTrend } from '../api/queries'
 
 export default function WorstMonth() {
-  const now = new Date()
+  const [year, month] = currentMonthKey().split('-').map(Number)
   const months3 = [-2, -1, 0].map(offset =>
-    format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
+    format(new Date(year, month - 1 + offset, 1), 'yyyy-MM'),
   )
 
   const trendQueries = useMonthlyTrend(months3)

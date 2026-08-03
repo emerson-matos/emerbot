@@ -1,13 +1,42 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeEntry } from "@/test/factories";
 import {
   bucketByUrgency,
+  currentMonthKey,
   editEntryPath,
   effectiveDate,
   formatEffectiveDate,
   formatPaidAt,
   netAmount,
+  todayISO,
 } from "./entries";
+
+describe("todayISO/currentMonthKey", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * The instant below is 2026-08-03T02:30:00Z — already the 3rd in UTC, but
+   * still 2026-08-02 23:30 in America/Sao_Paulo (UTC-3). A naive
+   * `new Date()` + browser-local formatting run in a UTC (or UTC-ahead)
+   * browser would report "today" as the 3rd; the pharmacy's actual calendar
+   * day at that instant is still the 2nd.
+   */
+  it("resolves to the pharmacy's calendar day, not UTC's", () => {
+    vi.setSystemTime(new Date("2026-08-03T02:30:00Z"));
+    expect(todayISO()).toBe("2026-08-02");
+    expect(currentMonthKey()).toBe("2026-08");
+  });
+
+  it("still returns the same day once São Paulo has also rolled over", () => {
+    vi.setSystemTime(new Date("2026-08-03T04:00:00Z"));
+    expect(todayISO()).toBe("2026-08-03");
+  });
+});
 
 describe("editEntryPath", () => {
   /**

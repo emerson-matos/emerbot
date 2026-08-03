@@ -203,8 +203,8 @@ func TestEveryEndpointRequiresClaims(t *testing.T) {
 	store := newStore(t)
 	entries := NewEntriesHandler(store, time.UTC)
 	cats := NewCategoriesHandler(store)
-	goals := NewGoalsHandler(store)
-	summary := NewSummaryHandler(store)
+	goals := NewGoalsHandler(store, time.UTC)
+	summary := NewSummaryHandler(store, time.UTC)
 	notifs := NewNotificationsHandler(store)
 
 	endpoints := map[string]struct {
@@ -1033,7 +1033,7 @@ func TestCreateCategoryStoreFailureIs500(t *testing.T) {
 // --- goals ---
 
 func TestGetGoalReturnsNullWhenUnset(t *testing.T) {
-	w := run(NewGoalsHandler(newStore(t)).Get, authed(http.MethodGet, "/goals?month=2026-07", ""))
+	w := run(NewGoalsHandler(newStore(t), time.UTC).Get, authed(http.MethodGet, "/goals?month=2026-07", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
@@ -1047,7 +1047,7 @@ func TestGetGoalReturnsNullWhenUnset(t *testing.T) {
 }
 
 func TestGetGoalDefaultsToCurrentMonth(t *testing.T) {
-	w := run(NewGoalsHandler(newStore(t)).Get, authed(http.MethodGet, "/goals", ""))
+	w := run(NewGoalsHandler(newStore(t), time.UTC).Get, authed(http.MethodGet, "/goals", ""))
 	assertStatus(t, w, http.StatusOK)
 	if got := decode(t, w)["month"]; got != time.Now().Format("2006-01") {
 		t.Fatalf("month = %v, want the current month", got)
@@ -1058,10 +1058,10 @@ func TestSaveAndGetGoalRoundTrip(t *testing.T) {
 	store := newStore(t)
 	body := `{"month":"2026-07","revenue_target":500000,"expense_target":300000}`
 
-	w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", body))
+	w := run(NewGoalsHandler(store, time.UTC).Save, authed(http.MethodPut, "/goals", body))
 	assertStatus(t, w, http.StatusOK)
 
-	w = run(NewGoalsHandler(store).Get, authed(http.MethodGet, "/goals?month=2026-07", ""))
+	w = run(NewGoalsHandler(store, time.UTC).Get, authed(http.MethodGet, "/goals?month=2026-07", ""))
 	assertStatus(t, w, http.StatusOK)
 	goal := decode(t, w)["goal"].(map[string]any)
 	if goal["RevenueTarget"] != float64(500000) || goal["ExpenseTarget"] != float64(300000) {
@@ -1071,7 +1071,7 @@ func TestSaveAndGetGoalRoundTrip(t *testing.T) {
 
 func TestSaveGoalAcceptsASingleTarget(t *testing.T) {
 	store := newStore(t)
-	w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", `{"month":"2026-07","revenue_target":1000}`))
+	w := run(NewGoalsHandler(store, time.UTC).Save, authed(http.MethodPut, "/goals", `{"month":"2026-07","revenue_target":1000}`))
 	assertStatus(t, w, http.StatusOK)
 
 	saved, err := store.GetGoal(context.Background(), testUser, "2026-07")
@@ -1084,7 +1084,7 @@ func TestSaveGoalAcceptsASingleTarget(t *testing.T) {
 }
 
 func TestSaveGoalRejectsBadInput(t *testing.T) {
-	h := NewGoalsHandler(newStore(t))
+	h := NewGoalsHandler(newStore(t), time.UTC)
 	cases := []struct{ name, body, wantErr string }{
 		{"malformed json", `{`, "invalid request body"},
 		{"no targets", `{"month":"2026-07"}`, "provide at least one of revenue_target or expense_target"},
@@ -1105,7 +1105,7 @@ func TestSaveGoalRejectsBadInput(t *testing.T) {
 }
 
 func TestSaveGoalStoreFailureIs500(t *testing.T) {
-	h := NewGoalsHandler(failingStore{Store: newStore(t), fail: "SaveGoal"})
+	h := NewGoalsHandler(failingStore{Store: newStore(t), fail: "SaveGoal"}, time.UTC)
 	body := `{"month":"2026-07","revenue_target":1}`
 	assertStatus(t, run(h.Save, authed(http.MethodPut, "/goals", body)), http.StatusInternalServerError)
 }
@@ -1122,7 +1122,7 @@ func TestMonthlySummary(t *testing.T) {
 	})
 	seedEntry(t, store, "out", "2026-07-10", 30000)
 
-	w := run(NewSummaryHandler(store).Monthly, authed(http.MethodGet, "/summary/monthly?month=2026-07", ""))
+	w := run(NewSummaryHandler(store, time.UTC).Monthly, authed(http.MethodGet, "/summary/monthly?month=2026-07", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
@@ -1132,7 +1132,7 @@ func TestMonthlySummary(t *testing.T) {
 }
 
 func TestMonthlySummaryDefaultsToCurrentMonth(t *testing.T) {
-	w := run(NewSummaryHandler(newStore(t)).Monthly, authed(http.MethodGet, "/summary/monthly", ""))
+	w := run(NewSummaryHandler(newStore(t), time.UTC).Monthly, authed(http.MethodGet, "/summary/monthly", ""))
 	assertStatus(t, w, http.StatusOK)
 	if got := decode(t, w)["Month"]; got != time.Now().Format("2006-01") {
 		t.Fatalf("month = %v, want the current month", got)
@@ -1140,7 +1140,7 @@ func TestMonthlySummaryDefaultsToCurrentMonth(t *testing.T) {
 }
 
 func TestMonthlySummaryStoreFailureIs500(t *testing.T) {
-	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "MonthlySummary"})
+	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "MonthlySummary"}, time.UTC)
 	assertStatus(t, run(h.Monthly, authed(http.MethodGet, "/summary/monthly", "")), http.StatusInternalServerError)
 }
 
@@ -1149,7 +1149,7 @@ func TestCategorySummary(t *testing.T) {
 	seedEntry(t, store, "e1", "2026-07-05", 1000)
 	seedEntry(t, store, "e2", "2026-07-06", 2000)
 
-	w := run(NewSummaryHandler(store).Categories, authed(http.MethodGet, "/summary/categories?from=2026-07-01&to=2026-07-31", ""))
+	w := run(NewSummaryHandler(store, time.UTC).Categories, authed(http.MethodGet, "/summary/categories?from=2026-07-01&to=2026-07-31", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
@@ -1166,7 +1166,7 @@ func TestCategorySummaryRejectsMalformedDates(t *testing.T) {
 	// A malformed from/to used to fall back to the current month, so a typo'd
 	// date returned a real period's numbers under the label the user asked
 	// for — indistinguishable from correct data on a financial dashboard.
-	h := NewSummaryHandler(newStore(t))
+	h := NewSummaryHandler(newStore(t), time.UTC)
 	for _, query := range []string{"?from=julho", "?to=agosto", "?from=2026-07-31&to=2026-07-01", "?from=1900-01-01&to=2999-12-31"} {
 		t.Run(query, func(t *testing.T) {
 			w := run(h.Categories, authed(http.MethodGet, "/summary/categories"+query, ""))
@@ -1176,11 +1176,11 @@ func TestCategorySummaryRejectsMalformedDates(t *testing.T) {
 }
 
 func TestCategorySummaryDefaultsToTheCurrentMonth(t *testing.T) {
-	w := run(NewSummaryHandler(newStore(t)).Categories, authed(http.MethodGet, "/summary/categories", ""))
+	w := run(NewSummaryHandler(newStore(t), time.UTC).Categories, authed(http.MethodGet, "/summary/categories", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
-	wantFrom, _ := domain.CurrentMonthRange()
+	wantFrom, _ := domain.CurrentMonthRange(time.UTC)
 	if body["from"] != domain.NewCalendarDate(wantFrom).String() {
 		t.Fatalf("from = %v, want the current month's first day", body["from"])
 	}
@@ -1188,8 +1188,8 @@ func TestCategorySummaryDefaultsToTheCurrentMonth(t *testing.T) {
 
 func TestMonthParamIsValidated(t *testing.T) {
 	store := newStore(t)
-	summary := NewSummaryHandler(store)
-	goals := NewGoalsHandler(store)
+	summary := NewSummaryHandler(store, time.UTC)
+	goals := NewGoalsHandler(store, time.UTC)
 
 	// Every endpoint taking ?month= must reject a month it cannot parse, so
 	// "no data" and "you typed it wrong" never render the same.
@@ -1215,7 +1215,7 @@ func TestSaveGoalRejectsAMonthTheOldCheckLetThrough(t *testing.T) {
 	for _, month := range []string{"julho", "1999-7", "2026-13"} {
 		t.Run(month, func(t *testing.T) {
 			body := `{"month":"` + month + `","revenue_target":1000}`
-			w := run(NewGoalsHandler(store).Save, authed(http.MethodPut, "/goals", body))
+			w := run(NewGoalsHandler(store, time.UTC).Save, authed(http.MethodPut, "/goals", body))
 			assertStatus(t, w, http.StatusBadRequest)
 		})
 	}
@@ -1257,7 +1257,7 @@ func TestEntriesRejectMalformedDates(t *testing.T) {
 }
 
 func TestCategorySummaryStoreFailureIs500(t *testing.T) {
-	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "CategorySummary"})
+	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "CategorySummary"}, time.UTC)
 	assertStatus(t, run(h.Categories, authed(http.MethodGet, "/summary/categories", "")), http.StatusInternalServerError)
 }
 
@@ -1265,7 +1265,7 @@ func TestCashFlowSummary(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-05", 1000)
 
-	w := run(NewSummaryHandler(store).CashFlow, authed(http.MethodGet, "/summary/cashflow?month=2026-07", ""))
+	w := run(NewSummaryHandler(store, time.UTC).CashFlow, authed(http.MethodGet, "/summary/cashflow?month=2026-07", ""))
 	assertStatus(t, w, http.StatusOK)
 
 	body := decode(t, w)
@@ -1278,7 +1278,7 @@ func TestCashFlowSummary(t *testing.T) {
 }
 
 func TestCashFlowStoreFailureIs500(t *testing.T) {
-	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "CashFlowForecast"})
+	h := NewSummaryHandler(failingStore{Store: newStore(t), fail: "CashFlowForecast"}, time.UTC)
 	assertStatus(t, run(h.CashFlow, authed(http.MethodGet, "/summary/cashflow", "")), http.StatusInternalServerError)
 }
 

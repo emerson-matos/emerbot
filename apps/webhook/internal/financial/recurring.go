@@ -38,7 +38,7 @@ type recurrenceRequest struct {
 	Origin domain.IncomeOrigin
 }
 
-func parseRecorrente(text string) (recurrenceRequest, error) {
+func parseRecorrente(text string, loc *time.Location) (recurrenceRequest, error) {
 	m := recurrencePattern.FindStringSubmatch(strings.TrimSpace(text))
 	if m == nil {
 		return recurrenceRequest{}, fmt.Errorf("formato inválido, use: /recorrente <pagar|receber> <valor> <categoria> <periodo> <n> [data] [descrição]")
@@ -65,7 +65,7 @@ func parseRecorrente(text string) (recurrenceRequest, error) {
 	}
 
 	rest := strings.TrimSpace(m[6])
-	start := time.Now().UTC()
+	start := time.Now().In(loc)
 	desc := rest
 	if dm := recurrenceDatePattern.FindStringSubmatch(rest); dm != nil {
 		day, _ := strconv.Atoi(dm[1])

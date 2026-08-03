@@ -1,16 +1,14 @@
-import { format } from 'date-fns'
 import { PieChart } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '@/lib/format'
 import { categoricalPalette } from '@/lib/chart'
 import { categoryLabelMap } from '@/lib/categories'
+import { currentMonthRange } from '@/lib/period'
 import { useCategories, useCategorySummary } from '../api/queries'
 import EmptyState from './EmptyState'
 
 export default function CategoryBars() {
-  const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const { firstDay, lastDay } = currentMonthRange()
 
   const categoriesQuery = useCategorySummary(firstDay, lastDay)
   const categoryDefsQuery = useCategories()

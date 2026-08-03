@@ -12,7 +12,7 @@ import (
 )
 
 func regexHandler(store pkgfinance.Store) *Handler {
-	return NewHandler(whatsapp.NewRegexParser(), store)
+	return NewHandler(whatsapp.NewRegexParser(), store, time.UTC)
 }
 
 func TestHandleReturnsFriendlyMessageOnInvalidSlashCommand(t *testing.T) {

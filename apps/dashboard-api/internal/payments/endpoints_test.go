@@ -155,7 +155,7 @@ func TestReceivablesRejectsMalformedDateRange(t *testing.T) {
 }
 
 func TestReceivablesRepositoryFailureIs500(t *testing.T) {
-	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListReceivables"}, pkgfinance.NewInMemoryStore())
+	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListReceivables"}, pkgfinance.NewInMemoryStore(), time.UTC)
 	w := httptest.NewRecorder()
 	h.Receivables(w, authed(t, "/payments/receivables"))
 	if w.Code != http.StatusInternalServerError {
@@ -164,7 +164,7 @@ func TestReceivablesRepositoryFailureIs500(t *testing.T) {
 }
 
 func TestSalesRepositoryFailureIs500(t *testing.T) {
-	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListSales"}, pkgfinance.NewInMemoryStore())
+	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListSales"}, pkgfinance.NewInMemoryStore(), time.UTC)
 	w := httptest.NewRecorder()
 	h.Sales(w, authed(t, "/payments/sales"))
 	if w.Code != http.StatusInternalServerError {
@@ -203,7 +203,7 @@ func TestForecastCombinesLedgerAndReceivables(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	NewHandler(repo, store).Forecast(w, authed(t, "/payments/forecast?month=2026-07"))
+	NewHandler(repo, store, time.UTC).Forecast(w, authed(t, "/payments/forecast?month=2026-07"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body)
 	}
@@ -254,7 +254,7 @@ func TestForecastDefaultsToTheCurrentMonth(t *testing.T) {
 }
 
 func TestForecastLedgerFailureIs500(t *testing.T) {
-	h := NewHandler(payments.NewInMemoryRepository(), failingFinance{Store: pkgfinance.NewInMemoryStore()})
+	h := NewHandler(payments.NewInMemoryRepository(), failingFinance{Store: pkgfinance.NewInMemoryStore()}, time.UTC)
 	w := httptest.NewRecorder()
 	h.Forecast(w, authed(t, "/payments/forecast?month=2026-07"))
 	if w.Code != http.StatusInternalServerError {
@@ -263,7 +263,7 @@ func TestForecastLedgerFailureIs500(t *testing.T) {
 }
 
 func TestForecastReceivablesFailureIs500(t *testing.T) {
-	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListReceivables"}, pkgfinance.NewInMemoryStore())
+	h := NewHandler(failingRepo{Repository: payments.NewInMemoryRepository(), fail: "ListReceivables"}, pkgfinance.NewInMemoryStore(), time.UTC)
 	w := httptest.NewRecorder()
 	h.Forecast(w, authed(t, "/payments/forecast?month=2026-07"))
 	if w.Code != http.StatusInternalServerError {

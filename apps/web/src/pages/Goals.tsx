@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { format } from 'date-fns'
 import {
   BarChart3, CheckCircle2, Target, TrendingDown, TrendingUp,
 } from 'lucide-react'
@@ -13,6 +12,7 @@ import {
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useGoal, useSaveGoalMutation } from '../api/queries'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
+import { currentMonthKey } from '@/lib/entries'
 import type { YearMonth } from '@/api/types'
 
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
@@ -27,8 +27,7 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function Goals() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM') as YearMonth
+  const currentMonth = currentMonthKey() as YearMonth
 
   const goalQuery = useGoal(currentMonth)
   const goal = goalQuery.data?.goal ?? null

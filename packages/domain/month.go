@@ -9,10 +9,12 @@ import (
 // query params, in Goal.Month, and in the summary APIs.
 const MonthLayout = "2006-01"
 
-// CurrentMonth returns the current UTC month as "2006-01". Handlers use it to
-// default an absent month param — the app is single-timezone, so UTC is the
-// one clock everything agrees on.
-func CurrentMonth() string { return time.Now().UTC().Format(MonthLayout) }
+// CurrentMonth returns the current month as "2006-01" in loc. Handlers use it
+// to default an absent month param — the app is single-timezone (see
+// shared.PharmacyLocation), so callers must pass that location rather than
+// letting this silently answer in UTC, which is a different calendar day for
+// part of every evening in Brazil.
+func CurrentMonth(loc *time.Location) string { return time.Now().In(loc).Format(MonthLayout) }
 
 // MonthOf returns t's month as "2006-01".
 func MonthOf(t time.Time) string { return t.UTC().Format(MonthLayout) }
@@ -39,10 +41,10 @@ func ParseDay(s string) (time.Time, error) {
 	return t, nil
 }
 
-// CurrentMonthRange returns the first and last day of the current UTC month —
-// the default window for every "this month" view.
-func CurrentMonthRange() (from, to time.Time) {
-	now := time.Now().UTC()
+// CurrentMonthRange returns the first and last day of the current month in
+// loc — the default window for every "this month" view.
+func CurrentMonthRange(loc *time.Location) (from, to time.Time) {
+	now := time.Now().In(loc)
 	from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	return from, from.AddDate(0, 1, -1)
 }

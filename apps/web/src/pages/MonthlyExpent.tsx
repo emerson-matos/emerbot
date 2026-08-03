@@ -11,11 +11,10 @@ import {
   useCategories, useCategorySummary, useEntries,
 } from '../api/queries'
 import EmptyState from '../components/EmptyState'
+import { currentMonthRange } from '@/lib/period'
 
 export default function MonthlyExpent() {
-  const now = new Date()
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const { firstDay, lastDay } = currentMonthRange()
 
   const categoriesQuery = useCategorySummary(firstDay, lastDay)
   const entriesQuery = useEntries(firstDay, lastDay)

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { format } from 'date-fns'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -11,6 +10,7 @@ import {
 } from '@/components/ui/combobox'
 import { categoriesByType } from '@/lib/categories'
 import { amountToCents, entryFormErrors } from '@/lib/entry-form'
+import { todayISO as today } from '@/lib/entries'
 import { useCategories, useCreateEntryMutation } from '../api/queries'
 import type { Category } from '../api/types'
 import { IncomeOrigin, incomeOriginLabels } from '../api/types'
@@ -25,7 +25,6 @@ const initialTouched = {
 
 type Field = keyof typeof initialTouched
 
-const today = () => format(new Date(), 'yyyy-MM-dd')
 
 export default function NovaTransacao() {
   const navigate = useNavigate()

@@ -10,7 +10,7 @@ import (
 func TestParseRecorrenteParsesPagarMonthlySeries(t *testing.T) {
 	t.Parallel()
 
-	req, err := parseRecorrente("/recorrente pagar 350 aluguel mensal 12 Aluguel anual")
+	req, err := parseRecorrente("/recorrente pagar 350 aluguel mensal 12 Aluguel anual", time.UTC)
 	if err != nil {
 		t.Fatalf("parseRecorrente returned error: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestParseRecorrenteParsesPagarMonthlySeries(t *testing.T) {
 func TestParseRecorrenteParsesReceberWithStartDate(t *testing.T) {
 	t.Parallel()
 
-	req, err := parseRecorrente("/recorrente receber 800 convenio semanal 6 20/07 Repasse")
+	req, err := parseRecorrente("/recorrente receber 800 convenio semanal 6 20/07 Repasse", time.UTC)
 	if err != nil {
 		t.Fatalf("parseRecorrente returned error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestParseRecorrenteRejectsInvalidInput(t *testing.T) {
 		"/recorrente pagar 350 aluguel bimestral 12", // unsupported period
 	}
 	for _, text := range cases {
-		if _, err := parseRecorrente(text); err == nil {
+		if _, err := parseRecorrente(text, time.UTC); err == nil {
 			t.Errorf("expected error for %q", text)
 		}
 	}

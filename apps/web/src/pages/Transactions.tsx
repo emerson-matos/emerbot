@@ -20,6 +20,7 @@ import EmptyState from '../components/EmptyState'
 import PaymentList from '../components/payments/PaymentList'
 import { formatBRL, formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
+import { currentMonthKey as computeCurrentMonthKey, todayISO as computeTodayISO } from '@/lib/entries'
 import {
   activeFilterCount, buildGroups, compileFilters, defaultFilters, filtersEqual, formatRangeLabel,
   groupIntoMonthPages, ledgerTotals, toISORange,
@@ -53,6 +54,7 @@ export default function Transactions() {
 
   const [filters, setFilters] = useState<FilterState>(defaultFilters)
   const [pending, setPending] = useState<FilterState>(defaultFilters)
+  const [periodOpen, setPeriodOpen] = useState(false)
 
   const updatePending = useCallback((partial: Partial<FilterState>) => {
     setPending(prev => ({ ...prev, ...partial }))
@@ -76,8 +78,8 @@ export default function Transactions() {
   const minInvalid = pending.minAmount.trim() !== '' && parseAmountToCents(pending.minAmount) === null
   const maxInvalid = pending.maxAmount.trim() !== '' && parseAmountToCents(pending.maxAmount) === null
 
-  const currentMonthKey = format(new Date(), 'yyyy-MM')
-  const todayISO = format(new Date(), 'yyyy-MM-dd')
+  const currentMonthKey = computeCurrentMonthKey()
+  const todayISO = computeTodayISO()
 
   // Both sources reduce to the same one-month-per-page shape, so grouping and
   // the summary strip below never need to know which one they came from.
@@ -215,7 +217,7 @@ export default function Transactions() {
                   className="h-8 pl-9"
                 />
               </div>
-              <Popover>
+              <Popover open={periodOpen} onOpenChange={setPeriodOpen}>
                 <PopoverTrigger
                   render={
                     <Button variant="outline" className="h-8 justify-start px-2.5 font-normal sm:w-64">
@@ -239,7 +241,13 @@ export default function Transactions() {
                     mode="range"
                     defaultMonth={pending.date?.from}
                     selected={pending.date}
-                    onSelect={value => updatePending({ date: value })}
+                    onSelect={value => {
+                      updatePending({ date: value })
+                      // Close as soon as a full range is picked — left open, the
+                      // calendar grid sits on top of "Aplicar filtros" and
+                      // swallows the click that would otherwise submit it.
+                      if (value?.from && value?.to) setPeriodOpen(false)
+                    }}
                     numberOfMonths={2}
                     // Outside days repeat a date in both months (July 30 shows in
                     // July's grid and again as August's leading day), so a single

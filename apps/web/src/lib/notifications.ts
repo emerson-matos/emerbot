@@ -2,7 +2,7 @@ import { format } from 'date-fns'
 import { AlertTriangle, CalendarClock, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
-import { effectiveDate, formatEffectiveDate } from './entries'
+import { currentMonthKey, effectiveDate, formatEffectiveDate, todayISO } from './entries'
 import { useEntries, useGoal } from '../api/queries'
 import type { Entry } from '../api/types'
 
@@ -40,11 +40,11 @@ interface NotificationsResult {
 //   • a payment due today, • overdue pending expenses, • the faturamento goal hit.
 // Phase 2 (docs/notifications-phase-2.md) adds server-side WhatsApp delivery.
 export function useNotifications(): NotificationsResult {
-  const now = new Date()
-  const today = format(now, 'yyyy-MM-dd')
-  const currentMonth = format(now, 'yyyy-MM')
+  const today = todayISO()
+  const currentMonth = currentMonthKey()
+  const [year, month] = currentMonth.split('-').map(Number)
   const windowStart = format(
-    new Date(now.getFullYear(), now.getMonth() - OVERDUE_LOOKBACK_MONTHS, 1),
+    new Date(year, month - 1 - OVERDUE_LOOKBACK_MONTHS, 1),
     'yyyy-MM-dd',
   )
 

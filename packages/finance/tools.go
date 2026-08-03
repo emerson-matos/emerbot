@@ -36,10 +36,10 @@ func FinanceTools(store Store, dashboardURL string, loc *time.Location) []Tool {
 		loc = time.UTC
 	}
 	tools := []Tool{
-		createEntryTool(store),
+		createEntryTool(store, loc),
 		editEntryTool(store, loc),
-		resumoMensalTool(store),
-		definirMetaTool(store),
+		resumoMensalTool(store, loc),
+		definirMetaTool(store, loc),
 		listDueEntriesTool(store),
 		searchEntriesTool(store),
 	}
@@ -72,7 +72,7 @@ func dashboardLinkTool(url string) Tool {
 
 // --- create_financial_entry ---
 
-func createEntryTool(store Store) Tool {
+func createEntryTool(store Store, loc *time.Location) Tool {
 	const name = "create_financial_entry"
 
 	return Tool{
@@ -113,7 +113,7 @@ func createEntryTool(store Store) Tool {
 				return nil, fmt.Errorf("invalid type: %q (expected expense or income)", args.Type)
 			}
 
-			now := time.Now().UTC()
+			now := time.Now().In(loc)
 			entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 				UserID:          userID,
 				TransactionDate: domain.NewCalendarDate(now),
@@ -287,7 +287,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 
 // --- get_resumo_mensal ---
 
-func resumoMensalTool(store Store) Tool {
+func resumoMensalTool(store Store, loc *time.Location) Tool {
 	const name = "get_resumo_mensal"
 
 	return Tool{
@@ -307,7 +307,7 @@ func resumoMensalTool(store Store) Tool {
 				return nil, fmt.Errorf("parse args: %w", err)
 			}
 			if args.Month == "" {
-				args.Month = domain.CurrentMonth()
+				args.Month = domain.CurrentMonth(loc)
 			}
 
 			summary, err := store.MonthlySummary(ctx, userID, args.Month)
@@ -362,7 +362,7 @@ func resumoMensalTool(store Store) Tool {
 
 // --- definir_meta ---
 
-func definirMetaTool(store Store) Tool {
+func definirMetaTool(store Store, loc *time.Location) Tool {
 	const name = "definir_meta"
 
 	return Tool{
@@ -388,7 +388,7 @@ func definirMetaTool(store Store) Tool {
 
 			month := args.Month
 			if month == "" {
-				month = domain.CurrentMonth()
+				month = domain.CurrentMonth(loc)
 			}
 			// The month comes from LLM output, so it is validated before it can
 			// become a goal's key — an unchecked one stored "julho" verbatim and

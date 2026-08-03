@@ -179,7 +179,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
 		regex := whatsapp.NewRegexParser()
-		finHandler = financial.NewHandler(regex, store)
+		finHandler = financial.NewHandler(regex, store, shared.PharmacyLocation())
 		cfg.FinanceStore = store
 		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
 		// LLM_PROVIDER=ollama runs a local open-source model for dev (ADR-012);

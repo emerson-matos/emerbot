@@ -64,8 +64,12 @@ func TestParseDay(t *testing.T) {
 }
 
 func TestCurrentMonthAndMonthOf(t *testing.T) {
-	if got := CurrentMonth(); got != time.Now().UTC().Format(MonthLayout) {
+	if got := CurrentMonth(time.UTC); got != time.Now().UTC().Format(MonthLayout) {
 		t.Fatalf("CurrentMonth = %q, want the current UTC month", got)
+	}
+	tzLoc := time.FixedZone("UTC-3", -3*3600)
+	if got, want := CurrentMonth(tzLoc), time.Now().In(tzLoc).Format(MonthLayout); got != want {
+		t.Fatalf("CurrentMonth(loc) = %q, want %q in the given location", got, want)
 	}
 	if got := MonthOf(time.Date(2026, 7, 20, 23, 0, 0, 0, time.UTC)); got != "2026-07" {
 		t.Fatalf("MonthOf = %q, want 2026-07", got)
@@ -136,11 +140,11 @@ func TestAddMonthsNormalisesToUTCMidnight(t *testing.T) {
 }
 
 func TestCurrentMonthRange(t *testing.T) {
-	from, to := CurrentMonthRange()
+	from, to := CurrentMonthRange(time.UTC)
 	if from.Day() != 1 {
 		t.Fatalf("from = %v, want the first of the month", from)
 	}
-	if MonthOf(from) != CurrentMonth() || MonthOf(to) != CurrentMonth() {
+	if MonthOf(from) != CurrentMonth(time.UTC) || MonthOf(to) != CurrentMonth(time.UTC) {
 		t.Fatalf("range %v..%v spans outside the current month", from, to)
 	}
 	if !to.After(from) {

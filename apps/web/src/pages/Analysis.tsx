@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { format } from 'date-fns'
 import type { LucideIcon } from 'lucide-react'
 import {
   AlertTriangle,
@@ -22,6 +21,7 @@ import EmptyState from '@/components/EmptyState'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
+import { currentMonthKey } from '@/lib/entries'
 import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, Recommendation } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
@@ -654,8 +654,7 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
 }
 
 export default function Analysis() {
-  const now = new Date()
-  const month = format(now, 'yyyy-MM') as YearMonth
+  const month = currentMonthKey() as YearMonth
   const { data: analysis, isError, refetch } = useMonthlyAnalysis(month)
 
   return (

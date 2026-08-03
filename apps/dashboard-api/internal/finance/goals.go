@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
@@ -19,10 +20,16 @@ type GoalStore interface {
 
 type GoalsHandler struct {
 	store GoalStore
+	// loc is the calendar the pharmacy reasons about days in, for "current
+	// month" defaults. See shared.PharmacyLocation.
+	loc *time.Location
 }
 
-func NewGoalsHandler(store GoalStore) *GoalsHandler {
-	return &GoalsHandler{store: store}
+func NewGoalsHandler(store GoalStore, loc *time.Location) *GoalsHandler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &GoalsHandler{store: store, loc: loc}
 }
 
 // Get handles GET /goals?month=2026-07
@@ -33,7 +40,7 @@ func (h *GoalsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	month, err := httpx.Month(r)
+	month, err := httpx.Month(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -67,7 +74,7 @@ func (h *GoalsHandler) Save(w http.ResponseWriter, r *http.Request) {
 
 	month := body.Month
 	if month == "" {
-		month = domain.CurrentMonth()
+		month = domain.CurrentMonth(h.loc)
 	}
 	// Validated up front, and for real: the previous check only looked at
 	// months starting with "20" that contained exactly one dash, so "julho"

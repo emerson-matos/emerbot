@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { currentMonthKey } from './entries'
 
 // monthRange turns a "yyyy-MM" key into the first/last calendar day of that
 // month. It is the single source of the window the Adquirentes page and its KPI
@@ -13,8 +14,9 @@ export function monthRange(monthKey: string) {
   }
 }
 
-// currentMonthRange is monthRange for the month we're in now — the default the
-// Adquirentes page opens on before the user picks another month.
+// currentMonthRange is monthRange for the month we're in now (the pharmacy's
+// calendar, via currentMonthKey — not the browser's local timezone) — the
+// default the Adquirentes page opens on before the user picks another month.
 export function currentMonthRange() {
-  return monthRange(format(new Date(), 'yyyy-MM'))
+  return monthRange(currentMonthKey())
 }

@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import { api } from "./http";
 import { useAuth } from "@/lib/auth";
+import { currentMonthKey } from "@/lib/entries";
 
 export const queryKeys = {
   summaryMonthly: (month: string) => ["summary", "monthly", month] as const,
@@ -139,7 +140,7 @@ async function fetchEntriesForMonth(monthKey: string) {
 // One page per calendar month, expandable in both directions from the
 // current month via fetchNextPage (future) / fetchPreviousPage (past).
 export function useEntriesByMonth() {
-  const currentMonth = format(new Date(), "yyyy-MM");
+  const currentMonth = currentMonthKey();
 
   return useInfiniteQuery({
     queryKey: queryKeys.entriesByMonth(),

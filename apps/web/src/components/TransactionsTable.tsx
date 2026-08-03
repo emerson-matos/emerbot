@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { format } from "date-fns";
 import { ChevronDown, ChevronUp, Receipt } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Entry } from "../api/types";
+import { todayISO as computeTodayISO } from "@/lib/entries";
 import { urgencyGroups } from "@/lib/payment-groups";
 import EmptyState from "./EmptyState";
 import PaymentList from "./payments/PaymentList";
@@ -18,7 +18,7 @@ interface Props {
 
 export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDelete }: Props) {
   const [showHistory, setShowHistory] = useState(false);
-  const todayISO = format(new Date(), "yyyy-MM-dd");
+  const todayISO = computeTodayISO();
 
   // The card shows the same groups, in the same order, as the Transações page —
   // it just keeps the settled ones folded away until asked.

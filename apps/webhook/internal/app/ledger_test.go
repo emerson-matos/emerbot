@@ -17,7 +17,7 @@ func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
 	t.Parallel()
 
 	store := pkgfinance.NewInMemoryStore()
-	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store)
+	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store, shared.PharmacyLocation())
 	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", wasession.NewInMemoryStore())
 
 	_, status, err := app.Handle(context.Background(), Request{

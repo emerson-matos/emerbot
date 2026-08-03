@@ -1,9 +1,9 @@
-import { format } from 'date-fns'
 import { Target } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatBRL } from '@/lib/format'
+import { currentMonthKey } from '@/lib/entries'
 import { useGoal } from '../api/queries'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import type { YearMonth } from '@/api/types'
@@ -20,8 +20,7 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function GoalCard() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM') as YearMonth
+  const currentMonth = currentMonthKey() as YearMonth
   // Faturamento comes from the backend (packages/finance/analytics), the same
   // figure the Analysis page and the WhatsApp bot show. This card used to
   // re-derive its own from the entries, which drifted from everything else.

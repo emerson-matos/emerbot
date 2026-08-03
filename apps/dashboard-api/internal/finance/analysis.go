@@ -39,7 +39,7 @@ func (h *AnalysisHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(h.loc)
 	// Validated here so a typo comes back as the caller's 400 rather than as a
 	// 500 from somewhere inside the assembly.
-	month, err := httpx.Month(r)
+	month, err := httpx.Month(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return

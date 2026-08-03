@@ -2,6 +2,35 @@ import { format, isValid, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import type { Entry } from '../api/types'
 
+// The pharmacy reasons about "hoje"/"este mês" in a single timezone —
+// America/Sao_Paulo, matching shared.PharmacyLocation on the backend — not
+// whatever timezone the browser happens to be in. A browser west of UTC (e.g.
+// São Paulo itself, UTC-3) lags the server's own idea of "today" for part of
+// every evening if this used the browser's local `new Date()` day instead:
+// entries due "today" would silently fall into "upcoming" and KPIs like "a
+// pagar hoje" would read zero even when the API has entries due today.
+export const APP_TIMEZONE = 'America/Sao_Paulo'
+
+const isoDateFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: APP_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+/** Today's date as "yyyy-MM-dd", in the pharmacy's timezone, not the browser's. */
+export function todayISO(): string {
+  const parts = isoDateFormatter.formatToParts(new Date())
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+/** The current month as "yyyy-MM", in the pharmacy's timezone. */
+export function currentMonthKey(): string {
+  return todayISO().slice(0, 7)
+}
+
+
 // Tables are about *due* transactions: pending entries show when they're
 // due, and already-settled ones (no DueDate) fall back to when they happened.
 export function effectiveDate(e: Entry): string | null {

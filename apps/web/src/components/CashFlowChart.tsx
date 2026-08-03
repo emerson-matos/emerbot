@@ -17,6 +17,7 @@ import { ptBR } from "date-fns/locale";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chartColor, tooltipProps } from "@/lib/chart";
 import { formatBRL } from "@/lib/format";
+import { todayISO } from "@/lib/entries";
 import type { CashFlowPoint } from "../api/types";
 
 interface Props {
@@ -45,7 +46,7 @@ export default function CashFlowChart({ data }: Props) {
   const gradientId = useId();
 
   const { formatted, todayPoint, medianBalance, offsets } = useMemo(() => {
-    const today = format(new Date(), "yyyy-MM-dd");
+    const today = todayISO();
 
     const formatted = data.map((point) => {
       const balance = point.RunningBalance / 100;

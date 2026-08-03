@@ -48,13 +48,16 @@ func NewLocal(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw 
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
 func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
-	entriesHandler := apifinance.NewEntriesHandler(finStore, shared.PharmacyLocation())
-	summaryHandler := apifinance.NewSummaryHandler(finStore)
-	catsHandler := apifinance.NewCategoriesHandler(finStore)
-	paymentsHandler := apipayments.NewHandler(payRepo, finStore)
 	// "Hoje", "esta semana" and "dias restantes" are the pharmacy's calendar
-	// day, not the Lambda's UTC one.
-	analysisHandler := apifinance.NewAnalysisHandler(finStore, shared.PharmacyLocation())
+	// day, not the Lambda's UTC one — every handler below that answers a
+	// "current month"/"today" question shares this one location.
+	pharmacyLoc := shared.PharmacyLocation()
+
+	entriesHandler := apifinance.NewEntriesHandler(finStore, pharmacyLoc)
+	summaryHandler := apifinance.NewSummaryHandler(finStore, pharmacyLoc)
+	catsHandler := apifinance.NewCategoriesHandler(finStore)
+	paymentsHandler := apipayments.NewHandler(payRepo, finStore, pharmacyLoc)
+	analysisHandler := apifinance.NewAnalysisHandler(finStore, pharmacyLoc)
 
 	mux := http.NewServeMux()
 
@@ -85,11 +88,11 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 
 	// Cached daily snapshot — the notifier persists it, this serves it.
 	// POST /analysis triggers an on-demand recalculation.
-	snapshotHandler := apifinance.NewSnapshotHandler(finStore, shared.PharmacyLocation())
+	snapshotHandler := apifinance.NewSnapshotHandler(finStore, pharmacyLoc)
 	mux.Handle("GET /analysis", authMw(http.HandlerFunc(snapshotHandler.Get)))
 	mux.Handle("POST /analysis", authMw(http.HandlerFunc(snapshotHandler.Recalculate)))
 
-	goalHandler := apifinance.NewGoalsHandler(finStore)
+	goalHandler := apifinance.NewGoalsHandler(finStore, pharmacyLoc)
 
 	mux.Handle("GET /categories", authMw(http.HandlerFunc(catsHandler.List)))
 	mux.Handle("POST /categories", authMw(http.HandlerFunc(catsHandler.Create)))

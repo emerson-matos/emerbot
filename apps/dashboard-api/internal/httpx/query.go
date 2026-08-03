@@ -15,15 +15,15 @@ import (
 const MaxRangeDays = 731
 
 // DateRange reads from/to query params (YYYY-MM-DD), defaulting to the current
-// calendar month.
+// calendar month in loc.
 //
 // Malformed input is an error rather than a silent fallback. The endpoints used
 // to disagree about this — /payments/* rejected a bad date while /summary/*
 // quietly substituted the current month — so a typo'd date returned a real
 // period's numbers under the label the user asked for, which on a financial
 // dashboard is indistinguishable from correct data.
-func DateRange(r *http.Request) (from, to time.Time, err error) {
-	from, to = domain.CurrentMonthRange()
+func DateRange(r *http.Request, loc *time.Location) (from, to time.Time, err error) {
+	from, to = domain.CurrentMonthRange(loc)
 
 	q := r.URL.Query()
 	if f := q.Get("from"); f != "" {
@@ -48,8 +48,8 @@ func DateRange(r *http.Request) (from, to time.Time, err error) {
 
 // CalendarDateRange is DateRange in the domain's calendar-day type, for
 // handlers whose stores are keyed by CalendarDate.
-func CalendarDateRange(r *http.Request) (from, to domain.CalendarDate, err error) {
-	f, t, err := DateRange(r)
+func CalendarDateRange(r *http.Request, loc *time.Location) (from, to domain.CalendarDate, err error) {
+	f, t, err := DateRange(r, loc)
 	if err != nil {
 		return domain.CalendarDate{}, domain.CalendarDate{}, err
 	}
@@ -57,12 +57,12 @@ func CalendarDateRange(r *http.Request) (from, to domain.CalendarDate, err error
 }
 
 // Month reads the month query param (YYYY-MM), defaulting to the current
-// month. An unparseable month is an error, for the same reason DateRange
-// rejects a bad day.
-func Month(r *http.Request) (string, error) {
+// month in loc. An unparseable month is an error, for the same reason
+// DateRange rejects a bad day.
+func Month(r *http.Request, loc *time.Location) (string, error) {
 	month := r.URL.Query().Get("month")
 	if month == "" {
-		return domain.CurrentMonth(), nil
+		return domain.CurrentMonth(loc), nil
 	}
 	if _, _, err := domain.ParseMonth(month); err != nil {
 		return "", errors.New("invalid month, expected YYYY-MM")

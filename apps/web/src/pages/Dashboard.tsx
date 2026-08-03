@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import {
   Wallet, TrendingUp, TrendingDown, Clock, Banknote,
 } from 'lucide-react'
@@ -15,10 +14,11 @@ import WorstMonth from './WorstMonth';
 import MonthlyExpent from './MonthlyExpent';
 import ToPayToday from './ToPayToday';
 import { formatBRL } from '@/lib/format'
+import { currentMonthKey } from '@/lib/entries'
+import { currentMonthRange } from '@/lib/period'
 
 function ExpenseTotal() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
+  const currentMonth = currentMonthKey()
   const summaryQuery = useMonthlySummary(currentMonth)
   const summary = summaryQuery.data ?? null
 
@@ -42,8 +42,7 @@ function ExpenseTotal() {
 }
 
 function BalanceCard() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
+  const currentMonth = currentMonthKey()
   const summaryQuery = useMonthlySummary(currentMonth)
   const summary = summaryQuery.data ?? null
   const balance = summary?.ExpectedBalance ?? 0
@@ -73,8 +72,7 @@ function BalanceCard() {
 // is cash and not a sale, an unpaid crediário sale is a sale and not yet cash.
 // One number labelled "Receitas" hid both facts.
 function RevenueTotal() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
+  const currentMonth = currentMonthKey()
   const summaryQuery = useMonthlySummary(currentMonth)
   const summary = summaryQuery.data ?? null
 
@@ -98,8 +96,7 @@ function RevenueTotal() {
 }
 
 function CashInTotal() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
+  const currentMonth = currentMonthKey()
   const summaryQuery = useMonthlySummary(currentMonth)
   const summary = summaryQuery.data ?? null
 
@@ -123,10 +120,7 @@ function CashInTotal() {
 }
 
 function Receivables() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const { month: currentMonth, firstDay, lastDay } = currentMonthRange()
 
   const summaryQuery = useMonthlySummary(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
@@ -156,10 +150,7 @@ function Receivables() {
 }
 
 export default function Dashboard() {
-  const now = new Date()
-  const currentMonth = format(now, 'yyyy-MM')
-  const firstDay = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
-  const lastDay = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const { month: currentMonth, firstDay, lastDay } = currentMonthRange()
   const cashflowQuery = useCashFlow(currentMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
   const markPaid = useMarkPaidMutation()

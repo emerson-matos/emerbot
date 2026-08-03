@@ -30,10 +30,17 @@ type LedgerStore interface {
 type Handler struct {
 	regex *whatsapp.RegexParser
 	store LedgerStore
+	// loc is the calendar the pharmacy reasons about days in — "hoje",
+	// "este mês" and the /resumo "a vencer amanhã" cutoff all have to agree
+	// with the dashboard on what day it is. See shared.PharmacyLocation.
+	loc *time.Location
 }
 
-func NewHandler(regex *whatsapp.RegexParser, store LedgerStore) *Handler {
-	return &Handler{regex: regex, store: store}
+func NewHandler(regex *whatsapp.RegexParser, store LedgerStore, loc *time.Location) *Handler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &Handler{regex: regex, store: store, loc: loc}
 }
 
 func commandTutorial(cmd string) string {
@@ -102,7 +109,7 @@ func (h *Handler) saveAndConfirm(ctx context.Context, userID string, parsed what
 		status = domain.PaymentStatusPending
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(h.loc)
 	date := domain.NewCalendarDate(now)
 	if parsed.Date != nil {
 		date = domain.NewCalendarDate(*parsed.Date)
@@ -140,12 +147,12 @@ func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, 
 		return usage, nil
 	}
 
-	req, err := parseRecorrente(text)
+	req, err := parseRecorrente(text, h.loc)
 	if err != nil {
 		return fmt.Sprintf("❌ Não consegui entender. Tente:\n/recorrente pagar 350 aluguel mensal 12 Aluguel anual\n\nErro: %s", err.Error()), nil
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(h.loc)
 	recurrenceID := uuid.New().String()
 	entries := make([]domain.FinancialEntry, req.Occurrences)
 	for i := range entries {
@@ -179,7 +186,7 @@ func (h *Handler) Recorrente(ctx context.Context, userID, text string) (string, 
 }
 
 func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
-	now := time.Now().UTC()
+	now := time.Now().In(h.loc)
 	yearMonth := domain.MonthOf(now)
 	summary, err := h.store.MonthlySummary(ctx, userID, yearMonth)
 	if err != nil {
@@ -229,7 +236,7 @@ func (h *Handler) Resumo(ctx context.Context, userID string) (string, error) {
 }
 
 func (h *Handler) Goal(ctx context.Context, userID string) (string, error) {
-	now := time.Now().UTC()
+	now := time.Now().In(h.loc)
 	yearMonth := domain.MonthOf(now)
 	summary, err := h.store.MonthlySummary(ctx, userID, yearMonth)
 	if err != nil {
@@ -293,7 +300,7 @@ func (h *Handler) SetGoal(ctx context.Context, userID, text string) (string, err
 		return "Valor de despesa inválido. Use números sem R$.\nEx: /meta 80000 60000", nil
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(h.loc)
 	goal := domain.Goal{
 		UserID:        userID,
 		Month:         domain.MonthOf(now),

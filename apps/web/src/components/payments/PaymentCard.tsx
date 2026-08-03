@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom'
-import { format } from 'date-fns'
 import { ArrowDownRight, ArrowUpRight, Check, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,7 +15,7 @@ import {
 import { cn } from '@/lib/utils'
 import { formatBRL } from '@/lib/format'
 import { categoryLabelMap } from '@/lib/categories'
-import { editEntryPath, effectiveDate, formatEffectiveDate, formatPaidAt } from '@/lib/entries'
+import { editEntryPath, effectiveDate, formatEffectiveDate, formatPaidAt, todayISO as computeTodayISO } from '@/lib/entries'
 import { useCategories } from '@/api/queries'
 import type { Entry } from '@/api/types'
 
@@ -28,7 +27,7 @@ interface Props {
 
 export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
   const isIncome = entry.Type === 'income'
-  const todayISO = format(new Date(), 'yyyy-MM-dd')
+  const todayISO = computeTodayISO()
   const isOverdue = entry.PaymentStatus === 'pending' && (effectiveDate(entry) ?? '') < todayISO
   const categoriesQuery = useCategories()
   const categoryLabels = categoryLabelMap(categoriesQuery.data ?? [])

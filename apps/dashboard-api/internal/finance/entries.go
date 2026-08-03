@@ -235,7 +235,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	date := domain.NewCalendarDate(time.Now().UTC())
+	date := domain.NewCalendarDate(time.Now().In(h.loc))
 	if req.Date != "" {
 		t, err := domain.ParseDay(req.Date)
 		if err != nil {
@@ -261,7 +261,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	status := domain.PaymentStatus(req.PaymentStatus)
 	if status != domain.PaymentStatusPending && status != domain.PaymentStatusPaid {
-		today := domain.NewCalendarDate(time.Now().UTC())
+		today := domain.NewCalendarDate(time.Now().In(h.loc))
 		if date.After(today) {
 			status = domain.PaymentStatusPending
 		} else {

@@ -45,9 +45,9 @@ export default function Adquirentes() {
 
   // The last 12 months, newest first — the window a user realistically browses.
   const monthOptions = useMemo(() => {
-    const now = new Date()
+    const [year, month] = currentMonthRange().month.split('-').map(Number)
     return Array.from({ length: 12 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const d = new Date(year, month - 1 - i, 1)
       const raw = format(d, 'MMMM yyyy', { locale: ptBR })
       return { key: format(d, 'yyyy-MM'), label: raw.charAt(0).toUpperCase() + raw.slice(1) }
     })

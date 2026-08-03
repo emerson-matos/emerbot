@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/packages/domain"
@@ -21,7 +22,7 @@ func newTestHandler(t *testing.T, seed ...payments.ImportResult) *Handler {
 			t.Fatalf("seed repo: %v", err)
 		}
 	}
-	return NewHandler(repo, pkgfinance.NewInMemoryStore())
+	return NewHandler(repo, pkgfinance.NewInMemoryStore(), time.UTC)
 }
 
 // authed builds a request carrying verified claims, as the auth middleware

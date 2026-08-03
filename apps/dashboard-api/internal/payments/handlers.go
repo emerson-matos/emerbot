@@ -8,6 +8,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/httpx"
@@ -29,10 +30,16 @@ type LedgerForecaster interface {
 type Handler struct {
 	repo     payments.Repository
 	finStore LedgerForecaster
+	// loc is the calendar the pharmacy reasons about days in, for "current
+	// month"/"current day" defaults. See shared.PharmacyLocation.
+	loc *time.Location
 }
 
-func NewHandler(repo payments.Repository, finStore LedgerForecaster) *Handler {
-	return &Handler{repo: repo, finStore: finStore}
+func NewHandler(repo payments.Repository, finStore LedgerForecaster, loc *time.Location) *Handler {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &Handler{repo: repo, finStore: finStore, loc: loc}
 }
 
 // Sales handles GET /payments/sales?from=YYYY-MM-DD&to=YYYY-MM-DD (defaults to
@@ -43,7 +50,7 @@ func (h *Handler) Sales(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	from, to, err := httpx.CalendarDateRange(r)
+	from, to, err := httpx.CalendarDateRange(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -78,7 +85,7 @@ func (h *Handler) Receivables(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	from, to, err := httpx.CalendarDateRange(r)
+	from, to, err := httpx.CalendarDateRange(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -107,7 +114,7 @@ func (h *Handler) Forecast(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	month, err := httpx.Month(r)
+	month, err := httpx.Month(r, h.loc)
 	if err != nil {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return

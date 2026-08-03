@@ -9,11 +9,12 @@ import { chartColor, tooltipProps } from '@/lib/chart'
 import { format } from 'date-fns';
 import { useMonthlyTrend } from '@/api/queries';
 import { ptBR } from 'date-fns/locale';
+import { currentMonthKey } from '@/lib/entries';
 
 export default function IncomeExpenseChart() {
-  const now = new Date()
+  const [year, month] = currentMonthKey().split('-').map(Number)
   const months3 = [-2, -1, 0].map(offset =>
-    format(new Date(now.getFullYear(), now.getMonth() + offset, 1), 'yyyy-MM'),
+    format(new Date(year, month - 1 + offset, 1), 'yyyy-MM'),
   )
   const trendQueries = useMonthlyTrend(months3)
   const data = trendQueries.every(q => q.isSuccess)
