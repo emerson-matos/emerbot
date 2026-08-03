@@ -104,4 +104,14 @@ simplesmente ainda não lançou uma venda.
   As duas continuam sendo puladas num mês fechado, que não tem dia à frente para
   precificar. Consolidar as leituras de lançamento continua sendo trabalho de
   outro PR.
+- A linha de KPIs era o último lugar que ainda lia o `MonthlySummary` cru, e
+  carregava a mesma falha por um terceiro caminho: `TotalExpense` e
+  `TotalExpectedIn` somam o mês inteiro na base efetiva, então `Despesa` e
+  `Resultado` incluíam o aluguel do dia 25 enquanto `Faturamento` e `Entradas de
+  Caixa` — que não conseguem conter um dia futuro — só tinham o que já
+  aconteceu. Dois cards "até agora" e dois "mês inteiro", lado a lado, com
+  `Resultado` subtraindo um tipo do outro. Os dois passam a cobrir os dias que
+  já chegaram (`monthClock.elapsed`, que **inclui hoje** — a linha de KPIs é o
+  estado do mês agora, não uma medição dele), e o que estava embutido vira
+  `DespesaAgendada`, ao lado do número e nunca dentro dele.
 - A regra "não mando nada se não houver alerta" continua valendo.

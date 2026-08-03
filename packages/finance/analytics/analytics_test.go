@@ -1138,8 +1138,13 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	if got.Month != "2026-07" {
 		t.Errorf("Month = %q", got.Month)
 	}
-	if got.KPIs.Faturamento != 450000 || got.KPIs.Despesa != 300000 || got.KPIs.Resultado != 150000 {
-		t.Errorf("KPIs = %+v, want the analysed month's summary", got.KPIs)
+	// Faturamento and entradas de caixa come off the summary; despesa and
+	// resultado are re-totalled over the days that have arrived, today included.
+	// Every entry here falls on or before the 15th, so despesa is the whole
+	// 300.000 and resultado is the four sales minus it — 549.999 in, not the
+	// summary's hand-built 450.000, which is deliberately a different fixture.
+	if got.KPIs.Faturamento != 450000 || got.KPIs.Despesa != 300000 || got.KPIs.Resultado != 249999 {
+		t.Errorf("KPIs = %+v, want faturamento off the summary and the result over the days so far", got.KPIs)
 	}
 	// The 15th through the 31st, today included.
 	if got.Period.DaysRemaining != 17 || got.Period.ThroughDay != 14 || !got.Period.InProgress {

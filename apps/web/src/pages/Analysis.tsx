@@ -233,6 +233,15 @@ function KpiSection({ data, goals, trends, period }: {
           <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.negative }}>
             {formatBRL(data.despesa)}
           </p>
+          {/* What is booked for the rest of the month, beside the figure and
+              never inside it. This card used to show the two added together —
+              the whole month's bills are booked on the 1st, so on the 3rd it
+              read R$ 16.200,00 against R$ 200,00 actually spent. */}
+          {data.despesaAgendada > 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              + {formatBRL(data.despesaAgendada)} a vencer
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted-foreground">
             {trendLabel(trends.despesa, period)}
           </p>

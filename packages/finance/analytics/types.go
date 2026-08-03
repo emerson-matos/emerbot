@@ -361,8 +361,16 @@ type CashPosition struct {
 	ExpectsReceipts bool `json:"expectsReceipts"`
 }
 
-// KPIs are the headline numbers.
+// KPIs are the headline numbers: the state of the month *now*, today included.
+// They are not a measurement of it — that is Trends, over its own labelled
+// window — and they are emphatically not the whole month. Every figure here
+// covers the days that have arrived and no others.
 type KPIs struct {
+	// Resultado is what came in minus what went out over the days so far. It
+	// used to be summary.ExpectedBalance, which is the whole month's expected
+	// inflow minus the whole month's expense — every bill of the month, booked
+	// on the 1st, against sales nobody had made yet. On the 3rd it read minus
+	// R$ 14.800,00 for a month that was actually R$ 1.200,00 up.
 	Resultado int64 `json:"resultado"`
 	// Faturamento is what the pharmacy sold this month, by the day of each sale
 	// (see finance.RevenueDate). Every performance reading on this page is
@@ -374,7 +382,15 @@ type KPIs struct {
 	// Faturamento. Two ways, in fact: it counts inflows that were not sales,
 	// and it excludes sales that have not been paid yet.
 	EntradasCaixa int64 `json:"entradasCaixa"`
-	Despesa       int64 `json:"despesa"`
+	// Despesa is what has actually gone out, by effective date, over the days so
+	// far. What is booked for the rest of the month is DespesaAgendada and is
+	// deliberately a separate number.
+	Despesa int64 `json:"despesa"`
+	// DespesaAgendada is what is already booked for the days still to come. It
+	// is a commitment, not a spend: the rent due on the 25th is real and worth
+	// seeing, but adding it to Despesa reported it as money gone, and
+	// subtracting it inside Resultado reported the month as lost on its 3rd day.
+	DespesaAgendada int64 `json:"despesaAgendada"`
 
 	// There is deliberately no "days remaining" or "last month up to today"
 	// here. The first is Period.DaysRemaining, so the whole analysis counts the
@@ -425,7 +441,14 @@ type KPIs struct {
 // of standing as bills against nothing. Added period.comparableThroughDay and
 // cashPosition.expectsReceipts. health.status reads the same trends, so the
 // same phantom-movement argument as 4 applies here.
-const SchemaVersion = 5
+//
+// 6: kpis.resultado and kpis.despesa cover the days that have arrived instead
+// of the whole month including what is only booked for later in it. Added
+// kpis.despesaAgendada, which carries what they used to include. The diff reads
+// both of these directly, and this is exactly the reading it was getting wrong:
+// booking the month's rent moved kpis.despesa with nothing having left the
+// account, and the digest reported it as the month's spending having risen.
+const SchemaVersion = 6
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.
