@@ -181,8 +181,6 @@ import-pagbank:
 demo: up
 	@echo "Waiting for dashboard-api to be healthy..."
 	@until wget -qO-  http://localhost:8081/health > /dev/null 2>&1; do sleep 2; done
-	$(MAKE) seed
-	$(MAKE) seed-payments
 	@echo ""
 	@echo "Demo ready!"
 	@echo "   Dashboard:       http://localhost:5173"
