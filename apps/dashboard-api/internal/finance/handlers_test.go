@@ -802,6 +802,108 @@ func TestListCategoriesSeedsDefaultsOnFirstCall(t *testing.T) {
 	}
 }
 
+// decodeCategories unpacks the handler's {"categories": [...]} envelope.
+func decodeCategories(t *testing.T, w *httptest.ResponseRecorder) []domain.Category {
+	t.Helper()
+	var resp struct {
+		Categories []domain.Category `json:"categories"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode categories %q: %v", w.Body.String(), err)
+	}
+	return resp.Categories
+}
+
+func findCategory(cats []domain.Category, slug string) *domain.Category {
+	for i := range cats {
+		if cats[i].Slug == slug {
+			return &cats[i]
+		}
+	}
+	return nil
+}
+
+func TestListCategoriesBackfillsMissingDefaults(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	// Simulate a user seeded before fornecedor_perfumaria was added to the
+	// default list: every default except that one, plus a category the user
+	// created themselves.
+	for _, c := range domain.DefaultCategories(testUser) {
+		if c.Slug == "fornecedor_perfumaria" {
+			continue
+		}
+		if err := store.SaveCategory(ctx, c); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	custom := domain.Category{UserID: testUser, Slug: "meu_slug", Label: "Minha Categoria", Type: domain.EntryTypeExpense, Default: false}
+	if err := store.SaveCategory(ctx, custom); err != nil {
+		t.Fatalf("seed custom: %v", err)
+	}
+
+	h := NewCategoriesHandler(store)
+	w := run(h.List, authed(http.MethodGet, "/categories", ""))
+	assertStatus(t, w, http.StatusOK)
+
+	got := decodeCategories(t, w)
+	backfilled := findCategory(got, "fornecedor_perfumaria")
+	if backfilled == nil {
+		t.Fatal("the missing default category was not returned")
+	}
+	if !backfilled.Default || backfilled.Label != "Fornecedor de Perfumaria" {
+		t.Fatalf("backfilled = %+v, want the current default definition", *backfilled)
+	}
+	if c := findCategory(got, "meu_slug"); c == nil || c.Label != "Minha Categoria" {
+		t.Fatalf("user-created category was lost: %+v", got)
+	}
+
+	// The backfill must be persisted, not recomputed.
+	stored, err := store.ListCategories(ctx, testUser)
+	if err != nil {
+		t.Fatalf("list store: %v", err)
+	}
+	if findCategory(stored, "fornecedor_perfumaria") == nil {
+		t.Fatal("the missing default category was not persisted")
+	}
+
+	// A second call must be stable: same set, no duplicates, no extra writes.
+	w = run(h.List, authed(http.MethodGet, "/categories", ""))
+	assertStatus(t, w, http.StatusOK)
+	again := decodeCategories(t, w)
+	if len(again) != len(got) {
+		t.Fatalf("second call returned %d categories, want %d", len(again), len(got))
+	}
+}
+
+func TestListCategoriesRefreshesDriftedDefaultLabels(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	stale := domain.Category{UserID: testUser, Slug: "aluguel", Label: "Aluguel Antigo", Type: domain.EntryTypeExpense, Default: true}
+	if err := store.SaveCategory(ctx, stale); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h := NewCategoriesHandler(store)
+	w := run(h.List, authed(http.MethodGet, "/categories", ""))
+	assertStatus(t, w, http.StatusOK)
+
+	got := decodeCategories(t, w)
+	if c := findCategory(got, "aluguel"); c == nil || c.Label != "Aluguel" {
+		t.Fatalf("drifted label not refreshed in response: %+v", c)
+	}
+
+	stored, err := store.ListCategories(ctx, testUser)
+	if err != nil {
+		t.Fatalf("list store: %v", err)
+	}
+	if c := findCategory(stored, "aluguel"); c == nil || c.Label != "Aluguel" {
+		t.Fatalf("drifted label not refreshed in store: %+v", c)
+	}
+}
+
 func TestListCategoriesStoreFailureIs500(t *testing.T) {
 	h := NewCategoriesHandler(failingStore{Store: newStore(t), fail: "ListCategories"})
 	assertStatus(t, run(h.List, authed(http.MethodGet, "/categories", "")), http.StatusInternalServerError)

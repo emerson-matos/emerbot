@@ -566,7 +566,8 @@ func listing(ctx context.Context, store EntryLister, userID string, filter Entry
 					"'entries' (%d omitidos). Os totais acima cobrem TODOS os %d — use-os. "+
 					"Avise o usuário que o detalhamento está parcial e ofereça consultar "+
 					"um período menor.",
-				len(shown), len(matched), omitted, len(matched))
+				len(shown), len(matched), omitted, len(matched),
+			)
 		} else {
 			result["warning"] = "Lista incompleta e sem totais: informe from e to, ou aumente limit."
 		}
@@ -600,7 +601,8 @@ func listDueEntriesTool(store Store) Tool {
 					"Só se aplica a consultas SEM período (padrão: %d, máximo: %d). "+
 						"Informando from e to, o período inteiro é retornado e este "+
 						"limite é ignorado.",
-					defaultEntryLimit, maxEntryLimit)},
+					defaultEntryLimit, maxEntryLimit,
+				)},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
@@ -657,7 +659,8 @@ func searchEntriesTool(store Store) Tool {
 					"Só se aplica a consultas SEM período (padrão: %d, máximo: %d). "+
 						"Informando from e to, o período inteiro é retornado e este "+
 						"limite é ignorado.",
-					defaultEntryLimit, maxEntryLimit)},
+					defaultEntryLimit, maxEntryLimit,
+				)},
 			},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {

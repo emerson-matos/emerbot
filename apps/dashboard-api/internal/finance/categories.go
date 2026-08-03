@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
@@ -39,16 +40,30 @@ func (h *CategoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Seed defaults on first call if empty.
-	if len(cats) == 0 {
-		defaults := domain.DefaultCategories(claims.UserID)
-		for _, c := range defaults {
-			h.store.SaveCategory(r.Context(), c) //nolint:errcheck
-		}
-		cats = defaults
+	// Reconcile the user's categories against the current default definitions:
+	// missing defaults are seeded and drifted ones (label/type/default) are
+	// refreshed, so editing DefaultCategories reaches existing users on their
+	// next read.
+	changes := domain.ReconcileDefaultCategories(claims.UserID, cats)
+	for _, c := range changes {
+		h.store.SaveCategory(r.Context(), c) //nolint:errcheck
 	}
 
-	httpx.OK(w, map[string]any{"categories": cats})
+	bySlug := make(map[string]domain.Category, len(cats)+len(changes))
+	for _, c := range cats {
+		bySlug[c.Slug] = c
+	}
+	for _, c := range changes {
+		bySlug[c.Slug] = c
+	}
+
+	merged := make([]domain.Category, 0, len(bySlug))
+	for _, c := range bySlug {
+		merged = append(merged, c)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Slug < merged[j].Slug })
+
+	httpx.OK(w, map[string]any{"categories": merged})
 }
 
 type createCategoryRequest struct {
