@@ -2,11 +2,24 @@ import { describe, expect, it } from "vitest";
 import { makeEntry } from "@/test/factories";
 import {
   bucketByUrgency,
+  editEntryPath,
   effectiveDate,
   formatEffectiveDate,
   formatPaidAt,
   netAmount,
 } from "./entries";
+
+describe("editEntryPath", () => {
+  /**
+   * The transaction date is in the path because it is half the entry's address
+   * in the API — an id alone does not identify a row. A link built without it
+   * points at a route that does not exist.
+   */
+  it("addresses an entry by its transaction date and id", () => {
+    const entry = makeEntry({ EntryID: "01J", TransactionDate: "2026-07-10" });
+    expect(editEntryPath(entry)).toBe("/transacoes/2026-07-10/01J/editar");
+  });
+});
 
 describe("effectiveDate", () => {
   it("prefers the due date", () => {

@@ -68,12 +68,26 @@ func (s *InMemoryStore) SaveEntries(_ context.Context, entries []domain.Financia
 	return nil
 }
 
-func (s *InMemoryStore) GetEntry(_ context.Context, userID, entryID string) (domain.FinancialEntry, error) {
+// GetEntry mirrors the DynamoDB store's key lookup, mismatched date included:
+// there the date is half the sort key, so a wrong one addresses a row that does
+// not exist. Ignoring it here would make the fake accept requests production
+// rejects — the kind of divergence store_conformance_test.go exists to catch.
+func (s *InMemoryStore) GetEntry(_ context.Context, userID string, date domain.CalendarDate, entryID string) (domain.FinancialEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.entries[entryKey(userID, entryID)]
+	if !ok || e.TransactionDate != date {
+		return domain.FinancialEntry{}, fmt.Errorf("%w: %q on %s", ErrEntryNotFound, entryID, date)
+	}
+	return e, nil
+}
+
+func (s *InMemoryStore) FindEntryByID(_ context.Context, userID, entryID string) (domain.FinancialEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, ok := s.entries[entryKey(userID, entryID)]
 	if !ok {
-		return domain.FinancialEntry{}, fmt.Errorf("entry %q not found", entryID)
+		return domain.FinancialEntry{}, fmt.Errorf("%w: %q", ErrEntryNotFound, entryID)
 	}
 	return e, nil
 }
@@ -159,23 +173,25 @@ func basisDate(b DateBasis, e domain.FinancialEntry) (time.Time, bool) {
 	}
 }
 
-func (s *InMemoryStore) UpdateEntry(_ context.Context, entry domain.FinancialEntry) error {
+func (s *InMemoryStore) UpdateEntry(_ context.Context, previous, updated domain.FinancialEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := entryKey(entry.UserID, string(entry.EntryID))
-	if _, ok := s.entries[key]; !ok {
-		return fmt.Errorf("entry %q not found", entry.EntryID)
+	key := entryKey(updated.UserID, string(updated.EntryID))
+	stored, ok := s.entries[key]
+	if !ok || stored.TransactionDate != previous.TransactionDate {
+		return fmt.Errorf("%w: %q", ErrEntryNotFound, updated.EntryID)
 	}
-	s.entries[key] = entry
+	s.entries[key] = updated
 	return nil
 }
 
-func (s *InMemoryStore) DeleteEntry(_ context.Context, userID, entryID string) error {
+func (s *InMemoryStore) DeleteEntry(_ context.Context, userID string, date domain.CalendarDate, entryID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := entryKey(userID, entryID)
-	if _, ok := s.entries[key]; !ok {
-		return fmt.Errorf("entry %q not found", entryID)
+	stored, ok := s.entries[key]
+	if !ok || stored.TransactionDate != date {
+		return fmt.Errorf("%w: %q on %s", ErrEntryNotFound, entryID, date)
 	}
 	delete(s.entries, key)
 	return nil

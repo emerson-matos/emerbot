@@ -26,7 +26,7 @@ export const queryKeys = {
   analysis: (month: string) => ["analysis", "monthly", month] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesByMonth: () => ["entries", "byMonth"] as const,
-  entry: (id: string) => ["entries", "byId", id] as const,
+  entry: (date: string, id: string) => ["entries", "byId", date, id] as const,
   goal: (month: string) => ["goal", month] as const,
   notificationPrefs: () => ["notifications", "preferences"] as const,
   categories: () => ["categories"] as const,
@@ -217,14 +217,19 @@ function markEntryPaid<T extends EntriesPage | InfiniteEntriesData>(
   return { ...old, entries: old.entries.map(flip) };
 }
 
+// Takes the whole entry, not an id: an entry is addressed by its transaction
+// date together with its id (see api.entries), and the caller always has the
+// row it is acting on.
 export function useMarkPaidMutation() {
   const queryClient = useQueryClient();
   const entriesKey = { queryKey: ["entries"] };
 
   return useMutation({
-    mutationFn: (entryID: string) =>
-      api.entries.update(entryID, { payment_status: "paid" }),
-    onMutate: async (entryID: string) => {
+    mutationFn: (entry: Entry) =>
+      api.entries.update(entry.TransactionDate, entry.EntryID, {
+        payment_status: "paid",
+      }),
+    onMutate: async ({ EntryID: entryID }: Entry) => {
       await queryClient.cancelQueries(entriesKey);
       const previous = queryClient.getQueriesData<
         EntriesPage | InfiniteEntriesData
@@ -235,7 +240,7 @@ export function useMarkPaidMutation() {
       );
       return { previous };
     },
-    onError: (_err, _entryID, context) => {
+    onError: (_err, _entry, context) => {
       context?.previous?.forEach(([key, data]) => {
         queryClient.setQueryData(key, data);
       });
@@ -254,25 +259,33 @@ export function useMarkPaidMutation() {
 
 // A single entry, for the edit page opened by URL: the list is paged by month
 // and a bookmarked or reloaded /transacoes/:id/editar has no page to read from.
-export function useEntry(id: string | undefined) {
+export function useEntry(date: string | undefined, id: string | undefined) {
   return useQuery({
-    queryKey: queryKeys.entry(id ?? ""),
-    queryFn: () => api.entries.get(id!),
-    enabled: Boolean(id),
+    queryKey: queryKeys.entry(date ?? "", id ?? ""),
+    queryFn: () => api.entries.get(date!, id!),
+    enabled: Boolean(date && id),
+    // A 404 here means the address does not exist; retrying cannot change that,
+    // and the page has a "not found" state to show for it.
     retry: false,
   });
 }
 
-export function useUpdateEntryMutation(id: string) {
+export function useUpdateEntryMutation(date: string, id: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: UpdateEntryInput) => api.entries.update(id, data),
+    mutationFn: (data: UpdateEntryInput) => api.entries.update(date, id, data),
     onError: () => {
       toast.error("Não foi possível salvar as alterações.");
     },
     onSuccess: (entry) => {
-      queryClient.setQueryData(queryKeys.entry(id), entry);
+      // Under its *new* address: an edit that moves the transaction date moves
+      // the row, so caching it under the old one would leave a stale entry
+      // behind at a key nothing can invalidate.
+      queryClient.setQueryData(
+        queryKeys.entry(entry.TransactionDate, entry.EntryID),
+        entry,
+      );
       toast.success("Transação atualizada.");
     },
     onSettled: () => {
@@ -306,7 +319,8 @@ export function useDeleteEntryMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => api.entries.delete(id),
+    mutationFn: (entry: Entry) =>
+      api.entries.delete(entry.TransactionDate, entry.EntryID),
     onSuccess: () => {
       toast.success("Transação excluída.");
     },

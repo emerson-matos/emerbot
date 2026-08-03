@@ -21,6 +21,16 @@ export function formatPaidAt(e: Entry): string {
   return isValid(parsed) ? `em ${format(parsed, 'dd/MM', { locale: ptBR })}` : ''
 }
 
+/**
+ * Where an entry is edited. The transaction date is in the path because it is
+ * half the entry's address in the API (see api.entries) — an id alone does not
+ * identify a row. A date edit therefore changes this path, which is why the
+ * edit page navigates away on save rather than staying put.
+ */
+export function editEntryPath(e: Entry): string {
+  return `/transacoes/${e.TransactionDate}/${e.EntryID}/editar`
+}
+
 export function netAmount(entries: Entry[]): number {
   return entries.reduce((sum, e) => sum + (e.Type === 'income' ? e.Amount : -e.Amount), 0)
 }

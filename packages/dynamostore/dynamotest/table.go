@@ -281,12 +281,12 @@ func (t *Table) TransactWriteItems(_ context.Context, in *dynamodb.TransactWrite
 				return nil, err
 			}
 			if !ok {
-				return nil, transactionCancelled(i, "ConditionalCheckFailed")
+				return nil, transactionCancelled(len(in.TransactItems), i, "ConditionalCheckFailed")
 			}
 			if seen[id] {
 				// DynamoDB rejects a transaction that touches the same item
 				// twice; a store relying on that ordering has a real bug.
-				return nil, transactionCancelled(i, "ValidationError: transaction operates on the same item more than once")
+				return nil, transactionCancelled(len(in.TransactItems), i, "ValidationError: transaction operates on the same item more than once")
 			}
 			seen[id] = true
 			plan = append(plan, staged{id: id, item: cloneItem(ti.Put.Item)})
@@ -304,10 +304,10 @@ func (t *Table) TransactWriteItems(_ context.Context, in *dynamodb.TransactWrite
 				return nil, err
 			}
 			if !ok {
-				return nil, transactionCancelled(i, "ConditionalCheckFailed")
+				return nil, transactionCancelled(len(in.TransactItems), i, "ConditionalCheckFailed")
 			}
 			if seen[id] {
-				return nil, transactionCancelled(i, "ValidationError: transaction operates on the same item more than once")
+				return nil, transactionCancelled(len(in.TransactItems), i, "ValidationError: transaction operates on the same item more than once")
 			}
 			seen[id] = true
 			plan = append(plan, staged{id: id})
@@ -793,8 +793,27 @@ func tableNames(m map[string][]types.WriteRequest) []string {
 	return names
 }
 
-func transactionCancelled(index int, reason string) error {
+// transactionCancelled reports a cancelled transaction the way DynamoDB does:
+// with one CancellationReason per transact item, "None" for the ones that were
+// fine and the real code on the one that failed.
+//
+// The list matters as much as the message. Callers that need to tell a failed
+// condition from an outage — see finance.notFoundIfConditionFailed, which turns
+// one into ErrEntryNotFound and the other into a 500 — read the codes, so a
+// fake that left them empty would let that mapping pass its tests while never
+// firing in production.
+func transactionCancelled(total, index int, reason string) error {
+	code := reason
+	if i := strings.IndexByte(reason, ':'); i >= 0 {
+		code = reason[:i]
+	}
+	reasons := make([]types.CancellationReason, total)
+	for i := range reasons {
+		reasons[i] = types.CancellationReason{Code: aws.String("None")}
+	}
+	reasons[index] = types.CancellationReason{Code: aws.String(code), Message: aws.String(reason)}
 	return &types.TransactionCanceledException{
-		Message: aws.String(fmt.Sprintf("Transaction cancelled at item %d: %s", index, reason)),
+		Message:             aws.String(fmt.Sprintf("Transaction cancelled at item %d: %s", index, reason)),
+		CancellationReasons: reasons,
 	}
 }

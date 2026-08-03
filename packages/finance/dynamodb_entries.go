@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -226,9 +227,30 @@ func (s *DynamoDBStore) SaveEntries(ctx context.Context, entries []domain.Financ
 	return nil
 }
 
-func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error) {
-	// We need the date to build the SK — scan by EntryID using a filter.
-	// For simplicity in a 2-user system, query by PK and filter on EntryID.
+// GetEntry is a single GetItem: the transaction date supplies the other half
+// of the sort key, so the row is addressed directly rather than searched for.
+func (s *DynamoDBStore) GetEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) (domain.FinancialEntry, error) {
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key:       entryKeyAttrs(userID, date, domain.EntryID(entryID)),
+	})
+	if err != nil {
+		return domain.FinancialEntry{}, fmt.Errorf("get entry: %w", err)
+	}
+	if len(out.Item) == 0 {
+		return domain.FinancialEntry{}, fmt.Errorf("%w: %q on %s", ErrEntryNotFound, entryID, date)
+	}
+	var item entryItem
+	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {
+		return domain.FinancialEntry{}, fmt.Errorf("unmarshal entry: %w", err)
+	}
+	return itemToEntry(item)
+}
+
+// FindEntryByID reads the user's whole partition to locate one row, because an
+// ID on its own does not say which sort key it lives under. Only the AI's
+// edit_entry tool needs it — see the interface comment in store.go.
+func (s *DynamoDBStore) FindEntryByID(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error) {
 	entries, err := s.ListEntries(ctx, userID, EntryFilter{})
 	if err != nil {
 		return domain.FinancialEntry{}, err
@@ -238,7 +260,15 @@ func (s *DynamoDBStore) GetEntry(ctx context.Context, userID, entryID string) (d
 			return e, nil
 		}
 	}
-	return domain.FinancialEntry{}, fmt.Errorf("entry %q not found", entryID)
+	return domain.FinancialEntry{}, fmt.Errorf("%w: %q", ErrEntryNotFound, entryID)
+}
+
+// entryKeyAttrs is the primary key of one entry row.
+func entryKeyAttrs(userID string, date domain.CalendarDate, id domain.EntryID) map[string]types.AttributeValue {
+	return map[string]types.AttributeValue{
+		"PK": &types.AttributeValueMemberS{Value: pkPrefix + userID},
+		"SK": &types.AttributeValueMemberS{Value: entrySK(date, id)},
+	}
 }
 
 // basisKeys names the index and key attributes that carry a given date basis,
@@ -427,44 +457,77 @@ func sortDate(b DateBasis, e domain.FinancialEntry) time.Time {
 	}
 }
 
-func (s *DynamoDBStore) UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error {
-	if err := entry.Validate(); err != nil {
+// UpdateEntry writes updated where previous lives. It reads nothing first: the
+// caller already holds the row it is editing, and `previous` is what says which
+// key to replace.
+//
+// Existence is enforced by a condition rather than by a preceding read, so a
+// missing row still fails instead of being silently created — one conditional
+// write in place of a read plus a write.
+func (s *DynamoDBStore) UpdateEntry(ctx context.Context, previous, updated domain.FinancialEntry) error {
+	if err := updated.Validate(); err != nil {
 		return err
 	}
-	old, err := s.GetEntry(ctx, entry.UserID, string(entry.EntryID))
-	if err != nil {
-		return err
-	}
-	oldSK := entrySK(old.TransactionDate, old.EntryID)
-	newSK := entrySK(entry.TransactionDate, entry.EntryID)
-	if oldSK == newSK {
-		return s.SaveEntry(ctx, entry)
-	}
-	item, err := attributevalue.MarshalMap(entryToItem(entry))
+	item, err := attributevalue.MarshalMap(entryToItem(updated))
 	if err != nil {
 		return fmt.Errorf("marshal entry: %w", err)
 	}
+	oldSK := entrySK(previous.TransactionDate, previous.EntryID)
+	newSK := entrySK(updated.TransactionDate, updated.EntryID)
+
+	if oldSK == newSK {
+		_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:           aws.String(s.tableName),
+			Item:                item,
+			ConditionExpression: aws.String("attribute_exists(PK)"),
+		})
+		return notFoundIfConditionFailed(err, updated.EntryID)
+	}
+
+	// The transaction date moved, so the row's sort key moved with it: delete
+	// where it was and write where it now belongs, atomically, or the entry
+	// would exist twice — once under each date.
 	_, err = s.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
-		{Delete: &types.Delete{TableName: aws.String(s.tableName), Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: pkPrefix + entry.UserID},
-			"SK": &types.AttributeValueMemberS{Value: oldSK},
-		}}},
+		{Delete: &types.Delete{
+			TableName:           aws.String(s.tableName),
+			Key:                 entryKeyAttrs(previous.UserID, previous.TransactionDate, previous.EntryID),
+			ConditionExpression: aws.String("attribute_exists(PK)"),
+		}},
 		{Put: &types.Put{TableName: aws.String(s.tableName), Item: item}},
 	}})
+	return notFoundIfConditionFailed(err, updated.EntryID)
+}
+
+// notFoundIfConditionFailed turns the "attribute_exists" rejection into
+// ErrEntryNotFound, so callers tell a missing row from a failed write with
+// errors.Is instead of by inspecting AWS error types.
+func notFoundIfConditionFailed(err error, id domain.EntryID) error {
+	if err == nil {
+		return nil
+	}
+	var condFailed *types.ConditionalCheckFailedException
+	var txCanceled *types.TransactionCanceledException
+	if errors.As(err, &condFailed) {
+		return fmt.Errorf("%w: %q", ErrEntryNotFound, id)
+	}
+	if errors.As(err, &txCanceled) {
+		for _, reason := range txCanceled.CancellationReasons {
+			if reason.Code != nil && *reason.Code == "ConditionalCheckFailed" {
+				return fmt.Errorf("%w: %q", ErrEntryNotFound, id)
+			}
+		}
+	}
 	return err
 }
 
-func (s *DynamoDBStore) DeleteEntry(ctx context.Context, userID, entryID string) error {
-	entry, err := s.GetEntry(ctx, userID, entryID)
-	if err != nil {
-		return err
-	}
-	_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+func (s *DynamoDBStore) DeleteEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) error {
+	id := domain.EntryID(entryID)
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
-		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: pkPrefix + userID},
-			"SK": &types.AttributeValueMemberS{Value: entrySK(entry.TransactionDate, entry.EntryID)},
-		},
+		Key:       entryKeyAttrs(userID, date, id),
+		// DynamoDB's delete is idempotent, so without this a wrong date (or an
+		// already-deleted entry) would answer 204 and leave the row in place.
+		ConditionExpression: aws.String("attribute_exists(PK)"),
 	})
-	return err
+	return notFoundIfConditionFailed(err, id)
 }

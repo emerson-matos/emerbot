@@ -21,6 +21,10 @@ import (
 
 const testUser = "shared-ledger"
 
+// seededDate is the transaction date most of these tests seed their entry on,
+// and therefore the date half of its address.
+const seededDate = "2026-07-10"
+
 func newStore(t *testing.T) *pkgfinance.InMemoryStore {
 	t.Helper()
 	return pkgfinance.NewInMemoryStore()
@@ -90,6 +94,16 @@ func seedEntry(t *testing.T, store pkgfinance.Store, id, date string, amount int
 	return e
 }
 
+// addressed builds a request to /entries/{date}/{id} with both path values
+// set, the way the mux fills them in. The date is half the entry's key, so a
+// test that omits it is testing a 400, not the handler.
+func addressed(method, date, id, body string) *http.Request {
+	r := authed(method, "/entries/"+date+"/"+id, body)
+	r.SetPathValue("date", date)
+	r.SetPathValue("id", id)
+	return r
+}
+
 // failingStore wraps a store and fails one named operation, so the handlers'
 // 5xx branches can be exercised.
 type failingStore struct {
@@ -113,11 +127,25 @@ func (f failingStore) SaveEntry(ctx context.Context, e domain.FinancialEntry) er
 	return f.Store.SaveEntry(ctx, e)
 }
 
-func (f failingStore) UpdateEntry(ctx context.Context, e domain.FinancialEntry) error {
+func (f failingStore) UpdateEntry(ctx context.Context, previous, updated domain.FinancialEntry) error {
 	if f.fail == "UpdateEntry" {
 		return errBoom
 	}
-	return f.Store.UpdateEntry(ctx, e)
+	return f.Store.UpdateEntry(ctx, previous, updated)
+}
+
+func (f failingStore) GetEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) (domain.FinancialEntry, error) {
+	if f.fail == "GetEntry" {
+		return domain.FinancialEntry{}, errBoom
+	}
+	return f.Store.GetEntry(ctx, userID, date, entryID)
+}
+
+func (f failingStore) DeleteEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) error {
+	if f.fail == "DeleteEntry" {
+		return errBoom
+	}
+	return f.Store.DeleteEntry(ctx, userID, date, entryID)
 }
 
 func (f failingStore) ListCategories(ctx context.Context, userID string) ([]domain.Category, error) {
@@ -185,10 +213,10 @@ func TestEveryEndpointRequiresClaims(t *testing.T) {
 		target string
 	}{
 		"list entries":     {entries.List, http.MethodGet, "/entries"},
-		"get entry":        {entries.Get, http.MethodGet, "/entries/e1"},
+		"get entry":        {entries.Get, http.MethodGet, "/entries/2026-07-10/e1"},
 		"create entry":     {entries.Create, http.MethodPost, "/entries"},
-		"update entry":     {entries.Update, http.MethodPut, "/entries/e1"},
-		"delete entry":     {entries.Delete, http.MethodDelete, "/entries/e1"},
+		"update entry":     {entries.Update, http.MethodPut, "/entries/2026-07-10/e1"},
+		"delete entry":     {entries.Delete, http.MethodDelete, "/entries/2026-07-10/e1"},
 		"list categories":  {cats.List, http.MethodGet, "/categories"},
 		"create category":  {cats.Create, http.MethodPost, "/categories"},
 		"get goal":         {goals.Get, http.MethodGet, "/goals"},
@@ -439,8 +467,7 @@ func TestUpdateEntryAppliesOnlySuppliedFields(t *testing.T) {
 		e.Supplier = "fornecedor"
 	})
 
-	r := authed(http.MethodPut, "/entries/e1", `{"amount":5000}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"amount":5000}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
@@ -469,8 +496,7 @@ func TestUpdateEntryClearsExplicitlyEmptyFields(t *testing.T) {
 		e.DueDate = &d
 	})
 
-	r := authed(http.MethodPut, "/entries/e1", `{"description":"","supplier":"","due_date":""}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"description":"","supplier":"","due_date":""}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
@@ -490,12 +516,11 @@ func TestUpdateEntryMovesTheTransactionDate(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
 
-	r := authed(http.MethodPut, "/entries/e1", `{"date":"2026-08-03"}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"date":"2026-08-03"}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
-	stored, err := store.GetEntry(context.Background(), testUser, "e1")
+	stored, err := store.FindEntryByID(context.Background(), testUser, "e1")
 	if err != nil {
 		t.Fatalf("get entry: %v", err)
 	}
@@ -515,8 +540,7 @@ func TestUpdateEntryToExpenseDropsTheIncomeOrigin(t *testing.T) {
 		e.Origin = domain.OriginVenda
 	})
 
-	r := authed(http.MethodPut, "/entries/e1", `{"type":"expense"}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"type":"expense"}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
@@ -537,8 +561,7 @@ func TestUpdateEntryLeavesAnAbsentOriginAlone(t *testing.T) {
 		e.Type = domain.EntryTypeIncome
 	})
 
-	r := authed(http.MethodPut, "/entries/e1", `{"description":"corrigido"}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"description":"corrigido"}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusOK)
 
@@ -568,8 +591,7 @@ func TestUpdateEntryRejectsEmptyRequiredFields(t *testing.T) {
 		"origin":          `{"origin":"pix"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := authed(http.MethodPut, "/entries/e1", body)
-			r.SetPathValue("id", "e1")
+			r := addressed(http.MethodPut, seededDate, "e1", body)
 			assertStatus(t, run(h.Update, r), http.StatusBadRequest)
 		})
 	}
@@ -583,8 +605,7 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 		// when the button was actually pressed.
 		seedEntry(t, store, "e1", "2026-07-10", 1000)
 
-		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"paid"}`)
 		w := run(NewEntriesHandler(store, time.UTC).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
@@ -608,8 +629,7 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 		// A zone far enough east that its calendar day differs from UTC's for
 		// part of the day; the recorded date must follow the configured zone.
 		loc := time.FixedZone("UTC+14", 14*3600)
-		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"paid"}`)
 		w := run(NewEntriesHandler(store, loc).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
@@ -630,8 +650,7 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 		})
 
 		// Re-sending "paid" must not stamp today over the day it was settled.
-		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"paid"}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"paid"}`)
 		w := run(NewEntriesHandler(store, time.UTC).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
@@ -650,8 +669,7 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 			e.PaymentDate = &d
 		})
 
-		r := authed(http.MethodPut, "/entries/e1", `{"payment_status":"pending"}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"pending"}`)
 		w := run(NewEntriesHandler(store, time.UTC).Update, r)
 		assertStatus(t, w, http.StatusOK)
 
@@ -670,12 +688,11 @@ func TestUpdateEntryRejectsInvalidBeforeWriting(t *testing.T) {
 	// "transferencia" is not a valid entry type. The handler must reject it
 	// *and* leave the stored entry alone — validating after the write meant a
 	// 400 response and a corrupted ledger.
-	r := authed(http.MethodPut, "/entries/e1", `{"type":"transferencia"}`)
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodPut, seededDate, "e1", `{"type":"transferencia"}`)
 	w := run(NewEntriesHandler(store, time.UTC).Update, r)
 	assertStatus(t, w, http.StatusBadRequest)
 
-	stored, err := store.GetEntry(context.Background(), testUser, "e1")
+	stored, err := store.FindEntryByID(context.Background(), testUser, "e1")
 	if err != nil {
 		t.Fatalf("get entry: %v", err)
 	}
@@ -695,23 +712,20 @@ func TestUpdateEntryErrors(t *testing.T) {
 	})
 
 	t.Run("unknown entry", func(t *testing.T) {
-		r := authed(http.MethodPut, "/entries/ghost", `{}`)
-		r.SetPathValue("id", "ghost")
+		r := addressed(http.MethodPut, seededDate, "ghost", `{}`)
 		w := run(h.Update, r)
 		assertStatus(t, w, http.StatusNotFound)
 	})
 
 	t.Run("malformed body", func(t *testing.T) {
-		r := authed(http.MethodPut, "/entries/e1", `{`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{`)
 		w := run(h.Update, r)
 		assertStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("store failure", func(t *testing.T) {
 		failing := NewEntriesHandler(failingStore{Store: store, fail: "UpdateEntry"}, time.UTC)
-		r := authed(http.MethodPut, "/entries/e1", `{"amount":200}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"amount":200}`)
 		w := run(failing.Update, r)
 		assertStatus(t, w, http.StatusInternalServerError)
 	})
@@ -725,8 +739,7 @@ func TestGetEntry(t *testing.T) {
 	h := NewEntriesHandler(store, time.UTC)
 
 	t.Run("found", func(t *testing.T) {
-		r := authed(http.MethodGet, "/entries/e1", "")
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodGet, seededDate, "e1", "")
 		w := run(h.Get, r)
 		assertStatus(t, w, http.StatusOK)
 		assertJSONContentType(t, w)
@@ -741,39 +754,100 @@ func TestGetEntry(t *testing.T) {
 	})
 
 	t.Run("unknown entry", func(t *testing.T) {
-		r := authed(http.MethodGet, "/entries/ghost", "")
-		r.SetPathValue("id", "ghost")
+		r := addressed(http.MethodGet, seededDate, "ghost", "")
+		assertStatus(t, run(h.Get, r), http.StatusNotFound)
+	})
+
+	t.Run("wrong date", func(t *testing.T) {
+		// The date is half the key, so the right id under another date
+		// addresses a row that is not there.
+		r := addressed(http.MethodGet, "2026-01-01", "e1", "")
 		assertStatus(t, run(h.Get, r), http.StatusNotFound)
 	})
 
 	t.Run("missing id", func(t *testing.T) {
 		assertStatus(t, run(h.Get, authed(http.MethodGet, "/entries/", "")), http.StatusBadRequest)
 	})
+
+	t.Run("malformed date", func(t *testing.T) {
+		r := addressed(http.MethodGet, "10/07/2026", "e1", "")
+		assertStatus(t, run(h.Get, r), http.StatusBadRequest)
+	})
+
+	/*
+	 * A storage failure is not a missing entry. Answering 404 for one told the
+	 * user their lançamento did not exist — which on a ledger reads as "your
+	 * record is gone", not "try again". It is also what a missing API Gateway
+	 * route looks like from the browser, so the two must not be conflated in
+	 * the one place that can tell them apart.
+	 */
+	t.Run("storage failure is not a missing entry", func(t *testing.T) {
+		failing := NewEntriesHandler(failingStore{Store: store, fail: "GetEntry"}, time.UTC)
+		r := addressed(http.MethodGet, seededDate, "e1", "")
+		assertStatus(t, run(failing.Get, r), http.StatusInternalServerError)
+	})
 }
 
 func TestDeleteEntry(t *testing.T) {
 	store := newStore(t)
 	seedEntry(t, store, "e1", "2026-07-10", 1000)
+	seedEntry(t, store, "e2", "2026-07-10", 1000)
 	h := NewEntriesHandler(store, time.UTC)
 
-	r := authed(http.MethodDelete, "/entries/e1", "")
-	r.SetPathValue("id", "e1")
+	r := addressed(http.MethodDelete, seededDate, "e1", "")
 	w := run(h.Delete, r)
 	assertStatus(t, w, http.StatusNoContent)
 
-	if _, err := store.GetEntry(context.Background(), testUser, "e1"); err == nil {
+	if _, err := store.FindEntryByID(context.Background(), testUser, "e1"); err == nil {
 		t.Fatal("the entry should be gone after a successful delete")
 	}
 
 	t.Run("unknown entry is 404", func(t *testing.T) {
-		r := authed(http.MethodDelete, "/entries/ghost", "")
-		r.SetPathValue("id", "ghost")
+		r := addressed(http.MethodDelete, seededDate, "ghost", "")
 		assertStatus(t, run(h.Delete, r), http.StatusNotFound)
 	})
 
 	t.Run("missing id is 400", func(t *testing.T) {
 		assertStatus(t, run(h.Delete, authed(http.MethodDelete, "/entries/", "")), http.StatusBadRequest)
 	})
+
+	t.Run("storage failure is 500, not 404", func(t *testing.T) {
+		failing := NewEntriesHandler(failingStore{Store: store, fail: "DeleteEntry"}, time.UTC)
+		r := addressed(http.MethodDelete, seededDate, "e2", "")
+		assertStatus(t, run(failing.Delete, r), http.StatusInternalServerError)
+	})
+}
+
+// The date in the URL is the entry's address, so an edit that moves it moves
+// the address too. The response has to carry the new date or the client has no
+// way to find the row it just wrote.
+func TestUpdateEntryResponseCarriesTheNewAddress(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+	r := addressed(http.MethodPut, seededDate, "e1", `{"date":"2026-08-03"}`)
+	w := run(NewEntriesHandler(store, time.UTC).Update, r)
+	assertStatus(t, w, http.StatusOK)
+
+	var got entryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.TransactionDate != "2026-08-03" {
+		t.Fatalf("response date = %q, want the new address 2026-08-03", got.TransactionDate)
+	}
+	// And the old address must no longer resolve.
+	old := addressed(http.MethodGet, seededDate, "e1", "")
+	assertStatus(t, run(NewEntriesHandler(store, time.UTC).Get, old), http.StatusNotFound)
+}
+
+func TestUpdateEntryStorageFailureIsNot404(t *testing.T) {
+	store := newStore(t)
+	seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+	failing := NewEntriesHandler(failingStore{Store: store, fail: "GetEntry"}, time.UTC)
+	r := addressed(http.MethodPut, seededDate, "e1", `{"amount":200}`)
+	assertStatus(t, run(failing.Update, r), http.StatusInternalServerError)
 }
 
 // --- categories ---
@@ -1168,12 +1242,11 @@ func TestEntriesRejectMalformedDates(t *testing.T) {
 	})
 
 	t.Run("update due_date", func(t *testing.T) {
-		r := authed(http.MethodPut, "/entries/e1", `{"due_date":"20/08/2026"}`)
-		r.SetPathValue("id", "e1")
+		r := addressed(http.MethodPut, seededDate, "e1", `{"due_date":"20/08/2026"}`)
 		w := run(h.Update, r)
 		assertStatus(t, w, http.StatusBadRequest)
 
-		stored, err := store.GetEntry(context.Background(), testUser, "e1")
+		stored, err := store.FindEntryByID(context.Background(), testUser, "e1")
 		if err != nil {
 			t.Fatalf("get entry: %v", err)
 		}

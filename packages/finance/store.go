@@ -2,11 +2,22 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
 )
+
+// ErrEntryNotFound is what a store returns when an entry genuinely is not
+// there, as opposed to when it could not be looked up.
+//
+// The distinction is the whole point: every read used to fail with an
+// undifferentiated error, so the API answered 404 for a DynamoDB outage too and
+// told the user their lançamento did not exist. On a financial ledger, "this
+// record is gone" and "we could not reach the database" must never render the
+// same. Callers separate them with errors.Is.
+var ErrEntryNotFound = errors.New("entry not found")
 
 // DateBasis selects which of an entry's three dates From/To bound. The three
 // exist because the metrics genuinely disagree about when money counts:
@@ -191,10 +202,28 @@ type Store interface {
 	// DynamoDBStore.SaveEntries for the chunking caveat above 100 entries).
 	// Used by /recorrente to create a whole recurrence series together.
 	SaveEntries(ctx context.Context, entries []domain.FinancialEntry) error
-	GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
+	// GetEntry reads one entry by its full address. The transaction date is
+	// not decoration: the base table's sort key is ENTRY#<date>#<id>, which is
+	// what keeps the table itself ordered by transaction date — so faturamento
+	// (BasisTransaction) needs no index of its own — and what makes an ID alone
+	// insufficient to address a row. With the date this is a single GetItem.
+	GetEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) (domain.FinancialEntry, error)
+	// FindEntryByID locates an entry knowing only its ID, by reading the user's
+	// whole partition and filtering in Go.
+	//
+	// It exists for the AI's edit_entry tool, which is handed an ID by the model
+	// and has no date to go with it. Every caller that knows the date must use
+	// GetEntry instead: this one's cost is the partition, and it grows with the
+	// user's history rather than with what it returns.
+	FindEntryByID(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
 	ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error)
-	UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error
-	DeleteEntry(ctx context.Context, userID, entryID string) error
+	// UpdateEntry writes updated in place of previous. Both are needed because
+	// a changed TransactionDate moves the sort key: the old row has to be
+	// deleted and the new one written in one transaction, and only `previous`
+	// says where the old row lives. Passing an unmodified copy of what was read
+	// is the ordinary case.
+	UpdateEntry(ctx context.Context, previous, updated domain.FinancialEntry) error
+	DeleteEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) error
 
 	// Summaries
 	MonthlySummary(ctx context.Context, userID, yearMonth string) (MonthlySummary, error)

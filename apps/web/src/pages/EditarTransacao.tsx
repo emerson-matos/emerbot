@@ -28,11 +28,13 @@ function formatDay(iso: string | null): string {
 }
 
 export default function EditarTransacao() {
-  const { id } = useParams<{ id: string }>()
+  // Both halves of the entry's address: the API cannot find a row from the id
+  // alone (see api.entries).
+  const { date, id } = useParams<{ date: string; id: string }>()
   const navigate = useNavigate()
-  const entryQuery = useEntry(id)
+  const entryQuery = useEntry(date, id)
   const categoriesQuery = useCategories()
-  const updateEntry = useUpdateEntryMutation(id ?? '')
+  const updateEntry = useUpdateEntryMutation(date ?? '', id ?? '')
 
   // The stored entry is the baseline the patch is diffed against, so the form
   // is only seeded once and edits are never overwritten by a refetch.

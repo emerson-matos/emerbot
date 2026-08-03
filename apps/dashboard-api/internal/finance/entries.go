@@ -31,10 +31,46 @@ const (
 // lets a test double implement five methods instead of seventeen.
 type EntryStore interface {
 	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
-	GetEntry(ctx context.Context, userID, entryID string) (domain.FinancialEntry, error)
+	GetEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) (domain.FinancialEntry, error)
 	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
-	UpdateEntry(ctx context.Context, entry domain.FinancialEntry) error
-	DeleteEntry(ctx context.Context, userID, entryID string) error
+	UpdateEntry(ctx context.Context, previous, updated domain.FinancialEntry) error
+	DeleteEntry(ctx context.Context, userID string, date domain.CalendarDate, entryID string) error
+}
+
+// entryAddress reads the {date} and {id} path values that together address one
+// entry.
+//
+// The date is in the URL because it is half the row's key (see
+// pkgfinance.Store.GetEntry): without it the API can only find an entry by
+// reading the user's whole ledger. It is also why an edit that moves the
+// transaction date moves the entry's address — the response carries the new
+// date, and the client is expected to follow it.
+func entryAddress(r *http.Request) (domain.CalendarDate, string, error) {
+	entryID := r.PathValue("id")
+	if entryID == "" {
+		return domain.CalendarDate{}, "", errors.New("entry id is required")
+	}
+	raw := r.PathValue("date")
+	if raw == "" {
+		return domain.CalendarDate{}, "", errors.New("entry date is required")
+	}
+	t, err := domain.ParseDay(raw)
+	if err != nil {
+		return domain.CalendarDate{}, "", errors.New("invalid entry date, expected YYYY-MM-DD")
+	}
+	return domain.NewCalendarDate(t), entryID, nil
+}
+
+// entryReadError maps a store failure to a status. Only a genuinely absent
+// entry is a 404: answering that for a storage outage told the user their
+// lançamento did not exist, which on a ledger is a different and much more
+// alarming statement than "try again".
+func entryReadError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pkgfinance.ErrEntryNotFound) {
+		httpx.Error(w, "entry not found", http.StatusNotFound)
+		return
+	}
+	httpx.Error(w, "failed to read entry", http.StatusInternalServerError)
 }
 
 type EntriesHandler struct {
@@ -288,7 +324,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, responseEntry(entry))
 }
 
-// Get handles GET /entries/{id}
+// Get handles GET /entries/{date}/{id}
 func (h *EntriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
@@ -296,15 +332,15 @@ func (h *EntriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entryID := r.PathValue("id")
-	if entryID == "" {
-		httpx.Error(w, "entry id is required", http.StatusBadRequest)
+	date, entryID, err := entryAddress(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	entry, err := h.store.GetEntry(r.Context(), claims.UserID, entryID)
+	entry, err := h.store.GetEntry(r.Context(), claims.UserID, date, entryID)
 	if err != nil {
-		httpx.Error(w, "entry not found", http.StatusNotFound)
+		entryReadError(w, err)
 		return
 	}
 	httpx.OK(w, responseEntry(entry))
@@ -423,7 +459,7 @@ func (req updateEntryRequest) apply(e *domain.FinancialEntry, loc *time.Location
 	return nil
 }
 
-// Update handles PUT /entries/{id}
+// Update handles PUT /entries/{date}/{id}
 func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
@@ -431,17 +467,18 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entryID := r.PathValue("id")
-	if entryID == "" {
-		httpx.Error(w, "entry id is required", http.StatusBadRequest)
+	date, entryID, err := entryAddress(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	existing, err := h.store.GetEntry(r.Context(), claims.UserID, entryID)
+	previous, err := h.store.GetEntry(r.Context(), claims.UserID, date, entryID)
 	if err != nil {
-		httpx.Error(w, "entry not found", http.StatusNotFound)
+		entryReadError(w, err)
 		return
 	}
+	existing := previous
 
 	var req updateEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -467,14 +504,18 @@ func (h *EntriesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.store.UpdateEntry(r.Context(), existing); err != nil {
+	if err := h.store.UpdateEntry(r.Context(), previous, existing); err != nil {
+		if errors.Is(err, pkgfinance.ErrEntryNotFound) {
+			httpx.Error(w, "entry not found", http.StatusNotFound)
+			return
+		}
 		httpx.Error(w, "failed to update entry", http.StatusInternalServerError)
 		return
 	}
 	httpx.OK(w, responseEntry(existing))
 }
 
-// Delete handles DELETE /entries/{id}
+// Delete handles DELETE /entries/{date}/{id}
 func (h *EntriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
@@ -482,14 +523,14 @@ func (h *EntriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entryID := r.PathValue("id")
-	if entryID == "" {
-		httpx.Error(w, "entry id is required", http.StatusBadRequest)
+	date, entryID, err := entryAddress(r)
+	if err != nil {
+		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if err := h.store.DeleteEntry(r.Context(), claims.UserID, entryID); err != nil {
-		httpx.Error(w, "entry not found", http.StatusNotFound)
+	if err := h.store.DeleteEntry(r.Context(), claims.UserID, date, entryID); err != nil {
+		entryReadError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -44,6 +44,18 @@ export type {
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8081";
 
+/**
+ * The address of one entry: /entries/<transactionDate>/<id>.
+ *
+ * An entry's row key is its transaction date plus its id, so the API cannot
+ * find it from the id alone. That also means an edit which moves the date
+ * moves the entry's address — read the new one off the response rather than
+ * reusing the path you sent the request to.
+ */
+function entryPath(date: string, id: string): string {
+  return `/entries/${encodeURIComponent(date)}/${encodeURIComponent(id)}`;
+}
+
 interface ApiOptions extends RequestInit {
   _retry?: boolean;
 }
@@ -105,19 +117,22 @@ export const api = {
       const qs = params ? "?" + new URLSearchParams(params).toString() : "";
       return httpClient<{ entries: Entry[]; count: number }>(`/entries${qs}`);
     },
-    get: (id: string) => httpClient<Entry>(`/entries/${id}`),
+    // One entry is addressed by its transaction date *and* its id: together
+    // they are the row's key, so the date is not a filter here — it is half
+    // the address. entryPath keeps every caller building it the same way.
+    get: (date: string, id: string) => httpClient<Entry>(entryPath(date, id)),
     create: (data: CreateEntryInput) =>
       httpClient<Entry>("/entries", {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: UpdateEntryInput) =>
-      httpClient<Entry>(`/entries/${id}`, {
+    update: (date: string, id: string, data: UpdateEntryInput) =>
+      httpClient<Entry>(entryPath(date, id), {
         method: "PUT",
         body: JSON.stringify(data),
       }),
-    delete: (id: string) =>
-      httpClient<void>(`/entries/${id}`, { method: "DELETE" }),
+    delete: (date: string, id: string) =>
+      httpClient<void>(entryPath(date, id), { method: "DELETE" }),
   },
 
   summary: {

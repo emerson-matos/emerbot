@@ -1,11 +1,12 @@
 import { Fragment } from 'react'
 import { Separator } from '@/components/ui/separator'
 import PaymentGroup, { type PaymentGroupData } from './PaymentGroup'
+import type { Entry } from '@/api/types'
 
 interface Props {
   groups: PaymentGroupData[]
-  onMarkPaid?: (id: string) => void
-  onDelete?: (id: string) => void
+  onMarkPaid?: (entry: Entry) => void
+  onDelete?: (entry: Entry) => void
 }
 
 // Renders a list of grouped, urgency- or period-bucketed entries. Callers
