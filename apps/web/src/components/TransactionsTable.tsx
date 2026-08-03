@@ -13,8 +13,8 @@ import type { PaymentGroupData } from "./payments/PaymentGroup";
 interface Props {
   entries: Entry[];
   isLoading?: boolean;
-  onMarkPaid?: (id: string) => void;
-  onDelete?: (id: string) => void;
+  onMarkPaid?: (entry: Entry) => void;
+  onDelete?: (entry: Entry) => void;
 }
 
 export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDelete }: Props) {

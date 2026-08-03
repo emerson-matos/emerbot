@@ -17,7 +17,7 @@ export default function ToPayToday() {
 
   const payAllToday = () => {
     if (!window.confirm('Marcar todos os pagamentos de hoje como pagos?')) return
-    pendingToday.forEach(e => markPaid.mutate(e.EntryID))
+    pendingToday.forEach(e => markPaid.mutate(e))
   }
 
   return (

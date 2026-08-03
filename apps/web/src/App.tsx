@@ -37,7 +37,7 @@ export default function App() {
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="nova-transacao" element={<NovaTransacao />} />
               <Route path="transacoes" element={<Transactions />} />
-              <Route path="transacoes/:id/editar" element={<EditarTransacao />} />
+              <Route path="transacoes/:date/:id/editar" element={<EditarTransacao />} />
             </Route>
           </Route >
 

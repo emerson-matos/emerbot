@@ -16,14 +16,14 @@ import {
 import { cn } from '@/lib/utils'
 import { formatBRL } from '@/lib/format'
 import { categoryLabelMap } from '@/lib/categories'
-import { effectiveDate, formatEffectiveDate, formatPaidAt } from '@/lib/entries'
+import { editEntryPath, effectiveDate, formatEffectiveDate, formatPaidAt } from '@/lib/entries'
 import { useCategories } from '@/api/queries'
 import type { Entry } from '@/api/types'
 
 interface Props {
   entry: Entry
-  onMarkPaid?: (id: string) => void
-  onDelete?: (id: string) => void
+  onMarkPaid?: (entry: Entry) => void
+  onDelete?: (entry: Entry) => void
 }
 
 export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
@@ -66,7 +66,7 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={() => onMarkPaid(entry.EntryID)}>
+                <AlertDialogAction onClick={() => onMarkPaid(entry)}>
                   Confirmar
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -92,7 +92,7 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
           variant="ghost"
           size="icon-xs"
           className="text-muted-foreground hover:text-foreground"
-          render={<Link to={`/transacoes/${entry.EntryID}/editar`} />}
+          render={<Link to={editEntryPath(entry)} />}
           nativeButton={false}
           aria-label={`Editar ${entry.Description || 'transação'}`}
         >
@@ -115,7 +115,7 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={() => onDelete(entry.EntryID)}>
+                <AlertDialogAction variant="destructive" onClick={() => onDelete(entry)}>
                   Excluir
                 </AlertDialogAction>
               </AlertDialogFooter>

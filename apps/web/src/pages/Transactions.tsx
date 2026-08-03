@@ -470,8 +470,8 @@ export default function Transactions() {
               )}
               <PaymentList
                 groups={groups}
-                onMarkPaid={id => markPaid.mutate(id)}
-                onDelete={id => deleteEntry.mutate(id)}
+                onMarkPaid={entry => markPaid.mutate(entry)}
+                onDelete={entry => deleteEntry.mutate(entry)}
               />
               {hasPreviousPage && (
                 <div className="flex justify-center pt-1">

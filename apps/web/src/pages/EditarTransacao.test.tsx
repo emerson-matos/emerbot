@@ -24,9 +24,9 @@ function renderPage(entryQuery: Record<string, unknown>) {
   useUpdateEntryMutation.mockReturnValue({ mutateAsync, isPending: false })
 
   return render(
-    <MemoryRouter initialEntries={['/transacoes/e1/editar']}>
+    <MemoryRouter initialEntries={['/transacoes/2026-07-10/e1/editar']}>
       <Routes>
-        <Route path="/transacoes/:id/editar" element={<EditarTransacao />} />
+        <Route path="/transacoes/:date/:id/editar" element={<EditarTransacao />} />
         <Route path="/transacoes" element={<p>lista de transações</p>} />
       </Routes>
     </MemoryRouter>,
@@ -54,8 +54,21 @@ const description = () => screen.getByLabelText('Descrição')
 
 describe('EditarTransacao', () => {
   beforeEach(() => {
+    useEntry.mockClear()
+    useUpdateEntryMutation.mockClear()
     mutateAsync.mockReset()
     mutateAsync.mockResolvedValue(makeEntry())
+  })
+
+  /**
+   * An entry is addressed by transaction date *and* id — the two are its row
+   * key. Reading only the id from the URL is what made every request 404.
+   */
+  it('loads the entry from both halves of its address', () => {
+    renderPage(loaded())
+
+    expect(useEntry).toHaveBeenCalledWith('2026-07-10', 'e1')
+    expect(useUpdateEntryMutation).toHaveBeenCalledWith('2026-07-10', 'e1')
   })
 
   it('prefills the form from the stored entry', () => {
