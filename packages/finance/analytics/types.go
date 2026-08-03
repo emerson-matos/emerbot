@@ -144,15 +144,17 @@ type Period struct {
 	InProgress bool `json:"inProgress"`
 }
 
-// WeekdayStat is the counter-sales average for one day of the week across the
-// analysed month. Day is 0=Sunday, matching JavaScript's getDay().
+// WeekdayStat is the Gaussian-weighted average faturamento for one day of the
+// week over the trailing 8-week window. Day is 0=Sunday, matching JavaScript's
+// getDay(). Count is the number of distinct weeks that saw revenue (not the
+// number of entries), and Basis qualifies how much data the average stands on.
 type WeekdayStat struct {
-	Day     int    `json:"day"`
-	Label   string `json:"label"`
-	Avg     int64  `json:"avg"`
-	Total   int64  `json:"total"`
-	Count   int    `json:"count"`
-	IsToday bool   `json:"isToday"`
+	Day     int             `json:"day"`
+	Label   string          `json:"label"`
+	Avg     int64           `json:"avg"`
+	Count   int             `json:"count"`
+	IsToday bool            `json:"isToday"`
+	Basis   ProjectionBasis `json:"basis"`
 }
 
 // DayHighlight names a single standout day. Date is "YYYY-MM-DD", or

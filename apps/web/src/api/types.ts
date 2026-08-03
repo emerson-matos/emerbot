@@ -257,9 +257,9 @@ export interface WeekdayStat {
   day: number;
   label: string;
   avg: number;
-  total: number;
   count: number;
   isToday: boolean;
+  basis: ProjectionBasis;
 }
 
 export interface DayHighlight {

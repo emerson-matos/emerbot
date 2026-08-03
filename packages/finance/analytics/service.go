@@ -127,19 +127,15 @@ func monthEntries(ctx context.Context, store LedgerReader, userID, month string,
 }
 
 // windowReads fetches the trailing window on both date bases: faturamento by
-// the day of the sale, for the revenue projection, and everything by the day it
-// lands, for the cash runway.
+// the day of the sale, for the revenue projection and the weekday card, and
+// everything by the day it lands, for the cash runway.
 //
-// A closed month has no day left to price, so it does not pay for the window at
-// all — and every month but the current one is closed, which is most of what the
-// dashboard asks for when someone browses back through the year. buildProjection
-// decides "fechado" before consulting the rates, so skipping the reads here
-// cannot turn into a "sem_base" label.
+// The window is always fetched — even for closed months — because the weekday
+// card now uses an 8-week Gaussian-weighted average regardless of whether the
+// month is in progress. projectionWindow() computes the correct range for both
+// cases: yesterday for in-progress months, the month's last day for closed ones.
 func windowReads(ctx context.Context, store LedgerReader, userID, month string, now time.Time) (revenue, cash []domain.FinancialEntry, err error) {
 	clock := newMonthClock(month, now)
-	if !clock.inProgress {
-		return nil, nil, nil
-	}
 	from, to := clock.projectionWindow()
 	revenue, err = rangeEntries(ctx, store, userID, from.Time(), to.Time(), pkgfinance.BasisTransaction)
 	if err != nil {
