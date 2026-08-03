@@ -70,7 +70,8 @@ func (a Analysis) DigestLines() []string {
 	// whatever is actually wrong with the month comes first.
 	if a.Period.InProgress && a.Period.ComparableThroughDay == 0 {
 		lines = append(lines, fmt.Sprintf(
-			"Comparação com o mês passado a partir do dia %d — a primeira semana ainda não fechou.", daysInWeek+1))
+			"Comparação com o mês passado a partir do dia %d — a primeira semana ainda não fechou.", daysInWeek+1,
+		))
 	}
 
 	return lines

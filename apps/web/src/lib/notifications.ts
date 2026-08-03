@@ -95,17 +95,14 @@ export function useNotifications(): NotificationsResult {
   // alert must count only this month's faturamento: a loan or aporte, or a sale
   // from an earlier month, must not trigger "meta atingida".
   //
-  // A sale is decided by Origin, not by category. The Origin === undefined arm
-  // is the same migration shim as domain.IsRevenue: entries written before the
-  // field existed fall back to the old category rule. Delete it together with
-  // the Go one, once scripts/migrate-origin has run.
+  // A sale is decided by Origin alone, mirroring domain.IsRevenue. An income
+  // entry with no origin is a stray the backfill never reached (there are none
+  // in the ledger after scripts/migrate-origin) and does not count as a sale.
   //
   // Bucketed by the transaction date, not the effective date: a sale belongs to
   // the month it was made, so a crediário sale counts toward this month's goal
   // even though it is due next month.
-  const isSale = (e: Entry) =>
-    e.Type === 'income'
-    && (e.Origin === undefined || e.Origin === '' ? e.Category !== 'outros_receitas' : e.Origin === 'venda')
+  const isSale = (e: Entry) => e.Type === 'income' && e.Origin === 'venda'
   const faturamentoThisMonth = entries
     .filter(e => isSale(e) && e.TransactionDate.slice(0, 7) === currentMonth)
     .reduce((sum, e) => sum + e.Amount, 0)
