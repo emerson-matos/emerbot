@@ -884,11 +884,12 @@ func TestProjectionRatesKeepADayTheShopNeverOpensAtZero(t *testing.T) {
 	}
 }
 
-// A window with almost nothing in it knows nothing about the *shape* of a week,
-// so asserting a zero for an unseen weekday would be a guess dressed as data.
-// Spreading what little is known evenly is the honest reading, and the basis
-// says so out loud.
-func TestProjectionRatesSpreadThinWindowsEvenly(t *testing.T) {
+// A thin window under-projects rather than over-projects, and says so through
+// the basis. An unobserved weekday used to take the overall daily average
+// whenever fewer than seven days had traded — which could not tell a new user
+// from a shop that opens twice a week, and put the overstating side of a
+// sixfold step in front of whoever had the least data.
+func TestProjectionRatesDoNotInventTakingsForAThinWindow(t *testing.T) {
 	window := []domain.FinancialEntry{
 		sale(t, "2026-08-01", 100000), // Saturday
 		sale(t, "2026-08-02", 200000), // Sunday
@@ -897,8 +898,8 @@ func TestProjectionRatesSpreadThinWindowsEvenly(t *testing.T) {
 	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
 	rates := projectionRates(window, from, to)
 
-	if want := int64(150000); rates.avg[3] != want {
-		t.Errorf("an unobserved Wednesday = %d, want the overall daily average (%d)", rates.avg[3], want)
+	if rates.avg[3] != 0 {
+		t.Errorf("an unobserved Wednesday = %d, want 0 rather than a spread average", rates.avg[3])
 	}
 	// The days that *were* observed keep their own figures.
 	if rates.avg[6] != 100000 || rates.avg[0] != 200000 {
@@ -913,22 +914,82 @@ func TestProjectionRatesSpreadThinWindowsEvenly(t *testing.T) {
 	}
 }
 
+// The step that removing the spread got rid of. A pharmacy that only opens on
+// Saturdays must project the same whether six or seven of the window's
+// Saturdays are on record — one more day of data must not move the month.
+func TestProjectionRatesDoNotLurchOnOneMoreTradingDay(t *testing.T) {
+	saturdays := []string{"2026-06-13", "2026-06-20", "2026-06-27", "2026-07-04", "2026-07-11", "2026-07-18"}
+	var six []domain.FinancialEntry
+	for _, d := range saturdays {
+		six = append(six, sale(t, d, 1000000))
+	}
+	seven := append(append([]domain.FinancialEntry{}, six...), sale(t, "2026-07-25", 1000000))
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	withSix := projectionRates(six, from, to)
+	withSeven := projectionRates(seven, from, to)
+
+	for d := 0; d < daysInWeek; d++ {
+		if d == 6 {
+			continue
+		}
+		if withSix.avg[d] != 0 {
+			t.Errorf("weekday %d = %d on six Saturdays, want 0 — the shop does not open then", d, withSix.avg[d])
+		}
+	}
+	if withSix.avg[6] != withSeven.avg[6] {
+		t.Errorf("Saturday = %d then %d; one more Saturday must not change its average",
+			withSix.avg[6], withSeven.avg[6])
+	}
+}
+
 // The weekday card is a factual reading of the analysed month — its empty state
 // says "neste mês" — so it must not quietly start showing figures from weeks
 // the user is not looking at. Only the projection widened its window.
 func TestWeekdayStatsStayAboutTheAnalysedMonth(t *testing.T) {
 	entries := []domain.FinancialEntry{
-		sale(t, "2026-07-06", 500000), // a Monday, last month
+		// A Wednesday in *July*, on a day number that falls inside August's
+		// finished days. Filtering on the day number alone let this through into
+		// August's card — and a test built on a later July date passed without
+		// exercising the rule at all.
+		sale(t, "2026-07-01", 500000),
 		sale(t, "2026-08-01", 100000), // a Saturday, this month
 	}
 
 	stats := weekdayStats(entries, at12(t, "2026-08-03"), clock(t, "2026-08", "2026-08-03"))
 
-	if stats[1].Count != 0 || stats[1].Avg != 0 {
+	if stats[3].Count != 0 || stats[3].Avg != 0 {
+		t.Errorf("Wednesday = %+v, want nothing — that sale belongs to July", stats[3])
+	}
+	if stats[1].Count != 0 {
 		t.Errorf("Monday = %+v, want nothing — August has not traded a Monday yet", stats[1])
 	}
 	if stats[6].Avg != 100000 {
 		t.Errorf("Saturday = %d, want August's own figure", stats[6].Avg)
+	}
+}
+
+// Input.Now is already in the pharmacy's timezone, so the month it falls in must
+// be read off its own calendar. Reading it in UTC disagreed with every other
+// field on the clock for the last hours of each Brazilian evening.
+func TestMonthClockReadsNowInItsOwnTimezone(t *testing.T) {
+	saoPaulo := time.FixedZone("-03", -3*3600)
+	lateOnTheLastOfJuly := time.Date(2026, 7, 31, 22, 0, 0, 0, saoPaulo) // already 1 August in UTC
+
+	if c := newMonthClock("2026-07", lateOnTheLastOfJuly); !c.inProgress || c.today != 31 {
+		t.Errorf("July = %+v, want the month still in progress on its last evening", c)
+	}
+	// And August has not started, so it must not be reported as in progress —
+	// which used to hand it today=31, through=30 and a projection window running
+	// thirty days into the future, plus the store read that goes with one.
+	//
+	// (A month that has not begun still lands in the same branch as a closed one,
+	// which is why its window is meaningless rather than empty. That predates
+	// this and costs nothing now: only a month in progress is ever priced, or
+	// fetched for.)
+	august := newMonthClock("2026-08", lateOnTheLastOfJuly)
+	if august.inProgress {
+		t.Errorf("August = %+v, want a month that has not begun to be treated as not in progress", august)
 	}
 }
 

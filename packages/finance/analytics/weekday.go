@@ -63,8 +63,13 @@ func (b weekdayBucket) avg() int64 {
 // average down all day, further the earlier the analysis runs.
 func weekdayStats(entries []domain.FinancialEntry, now time.Time, clock monthClock) []WeekdayStat {
 	today := int(now.Weekday())
+	// The month is checked, not just the day number. Callers pass entries
+	// already scoped to the analysed month, so this was latent — but "day of the
+	// month <= through" alone lets 1 July into an August card whenever August has
+	// reached its 2nd, and the card's whole claim is that it is about one month.
 	buckets := weekdayBuckets(entries, func(d domain.CalendarDate) bool {
-		return d.Day() <= clock.through
+		return d.Year() == clock.first.Year() && d.Month() == clock.first.Month() &&
+			d.Day() <= clock.through
 	})
 
 	stats := make([]WeekdayStat, 0, daysInWeek)
@@ -101,12 +106,18 @@ type dailyRates struct {
 //
 // A weekday that never traded across the whole window stays at zero: with
 // projectionWindowWeeks chances observed, that is a day the pharmacy does not
-// open, and inventing takings for it would overstate every projection. The one
-// exception is a window too thin to have an opinion about the shape of a week at
-// all — fewer than seven days traded, which in practice means a user in their
-// first weeks — where an unobserved weekday takes the overall daily average
-// instead. Nothing about *which* days trade is known yet, so spreading what is
-// known evenly beats asserting a zero.
+// open, and inventing takings for it would overstate every projection.
+//
+// An unobserved weekday used to take the overall daily average whenever the
+// window held fewer than seven trading days, on the theory that such a window
+// knows nothing about the shape of a week. But the count of trading days cannot
+// tell "a user in their first weeks" from "a shop that opens twice a week and
+// closed for a holiday", and it made the projection lurch: a pharmacy trading
+// only Saturdays, with six of eight in the window, priced all six other weekdays
+// at a full Saturday — and the seventh Saturday, one more day of data, cut the
+// projection sixfold. The overstating side was the one shown to whoever had the
+// least data. A thin window now under-projects, which is the safe direction, and
+// says so through Basis instead.
 //
 // window may carry days from outside the window; the range is applied here, so
 // a caller that over-fetches cannot widen the average by accident.
@@ -121,23 +132,9 @@ func projectionRates(window []domain.FinancialEntry, from, to domain.CalendarDat
 	})
 
 	var rates dailyRates
-	var traded int64
 	for d := range buckets {
 		rates.sample += len(buckets[d].dates)
-		traded += buckets[d].total
-	}
-	if rates.sample == 0 {
-		return rates
-	}
-
-	overall := roundToInt64(float64(traded) / float64(rates.sample))
-	for d := range buckets {
-		switch {
-		case len(buckets[d].dates) > 0:
-			rates.avg[d] = buckets[d].avg()
-		case rates.sample < daysInWeek:
-			rates.avg[d] = overall
-		}
+		rates.avg[d] = buckets[d].avg()
 	}
 	return rates
 }

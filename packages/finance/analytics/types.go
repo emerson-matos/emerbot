@@ -378,9 +378,19 @@ type KPIs struct {
 // 4: projection.remaining and projection.projected changed basis — the days
 // still to come are priced from a trailing eight-week window instead of from
 // the analysed month's own finished days, so they no longer collapse toward
-// zero at the start of a month. Added projection.basis. Without the bump the
-// deploy day would diff a window-based projection against a month-based one and
-// report the difference as the month having moved.
+// zero at the start of a month. Added projection.basis.
+//
+// The diff never reads projection directly — it compares health.status and the
+// three KPIs — but health.status derives from projection.onTrack, so without the
+// bump the deploy day would report a phantom "saúde melhorou" on every ledger
+// whose projection crossed its target under the new basis.
+//
+// Note what a bump costs: the handler refuses to *serve* a snapshot of another
+// version, not merely to compare it, so GET /analysis answers 404 from the
+// deploy until the notifier writes the next one (or someone calls POST
+// /analysis). Nothing consumes that endpoint today — the dashboard reads
+// /analysis/monthly, which is computed live — but a future consumer would see a
+// gap of up to a day.
 const SchemaVersion = 4
 
 // Analysis is the full picture of one month — the payload of

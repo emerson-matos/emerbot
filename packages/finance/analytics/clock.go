@@ -55,7 +55,13 @@ func newMonthClock(month string, now time.Time) monthClock {
 		total = last.Day()
 		first = time.Date(start.Year(), start.Month(), 1, 12, 0, 0, 0, now.Location())
 	}
-	if domain.MonthOf(now) != month {
+	// now's own calendar, not domain.MonthOf, which reads it in UTC. Input.Now is
+	// already in the pharmacy's timezone and every other field here is taken from
+	// its local fields, so comparing a UTC month against them disagreed with
+	// itself for the last hours of each evening in Brazil: at 22:00 on 31 July,
+	// asking for August answered "in progress, today is the 31st", and the
+	// projection window that follows from it ran thirty days into the future.
+	if now.Format(domain.MonthLayout) != month {
 		return monthClock{through: total, total: total, first: first}
 	}
 	return monthClock{
