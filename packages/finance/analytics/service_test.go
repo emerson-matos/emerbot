@@ -77,6 +77,50 @@ func TestAssemblePullsTheWholeWindow(t *testing.T) {
 	}
 }
 
+// The start-of-month case, end to end through the store. On 3 August the shop
+// has only traded its opening weekend; the projection has to reach back past the
+// month boundary to price the twenty-one weekdays still to come, or it reports a
+// quarter of the goal and calls it a forecast.
+func TestAssembleProjectsTheStartOfAMonthFromEarlierWeeks(t *testing.T) {
+	ctx := context.Background()
+	store := pkgfinance.NewInMemoryStore()
+
+	// Eight weeks of trading through July, every day of the week worked.
+	var entries []domain.FinancialEntry
+	for d := day(t, "2026-06-08").Time(); !d.After(day(t, "2026-07-31").Time()); d = d.AddDate(0, 0, 1) {
+		entries = append(entries, sale(t, d.Format("2006-01-02"), 100000))
+	}
+	// August's own weekend, and nothing else yet.
+	entries = append(entries, sale(t, "2026-08-01", 90000), sale(t, "2026-08-02", 60000))
+	seed(t, store, entries...)
+	if err := store.SaveGoal(ctx, domain.Goal{UserID: "u1", Month: "2026-08", RevenueTarget: 3000000}); err != nil {
+		t.Fatalf("save goal: %v", err)
+	}
+
+	got, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	// 29 days left at roughly R$1.000,00 a day. Priced from August alone, the
+	// 21 weekdays among them counted as zero and Remaining came to a third of
+	// this.
+	if got.Projection.Remaining < 2500000 {
+		t.Errorf("Remaining = %d, want the days left priced from the trailing weeks, not from August's two days",
+			got.Projection.Remaining)
+	}
+	if got.Projection.Basis != ProjectionFromWindow {
+		t.Errorf("Basis = %q, want an ordinary projection", got.Projection.Basis)
+	}
+	// The card, meanwhile, still reports August: it has not traded a Monday.
+	if got.Weekdays[1].Count != 0 {
+		t.Errorf("Weekdays[Monday] = %+v, want August's own (empty) reading", got.Weekdays[1])
+	}
+	if got.ToolPayload()["projecao_base"] != string(ProjectionFromWindow) {
+		t.Errorf("projecao_base = %v, want the basis spelled out for the bot", got.ToolPayload()["projecao_base"])
+	}
+}
+
 func TestAssembleRejectsAMalformedMonth(t *testing.T) {
 	if _, err := Assemble(context.Background(), pkgfinance.NewInMemoryStore(), "u1", "julho", at12(t, "2026-07-15")); err == nil {
 		t.Error("expected an error for a malformed month")

@@ -249,6 +249,26 @@ type WeekPace struct {
 	Days int `json:"days"`
 }
 
+// ProjectionBasis says how much the projection knows. The days still to come
+// are priced from the trailing weeks (see projectionRates), and a window with
+// barely anything in it must not produce a figure that reads as confidently as
+// one built on two months of trading.
+type ProjectionBasis string
+
+const (
+	// ProjectionFromWindow is the ordinary case: a week or more of trading days
+	// inside the window. Nothing to qualify.
+	ProjectionFromWindow ProjectionBasis = "janela"
+	// ProjectionPartial is fewer than seven days traded across the whole window
+	// — a pharmacy in its first weeks on the app. The figure is real but it will
+	// still move a lot.
+	ProjectionPartial ProjectionBasis = "parcial"
+	// ProjectionNoBasis is nothing traded in the window at all. There is no
+	// projection to speak of, and consumers must say that rather than print a
+	// figure that is only the month's actual takings wearing a different label.
+	ProjectionNoBasis ProjectionBasis = "sem_base"
+)
+
 // Projection is where the month lands and what it would take to close the gap
 // to the income goal. Every amount is faturamento (see isFaturamento),
 // matching how the target is set.
@@ -271,6 +291,9 @@ type Projection struct {
 	// reach Target. 0 when the target is already met or there is nothing to
 	// pace against.
 	NeededPerDay int64 `json:"neededPerDay"`
+	// Basis is how much trading the projection was built from. Consumers render
+	// it as a qualifier; they must not re-derive one from the amounts.
+	Basis ProjectionBasis `json:"basis"`
 }
 
 // Pacing reports whether there is anything to pace against: a target, and days
@@ -345,7 +368,14 @@ type KPIs struct {
 // kpis.previousMonthRevenueUpToDay (Period and Trends carry them now);
 // weekComparison.previousUpToDay became weekComparison.pace; every
 // retrospective figure now stops at yesterday instead of at today.
-const SchemaVersion = 3
+//
+// 4: projection.remaining and projection.projected changed basis — the days
+// still to come are priced from a trailing eight-week window instead of from
+// the analysed month's own finished days, so they no longer collapse toward
+// zero at the start of a month. Added projection.basis. Without the bump the
+// deploy day would diff a window-based projection against a month-based one and
+// report the difference as the month having moved.
+const SchemaVersion = 4
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

@@ -57,6 +57,17 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		return Analysis{}, err
 	}
 
+	// The projection's window is not month-aligned and reaches back past the
+	// previous month, so neither read above covers it. It is one more Query and
+	// a cheap one: on the transaction basis the range goes straight into a
+	// BETWEEN on the table's own sort key, so a window crossing month boundaries
+	// costs the same as a single month.
+	windowFrom, windowTo := newMonthClock(month, now).projectionWindow()
+	windowRevenueEntries, err := rangeEntries(ctx, store, userID, windowFrom.Time(), windowTo.Time(), pkgfinance.BasisTransaction)
+	if err != nil {
+		return Analysis{}, err
+	}
+
 	summaryByMonth, err := store.MultiMonthlySummary(ctx, userID, months)
 	if err != nil {
 		return Analysis{}, fmt.Errorf("monthly summaries: %w", err)
@@ -89,6 +100,7 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		PreviousEntries:        previousEntries,
 		RevenueEntries:         revenueEntries,
 		PreviousRevenueEntries: previousRevenueEntries,
+		WindowRevenueEntries:   windowRevenueEntries,
 		Summaries:              summaries,
 		Goals:                  goals,
 		CashFlowPoints:         points,
@@ -101,9 +113,22 @@ func monthEntries(ctx context.Context, store LedgerReader, userID, month string,
 	if err != nil {
 		return nil, err
 	}
+	entries, err := rangeEntries(ctx, store, userID, from, to, basis)
+	if err != nil {
+		return nil, fmt.Errorf("month %s: %w", month, err)
+	}
+	return entries, nil
+}
+
+// rangeEntries reads an arbitrary span of days, both ends inclusive. The
+// projection's window is not month-shaped, and the store pushes From/To into the
+// sort key of whichever basis is asked for, so a span crossing months is a
+// single Query rather than one per month.
+func rangeEntries(ctx context.Context, store LedgerReader, userID string, from, to time.Time, basis pkgfinance.DateBasis) ([]domain.FinancialEntry, error) {
 	entries, err := store.ListEntries(ctx, userID, pkgfinance.EntryFilter{From: &from, To: &to, DateBasis: basis})
 	if err != nil {
-		return nil, fmt.Errorf("list entries for %s (%s basis): %w", month, basis, err)
+		return nil, fmt.Errorf("list entries %s..%s (%s basis): %w",
+			from.Format("2006-01-02"), to.Format("2006-01-02"), basis, err)
 	}
 	return entries, nil
 }

@@ -22,17 +22,17 @@ import "time"
 // todayRevenue is what has already been sold today; it is subtracted from
 // today's own weekday average so the day is not counted twice — once inside
 // Actual, once again as a day still expected to bring a full day's takings.
-func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time, clock monthClock, todayRevenue int64) Projection {
+//
+// rates price the days still to come, and they come from the trailing weeks
+// rather than from the analysed month — see projectionRates for why a month's
+// own first days cannot price themselves.
+func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock monthClock, todayRevenue int64) Projection {
 	projection := Projection{
 		Actual:        goals.RevenueActual,
 		Projected:     goals.RevenueActual,
 		Target:        goals.RevenueTarget,
 		DaysRemaining: goals.DaysRemaining,
-	}
-
-	avgByWeekday := make(map[int]int64, len(weekdays))
-	for _, w := range weekdays {
-		avgByWeekday[w.Day] = w.Avg
+		Basis:         rates.basis(),
 	}
 
 	// From today, inclusive: today is a day the pharmacy can still sell on.
@@ -43,7 +43,7 @@ func buildProjection(weekdays []WeekdayStat, goals GoalProgress, now time.Time, 
 	// land the day on its neighbour.
 	for day := clock.today; clock.inProgress && day <= clock.total; day++ {
 		d := time.Date(now.Year(), now.Month(), day, 12, 0, 0, 0, now.Location())
-		avg := avgByWeekday[int(d.Weekday())]
+		avg := rates.avg[int(d.Weekday())]
 		if day == clock.today {
 			// Only the part of an ordinary day that has not happened yet is
 			// still ahead of us.

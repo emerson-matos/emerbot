@@ -147,6 +147,12 @@ func (a Analysis) ToolPayload() map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
+		// How the projection was arrived at, and how much trading it stands on.
+		// Spelled out because the model reads the figure aloud, and a projection
+		// built on a user's first three days must not be quoted with the same
+		// confidence as one built on eight weeks.
+		"projecao_base":              string(a.Projection.Basis),
+		"projecao_janela_em_semanas": projectionWindowWeeks,
 		// The goal is a sales target, so it is measured against faturamento —
 		// see domain.IsRevenue. It can differ from "faturamento" above only in
 		// that the goal is capped at 100%.
