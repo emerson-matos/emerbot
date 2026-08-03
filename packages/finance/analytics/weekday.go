@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"math"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -65,41 +66,147 @@ func (b weekdayBucket) avg() int64 {
 	return roundToInt64(float64(b.total) / float64(len(b.dates)))
 }
 
-// weekdayStats averages faturamento per day of the week across the analysed
-// month. It is the "Média por Dia da Semana" card, and it is deliberately about
-// *this month only* — the empty state reads "neste mês", and a day of the week
-// the pharmacy has not sold on yet must show a dash rather than borrow a figure
-// from an earlier week. The projection, which cannot afford that dash, has its
-// own window: see projectionRates.
+// gaussianSigma is the standard deviation (in weeks) for the Gaussian weighting
+// applied to the trailing 8-week window. A value of 2 means roughly 95% of the
+// weight falls within ±2 weeks of the most recent week: recent weeks dominate,
+// older ones fade, and a single unusual week moves the average by at most an
+// eighth rather than a quarter.
+const gaussianSigma = 2.0
+
+// gaussianWeight returns the Gaussian weight for a given week offset from the
+// most recent week. Offset 0 (most recent) yields 1.0; older weeks decay
+// following exp(-0.5 * (offset/σ)²).
+func gaussianWeight(weekOffset int) float64 {
+	x := float64(weekOffset) / gaussianSigma
+	return math.Exp(-0.5 * x * x)
+}
+
+// weekStart returns the Monday of the week containing d. Go's time.Weekday
+// numbers Monday as 1, so (weekday-1) days back always lands on Monday.
+// Sunday (0) wraps to 6 days back.
+func weekStart(d domain.CalendarDate) domain.CalendarDate {
+	t := d.Time()
+	wd := int(t.Weekday())
+	mondayOffset := wd - 1
+	if wd == 0 {
+		mondayOffset = 6
+	}
+	return domain.NewCalendarDate(t.AddDate(0, 0, -mondayOffset))
+}
+
+// weekdayStatsWeighted computes a Gaussian-weighted average of faturamento per
+// day of the week over the trailing 8-week window. It replaces the former
+// weekdayStats which only looked at the analysed month, because a month's own
+// first days could not price the weekdays still to come and an unusual single
+// week distorted the whole card.
+//
+// The Gaussian weighting (σ = 2 weeks) means recent weeks count more than
+// older ones: a single holiday or one-off event two months ago barely moves
+// the average, while a trend shift this week shows up almost immediately.
+//
+// Entries are first aggregated per (weekday, week) pair — two sales on one
+// Monday count as one Monday for the weighted total. This prevents a busy day
+// from having outsized influence on the average. Count is the number of
+// distinct weeks that saw revenue for each weekday.
 //
 // Today is left out entirely: it is a day still being traded, and folding a
 // morning's takings in as though it were a whole Tuesday drags that weekday's
 // average down all day, further the earlier the analysis runs.
-func weekdayStats(entries []domain.FinancialEntry, now time.Time, clock monthClock) []WeekdayStat {
+func weekdayStatsWeighted(window []domain.FinancialEntry, from, to domain.CalendarDate, now time.Time) []WeekdayStat {
 	today := int(now.Weekday())
-	// The month is checked, not just the day number. Callers pass entries
-	// already scoped to the analysed month, so this was latent — but "day of the
-	// month <= through" alone lets 1 July into an August card whenever August has
-	// reached its 2nd, and the card's whole claim is that it is about one month.
-	buckets := weekdayBuckets(entries, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+
+	// Per-(weekday, week) aggregation. Each distinct week that saw revenue for
+	// a weekday contributes one bucket; multiple entries on the same day collapse
+	// into a single bucket. This is the key invariant: a busy day does not get
+	// more weight than a quiet one.
+	type weekBucket struct {
+		total int64
+		week  string // Monday date string, used as map key
+	}
+	// weekdayWeeks[weekday] collects one bucket per distinct week.
+	weekdayWeeks := make([]map[string]*weekBucket, daysInWeek)
+	for i := range weekdayWeeks {
+		weekdayWeeks[i] = map[string]*weekBucket{}
+	}
+
+	endMonday := weekStart(to)
+
+	for _, e := range window {
+		if !domain.IsRevenue(e) {
+			continue
+		}
 		d := e.TransactionDate
-		return d, domain.IsRevenue(e) &&
-			d.Year() == clock.first.Year() && d.Month() == clock.first.Month() &&
-			d.Day() <= clock.through
-	})
+		if !within(d, from, to) {
+			continue
+		}
+
+		wd := int(d.Time().Weekday())
+		mKey := weekStart(d).String()
+
+		b, exists := weekdayWeeks[wd][mKey]
+		if !exists {
+			weekOffset := int(endMonday.Time().Sub(weekStart(d).Time()).Hours() / 24 / 7)
+			if weekOffset < 0 || weekOffset >= projectionWindowWeeks {
+				continue
+			}
+			b = &weekBucket{week: mKey}
+			weekdayWeeks[wd][mKey] = b
+		}
+		b.total += e.Amount
+	}
+
+	// Apply Gaussian weights to the per-week buckets and compute the weighted
+	// average for each weekday.
+	var weightedTotal [daysInWeek]float64
+	var weightSum [daysInWeek]float64
+
+	for wd := 0; wd < daysInWeek; wd++ {
+		for _, b := range weekdayWeeks[wd] {
+			weekOffset := int(endMonday.Time().Sub(weekStart(dayFromStr(b.week)).Time()).Hours() / 24 / 7)
+			if weekOffset < 0 || weekOffset >= projectionWindowWeeks {
+				continue
+			}
+			w := gaussianWeight(weekOffset)
+			weightedTotal[wd] += float64(b.total) * w
+			weightSum[wd] += w
+		}
+	}
 
 	stats := make([]WeekdayStat, 0, daysInWeek)
 	for d := 0; d < daysInWeek; d++ {
+		count := len(weekdayWeeks[d])
+		var avg int64
+		var basis ProjectionBasis
+		switch {
+		case count == 0:
+			basis = ProjectionNoBasis
+		case count < daysInWeek:
+			basis = ProjectionPartial
+		default:
+			basis = ProjectionFromWindow
+		}
+		if weightSum[d] > 0 {
+			avg = roundToInt64(weightedTotal[d] / weightSum[d])
+		}
 		stats = append(stats, WeekdayStat{
 			Day:     d,
 			Label:   weekdayLabels[d],
-			Avg:     buckets[d].avg(),
-			Total:   buckets[d].total,
-			Count:   len(buckets[d].dates),
+			Avg:     avg,
+			Count:   count,
 			IsToday: d == today,
+			Basis:   basis,
 		})
 	}
 	return stats
+}
+
+// dayFromStr parses a "YYYY-MM-DD" string back into a CalendarDate. It is used
+// inside weekdayStatsWeighted to recover a date from a map key for weekOffset
+// computation. The string always comes from CalendarDate.String(), so the parse
+// cannot fail.
+func dayFromStr(s string) domain.CalendarDate {
+	t, _ := time.Parse("2006-01-02", s)
+	return domain.NewCalendarDate(t)
 }
 
 // dailyRates prices each day of the week for the projection: what a Tuesday

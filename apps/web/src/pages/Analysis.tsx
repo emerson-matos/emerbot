@@ -304,9 +304,9 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
 
   return (
     <Section
-      title="Média por Dia da Semana"
+      title="Média das Últimas 8 Semanas por Dia da Semana"
       icon={Calendar}
-      empty={traded ? undefined : 'Nenhuma venda de balcão registrada neste mês.'}
+      empty={traded ? undefined : 'Nenhuma venda de balcão registrada nas últimas 8 semanas.'}
     >
       {/* Weekday order, always. Today used to be sorted to the front, which on
           any day but a Sunday left a strip labelled Qua, Dom, Seg, Ter… — a
@@ -321,16 +321,19 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
             <p className="mt-1 text-sm font-semibold tabular-nums">
               {day.count > 0 ? formatBRL(day.avg) : '—'}
             </p>
-            {/* Days with a sale are counted; a bare "—" already says there
+            {/* Weeks with a sale are counted; a bare "—" already says there
                 were none, and "0x" underneath it read like a third figure. */}
             {day.count > 0 && (
               <p className="text-[10px] text-muted-foreground">
-                {day.count} {day.count === 1 ? 'dia' : 'dias'}
+                {day.count} {day.count === 1 ? 'semana' : 'semanas'}
               </p>
             )}
           </div>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">
+        Semanas mais recentes têm maior peso (Gaussiana σ=2).
+      </p>
     </Section>
   )
 }

@@ -12,6 +12,10 @@ import (
 // WeekdayStat.Day numbering the dashboard already renders.
 var weekdayLabels = [7]string{"Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"}
 
+// weekdayFullLabels is the full Portuguese name for each weekday, used in the
+// chatbot payload so the model can read them aloud naturally.
+var weekdayFullLabels = [7]string{"domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"}
+
 // monthAbbrev mirrors what pt-BR gives for {month: 'short'} — the trailing dot
 // included, because that is what the dashboard labels used to show.
 var monthAbbrev = [12]string{

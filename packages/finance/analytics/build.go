@@ -105,7 +105,11 @@ func Build(in Input) Analysis {
 	}
 	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, clock, faturamento)
-	weekdays := weekdayStats(in.RevenueEntries, in.Now, clock)
+	// The trailing window is computed once and shared by the weekday card and the
+	// projection: the card uses it with Gaussian weighting, the projection with
+	// a flat average. Both need the same range.
+	windowFrom, windowTo := clock.projectionWindow()
+	weekdays := weekdayStatsWeighted(in.WindowRevenueEntries, windowFrom, windowTo, in.Now)
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
 	// the bot — they each used to work one out for themselves and disagreed.
@@ -114,7 +118,6 @@ func Build(in Input) Analysis {
 	// is the card and stays about this month alone: reading the month's own
 	// finished days priced every weekday it had not reached yet at zero, so the
 	// projection was worth least on the days it was consulted most.
-	windowFrom, windowTo := clock.projectionWindow()
 	rates := projectionRates(in.WindowRevenueEntries, windowFrom, windowTo)
 	projection := buildProjection(rates, goals, in.Now, clock, revenueOnDay(in.RevenueEntries, clock.today))
 	// One month-over-month comparison, measured over the same finished days of

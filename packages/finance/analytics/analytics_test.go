@@ -3,6 +3,7 @@ package analytics
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -114,15 +115,20 @@ func TestBuildTrend(t *testing.T) {
 
 func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	// Two sales on the same Monday, one on the next — the Monday average is
-	// over two Mondays, not three sales.
+	// over two Mondays, not three sales. With Gaussian weighting and both
+	// Mondays in the most recent weeks, the weighted average reflects both.
 	entries := []domain.FinancialEntry{
 		sale(t, "2026-07-06", 10000),
 		sale(t, "2026-07-06", 20000),
 		sale(t, "2026-07-13", 30000),
 		expense(t, "2026-07-06", "aluguel", 90000),
 	}
+	// Window: June 19 – July 14 (through=14 on July 15, end=first+13=July 14,
+	// start=end-55=June 19).
+	from := day(t, "2026-06-19")
+	to := day(t, "2026-07-14")
 
-	stats := weekdayStats(entries, at12(t, "2026-07-15"), clock(t, "2026-07", "2026-07-15")) // a Wednesday
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15")) // a Wednesday
 
 	monday := stats[1]
 	if monday.Label != "Seg" {
@@ -131,9 +137,10 @@ func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	if monday.Count != 2 {
 		t.Errorf("Count = %d, want 2 distinct Mondays", monday.Count)
 	}
-	if monday.Total != 60000 {
-		t.Errorf("Total = %d, want 60000 (expenses must not count)", monday.Total)
-	}
+	// July 6 (offset=1, w≈0.882) * 30000 + July 13 (offset=0, w=1.0) * 30000
+	// avg = 56467 / 1.882 ≈ 30000.
+	// Both Mondays happen to have the same total per day, so the weighted avg
+	// is pulled slightly toward the more recent one but stays at 30000.
 	if monday.Avg != 30000 {
 		t.Errorf("Avg = %d, want 30000", monday.Avg)
 	}
@@ -211,13 +218,20 @@ func TestALoanIsNotASalesDayButIsStillCash(t *testing.T) {
 		t.Errorf("BestBalance = %+v, want the loan's day to still show the cash", h.BestBalance)
 	}
 
-	stats := weekdayStats(entries, at12(t, "2026-07-15"), clock(t, "2026-07", "2026-07-15"))
-	var total int64
-	for _, s := range stats {
-		total += s.Total
+	// The loan is not revenue, so it must not appear in the weekday averages.
+	// Wednesday (July 1) has only the sale.
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+
+	wednesday := stats[3] // July 1 is a Wednesday
+	if wednesday.Avg != 50000 {
+		t.Errorf("Wednesday avg = %d, want 50000 (sale only, loan excluded)", wednesday.Avg)
 	}
-	if total != 50000 {
-		t.Errorf("weekday total = %d, want only the sale (50000), loan excluded", total)
+	// Thursday (July 10) has only the loan, which is not revenue — must be empty.
+	thursday := stats[4]
+	if thursday.Count != 0 || thursday.Avg != 0 {
+		t.Errorf("Thursday = %+v, want nothing — the loan is not revenue", thursday)
 	}
 }
 
@@ -947,28 +961,59 @@ func TestProjectionRatesDoNotLurchOnOneMoreTradingDay(t *testing.T) {
 }
 
 // The weekday card is a factual reading of the analysed month — its empty state
-// says "neste mês" — so it must not quietly start showing figures from weeks
-// the user is not looking at. Only the projection widened its window.
-func TestWeekdayStatsStayAboutTheAnalysedMonth(t *testing.T) {
+// The weekday card now uses an 8-week trailing window. Entries outside the
+// window are excluded; entries inside the window (even from other months) count
+// with Gaussian weighting. This test verifies the window boundary is respected.
+func TestWeekdayStatsUseTrailingWindow(t *testing.T) {
 	entries := []domain.FinancialEntry{
-		// A Wednesday in *July*, on a day number that falls inside August's
-		// finished days. Filtering on the day number alone let this through into
-		// August's card — and a test built on a later July date passed without
-		// exercising the rule at all.
+		// A Wednesday in July, outside the 8-week window for August 3:
+		// window = June 26 – Aug 2. July 1 IS inside this window (June 26 <= July 1 <= Aug 2).
 		sale(t, "2026-07-01", 500000),
 		sale(t, "2026-08-01", 100000), // a Saturday, this month
 	}
+	// Window for August 3: from June 26 to Aug 2.
+	from := day(t, "2026-06-26")
+	to := day(t, "2026-08-02")
 
-	stats := weekdayStats(entries, at12(t, "2026-08-03"), clock(t, "2026-08", "2026-08-03"))
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-08-03"))
 
-	if stats[3].Count != 0 || stats[3].Avg != 0 {
-		t.Errorf("Wednesday = %+v, want nothing — that sale belongs to July", stats[3])
+	// July 1 (Wednesday) is inside the window, so Wednesday should have data.
+	if stats[3].Count != 1 {
+		t.Errorf("Wednesday Count = %d, want 1 (July 1 is inside the 8-week window)", stats[3].Count)
 	}
-	if stats[1].Count != 0 {
-		t.Errorf("Monday = %+v, want nothing — August has not traded a Monday yet", stats[1])
+	if stats[3].Avg != 500000 {
+		t.Errorf("Wednesday Avg = %d, want 500000", stats[3].Avg)
 	}
+	// August 1 (Saturday) is inside the window.
 	if stats[6].Avg != 100000 {
 		t.Errorf("Saturday = %d, want August's own figure", stats[6].Avg)
+	}
+}
+
+// An entry far outside the window must not leak into the card.
+func TestWeekdayStatsExcludeEntriesOutsideWindow(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-05-01", 99999), // far outside the window for July
+		sale(t, "2026-07-06", 10000), // a Monday, inside the window
+	}
+	// Window for July 15: from June 10 to July 14.
+	from := day(t, "2026-06-10")
+	to := day(t, "2026-07-14")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+
+	// Monday should only have the July 6 entry, not the May 1 one.
+	monday := stats[1]
+	if monday.Count != 1 {
+		t.Errorf("Monday Count = %d, want 1 (May entry outside window)", monday.Count)
+	}
+	if monday.Avg != 10000 {
+		t.Errorf("Monday Avg = %d, want 10000", monday.Avg)
+	}
+	// Wednesday (May 1) must not appear.
+	wednesday := stats[3]
+	if wednesday.Count != 0 || wednesday.Avg != 0 {
+		t.Errorf("Wednesday = %+v, want nothing — May 1 is outside the window", wednesday)
 	}
 }
 
@@ -1890,5 +1935,220 @@ func TestCashInRatesReadTheDayTheMoneyLands(t *testing.T) {
 	}
 	if want := int64(200000); rates.avg[int(time.Friday)] != want {
 		t.Errorf("Friday = %d, want both receipts averaged (%d)", rates.avg[int(time.Friday)], want)
+	}
+}
+
+// --- Gaussian weighting tests ---
+
+func TestGaussianWeightDistribution(t *testing.T) {
+	// Offset 0 must be exactly 1.0.
+	if w := gaussianWeight(0); w != 1.0 {
+		t.Errorf("weight(0) = %f, want 1.0", w)
+	}
+	// Offset 2 (one σ): exp(-0.5) ≈ 0.607.
+	if w := gaussianWeight(2); math.Abs(w-0.60653) > 0.001 {
+		t.Errorf("weight(2) = %f, want ≈0.607", w)
+	}
+	// Offset 4 (two σ): exp(-2) ≈ 0.135.
+	if w := gaussianWeight(4); math.Abs(w-0.13534) > 0.001 {
+		t.Errorf("weight(4) = %f, want ≈0.135", w)
+	}
+	// Offset 7 (edge): very small but non-zero.
+	if w := gaussianWeight(7); w > 0.05 {
+		t.Errorf("weight(7) = %f, want < 0.05", w)
+	}
+	// Monotonically decreasing.
+	for i := 1; i <= 7; i++ {
+		if gaussianWeight(i) >= gaussianWeight(i-1) {
+			t.Errorf("weight(%d) = %f >= weight(%d) = %f, want strictly decreasing",
+				i, gaussianWeight(i), i-1, gaussianWeight(i-1))
+		}
+	}
+}
+
+// A constant series (100 every week) must produce avg = 100 regardless of
+// the Gaussian weights. This proves the algorithm does not distort stable data.
+func TestWeekdayStatsWeightedConstantSeries(t *testing.T) {
+	// 8 consecutive Mondays, each with R$100.
+	var entries []domain.FinancialEntry
+	for i := 0; i < 8; i++ {
+		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7) // Mon Jun 1, Jun 8, ...
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000, // R$100.00
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	// Window covers all 8 Mondays.
+	from := day(t, "2026-06-01")
+	to := day(t, "2026-07-26")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-27")) // a Monday
+
+	monday := stats[1]
+	if monday.Count != 8 {
+		t.Errorf("Count = %d, want 8 distinct Mondays", monday.Count)
+	}
+	if monday.Avg != 10000 {
+		t.Errorf("Avg = %d, want 10000 (constant series must not be distorted)", monday.Avg)
+	}
+}
+
+// An old outlier (week 7) must barely move the average, while recent normal
+// values dominate. This is the core reason for Gaussian weighting.
+func TestWeekdayStatsWeightedOutlierSuppression(t *testing.T) {
+	// 7 recent Mondays at R$100, 1 old Monday (week 7) at R$5000.
+	var entries []domain.FinancialEntry
+	// The recent normal series: June 1 through July 6 (Mondays).
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	// The old outlier: May 25 (7 weeks before July 13, week 7).
+	entries = append(entries, domain.FinancialEntry{
+		TransactionDate: day(t, "2026-05-25"), // a Monday
+		Amount:          500000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "venda_balcao",
+		Origin:          domain.OriginVenda,
+	})
+
+	// Window ends at July 13 so weekStart(July 13) = July 13 (week 0).
+	// Loop produces: Jun 1(6), Jun 8(5), Jun 15(4), Jun 22(3), Jun 29(2),
+	// Jul 6(1), Jul 13(0) = 7 recent + May 18(7) = 8 total.
+	from := day(t, "2026-05-25")
+	to := day(t, "2026-07-13")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-14")) // a Tuesday
+
+	monday := stats[1]
+	if monday.Count != 8 {
+		t.Errorf("Count = %d, want 8", monday.Count)
+	}
+	// Simple average would be (7*10000 + 500000) / 8 = 71250.
+	// Gaussian average must be much closer to 10000 because the outlier is old
+	// (week 7, weight ≈ 0.01) while all normal entries are recent (weeks 0–6).
+	if monday.Avg > 20000 {
+		t.Errorf("Avg = %d, want << 20000 — old outlier must be suppressed", monday.Avg)
+	}
+	if monday.Avg < 10000 {
+		t.Errorf("Avg = %d, want >= 10000 — the outlier still contributes something", monday.Avg)
+	}
+}
+
+// A recent outlier must dominate the average — the algorithm is responsive to
+// trend changes, not frozen in the past.
+func TestWeekdayStatsWeightedRecencyBias(t *testing.T) {
+	// 7 old Mondays at R$100, 1 recent Monday at R$5000.
+	var entries []domain.FinancialEntry
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	entries = append(entries, domain.FinancialEntry{
+		TransactionDate: day(t, "2026-07-06"), // a Monday (most recent)
+		Amount:          500000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "venda_balcao",
+		Origin:          domain.OriginVenda,
+	})
+
+	from := day(t, "2026-05-18")
+	to := day(t, "2026-07-12")
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-13"))
+
+	monday := stats[1]
+	// The recent outlier (500000 at offset 0, w=1.0) must pull the average
+	// well above the old series (10000 at offsets 1–7).
+	if monday.Avg < 50000 {
+		t.Errorf("Avg = %d, want >> 50000 — recent outlier must dominate", monday.Avg)
+	}
+}
+
+func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
+	// No data → sem_base.
+	empty := weekdayStatsWeighted(nil, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if empty[1].Basis != ProjectionNoBasis {
+		t.Errorf("empty Monday basis = %q, want %q", empty[1].Basis, ProjectionNoBasis)
+	}
+
+	// 3 distinct weeks → parcial.
+	var few []domain.FinancialEntry
+	for i := 0; i < 3; i++ {
+		date := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		few = append(few, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	fewStats := weekdayStatsWeighted(few, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if fewStats[1].Basis != ProjectionPartial {
+		t.Errorf("3-week Monday basis = %q, want %q", fewStats[1].Basis, ProjectionPartial)
+	}
+
+	// 7 distinct weeks → janela.
+	var many []domain.FinancialEntry
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		many = append(many, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	manyStats := weekdayStatsWeighted(many, day(t, "2026-05-18"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if manyStats[1].Basis != ProjectionFromWindow {
+		t.Errorf("7-week Monday basis = %q, want %q", manyStats[1].Basis, ProjectionFromWindow)
+	}
+}
+
+func TestWeekdayStatsWeightedIsToday(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-06", 10000), // a Monday
+	}
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+
+	// On a Wednesday, Monday is not today.
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	if stats[1].IsToday {
+		t.Error("Monday should not be today on a Wednesday")
+	}
+	if !stats[3].IsToday {
+		t.Error("Wednesday should be flagged as today")
+	}
+}
+
+func TestWeekdayStatsWeightedExpensesExcluded(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-06", 10000),
+		expense(t, "2026-07-06", "aluguel", 90000),
+	}
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	monday := stats[1]
+	if monday.Avg != 10000 {
+		t.Errorf("Avg = %d, want 10000 (expense must not count)", monday.Avg)
 	}
 }
