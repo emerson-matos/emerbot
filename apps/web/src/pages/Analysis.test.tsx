@@ -161,11 +161,11 @@ describe("Analysis page", () => {
     // estimate label on the one figure on this card that is not an estimate.
     const closed = analysisData();
     closed.projection = { ...closed.projection, basis: "fechado" };
-    const { container } = renderWith(closed);
+    renderWith(closed);
 
-    expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
-      "últimas 8 semanas",
-    );
+    expect(
+      screen.queryByText("Pela média de cada dia da semana nas últimas 8 semanas."),
+    ).not.toBeInTheDocument();
   });
 
   it("labels the per-day ask by every day left, not business days", () => {
@@ -233,7 +233,7 @@ describe("Analysis page", () => {
       "Recomendações",
       "Composição de Despesas",
       "Dias com Maior Saída de Caixa",
-      "Média por Dia da Semana",
+      "Média das Últimas 8 Semanas por Dia da Semana",
     ]) {
       expect(screen.getByText(title)).toBeInTheDocument();
     }
