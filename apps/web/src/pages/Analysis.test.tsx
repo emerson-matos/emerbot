@@ -19,6 +19,8 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     month: "2026-07",
     period: {
       throughDay: 25,
+      // Whole weeks: 25 closed days is three of them.
+      comparableThroughDay: 21,
       daysRemaining: 6,
       daysTotal: 31,
       inProgress: true,
@@ -90,6 +92,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       daysUntilNegative: null,
       lowestProjected: 2810655,
       lowestProjectedDate: "2026-07-31",
+      expectsReceipts: true,
     },
     recommendations: [
       {
@@ -264,6 +267,71 @@ describe("Analysis page", () => {
   });
 });
 
+describe("Analysis in the opening week of a month", () => {
+  // Days have closed, but not a whole week of them, so the backend has no
+  // like-for-like window: the 1st and 2nd of August are a Saturday and a
+  // Sunday, the 1st and 2nd of July a Wednesday and a Thursday. It zeroes both
+  // sides and reports comparableThroughDay 0. The page used to render
+  // "↓ 22% vs mês passado até o dia 2" for a pharmacy trading exactly as it had
+  // the month before.
+  function thirdOfMonth() {
+    const data = analysisData();
+    data.period = {
+      throughDay: 2,
+      comparableThroughDay: 0,
+      daysRemaining: 29,
+      daysTotal: 31,
+      inProgress: true,
+    };
+    data.trends = {
+      faturamento: { current: 0, previous: 0, change: 0, direction: "stable" },
+      despesa: { current: 0, previous: 0, change: 0, direction: "stable" },
+      resultado: { current: 0, previous: 0, change: 0, direction: "stable" },
+    };
+    data.recommendations = data.recommendations.slice(0, 1);
+    return data;
+  }
+
+  it("says the week has not closed instead of drawing a fall", () => {
+    const { container } = renderWith(thirdOfMonth());
+
+    expect(screen.getAllByText("Primeira semana — sem base para comparar")).toHaveLength(3);
+    expect(
+      screen.getByText(
+        "A primeira semana do mês ainda não fechou — a comparação com o mês passado começa no dia 8.",
+      ),
+    ).toBeInTheDocument();
+    // And not the first-day copy: two days really have closed.
+    expect(container.textContent).not.toContain("ainda não há dia fechado");
+    expect(container.textContent).not.toContain("% vs mês passado");
+  });
+});
+
+describe("the cash position card", () => {
+  it("says the runway counts an ordinary day's receipts", () => {
+    renderWith(analysisData());
+
+    expect(
+      screen.getByText("Contando o recebimento médio de cada dia da semana nos dias que faltam."),
+    ).toBeInTheDocument();
+  });
+
+  // Without trading history the days ahead are priced at nothing, so the curve
+  // is the month's bills against none of its sales. Announcing a balance about
+  // to go negative off that is the alarm this guard exists to stop.
+  it("makes no runway claim without trading history", () => {
+    const data = analysisData();
+    data.cashPosition = { ...data.cashPosition, expectsReceipts: false, daysUntilNegative: 1 };
+
+    const { container } = renderWith(data);
+
+    expect(container.textContent).not.toContain("Saldo fica negativo");
+    expect(
+      screen.getByText(/Sem histórico de recebimento para projetar/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("Analysis on the first day of a month", () => {
   // The month has not had a finished day, so the backend zeroes every
   // retrospective figure and reports throughDay 0. The page must say the month
@@ -271,7 +339,7 @@ describe("Analysis on the first day of a month", () => {
   // vs mês passado até o dia 1" on every 1st.
   function firstOfMonth() {
     const data = analysisData();
-    data.period = { throughDay: 0, daysRemaining: 31, daysTotal: 31, inProgress: true };
+    data.period = { throughDay: 0, comparableThroughDay: 0, daysRemaining: 31, daysTotal: 31, inProgress: true };
     data.trends = {
       faturamento: { current: 0, previous: 0, change: 0, direction: "stable" },
       despesa: { current: 0, previous: 0, change: 0, direction: "stable" },

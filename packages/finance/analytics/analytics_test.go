@@ -381,9 +381,12 @@ func TestBuildHistoryKeepsMonthsAligned(t *testing.T) {
 
 func TestCashPosition(t *testing.T) {
 	now := at12(t, "2026-07-10")
+	// No trading history, so the days ahead are credited with nothing and the
+	// curve is exactly the booked one — the shape these cases are about.
+	var noRates dailyRates
 
 	t.Run("no projection", func(t *testing.T) {
-		got := buildCashPosition(nil, now)
+		got := buildCashPosition(nil, noRates, now)
 		if got.DaysUntilNegative != nil || got.LowestProjectedDate != "2026-07-10" {
 			t.Errorf("empty position = %+v, want zeroes anchored to today", got)
 		}
@@ -397,7 +400,7 @@ func TestCashPosition(t *testing.T) {
 			{Date: "2026-07-14", RunningBalance: -9000},
 			{Date: "2026-07-31", RunningBalance: 2000},
 		}
-		got := buildCashPosition(points, now)
+		got := buildCashPosition(points, noRates, now)
 
 		if got.CurrentBalance != 15000 {
 			t.Errorf("CurrentBalance = %d, want today's 15000", got.CurrentBalance)
@@ -415,7 +418,7 @@ func TestCashPosition(t *testing.T) {
 
 	t.Run("a balance already negative today is not a future crossing", func(t *testing.T) {
 		points := []pkgfinance.CashFlowPoint{{Date: "2026-07-10", RunningBalance: -100}}
-		if got := buildCashPosition(points, now); got.DaysUntilNegative != nil {
+		if got := buildCashPosition(points, noRates, now); got.DaysUntilNegative != nil {
 			t.Errorf("DaysUntilNegative = %v, want nil — the crossing has already happened", *got.DaysUntilNegative)
 		}
 	})
@@ -1040,7 +1043,9 @@ func TestRecommendationsFlagTrendsAndRunway(t *testing.T) {
 		Despesa:     MonthTrend{Current: 140000, Previous: 100000, Change: 40, Direction: TrendUp},
 	}
 	oneDay := 1
-	cash := CashPosition{DaysUntilNegative: &oneDay}
+	// ExpectsReceipts: the crossing survives an ordinary day's takings being
+	// counted, which is the only version of it worth an alert.
+	cash := CashPosition{DaysUntilNegative: &oneDay, ExpectsReceipts: true}
 
 	// A closed month, so the messages carry no "até o dia N" caveat.
 	recs := buildRecommendations(WeekComparison{}, Projection{}, trends, cash, comparison{clock: clock(t, "2026-06", "2026-07-10")})
@@ -1058,8 +1063,9 @@ func TestRecommendationsFlagTrendsAndRunway(t *testing.T) {
 			t.Errorf("recommendation %d = %q, want %q", i, titles[i], want[i])
 		}
 	}
-	if recs[2].Message != "O saldo fica negativo em 1 dia. Reduza despesas ou antecipe recebimentos." {
-		t.Errorf("runway message = %q, want the singular day form", recs[2].Message)
+	want2 := "Mesmo contando o recebimento de um dia normal, o saldo fica negativo em 1 dia. Reduza despesas ou antecipe recebimentos."
+	if recs[2].Message != want2 {
+		t.Errorf("runway message = %q, want %q", recs[2].Message, want2)
 	}
 }
 
@@ -1250,7 +1256,7 @@ func TestBuildToleratesAnEmptyMonth(t *testing.T) {
 
 func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	analysis := Analysis{
-		Period: Period{ThroughDay: 14, DaysRemaining: 10, DaysTotal: 31, InProgress: true},
+		Period: Period{ThroughDay: 14, ComparableThroughDay: 14, DaysRemaining: 10, DaysTotal: 31, InProgress: true},
 		Projection: Projection{
 			Target: 1000000, Actual: 800000, DaysRemaining: 10, NeededPerDay: 20000,
 		},
@@ -1408,8 +1414,8 @@ func TestComparisonUsesWholeMonthsForAClosedMonth(t *testing.T) {
 	if got.clock.inProgress {
 		t.Error("inProgress = true, want false — June is over")
 	}
-	if got.suffix() != "" {
-		t.Errorf("suffix = %q, want no window caveat on a closed month", got.suffix())
+	if got.windowSuffix() != "" {
+		t.Errorf("suffix = %q, want no window caveat on a closed month", got.windowSuffix())
 	}
 	if got.current.income != 140000 || got.previous.income != 70000 {
 		t.Errorf("totals = %d vs %d, want both months whole", got.current.income, got.previous.income)
@@ -1516,7 +1522,9 @@ func TestPartialMonthStillReportsARealDrop(t *testing.T) {
 	if dropped == nil {
 		t.Fatalf("expected an income-drop insight, got %+v", got.Health.Messages)
 	}
-	if want := "50% abaixo do mês passado (até o dia 9)"; dropped.Description != want {
+	// The 7th, not the 9th: the window closes on whole weeks, so days 8 and 9
+	// wait for the second week to finish before they can be held against July.
+	if want := "50% abaixo do mês passado (até o dia 7)"; dropped.Description != want {
 		t.Errorf("description = %q, want %q — the window has to be stated", dropped.Description, want)
 	}
 }
@@ -1611,11 +1619,276 @@ func TestMonthOverMonthMessagesAlwaysNameTheirWindow(t *testing.T) {
 		Faturamento: MonthTrend{Current: 75000, Previous: 100000, Change: -25, Direction: TrendDown},
 		Despesa:     MonthTrend{Current: 140000, Previous: 100000, Change: 40, Direction: TrendUp},
 	}
+	// The 14th: thirteen days have closed, of which the first seven are the
+	// comparable window.
 	window := comparison{clock: clock(t, "2026-07", "2026-07-14")}
 
 	for _, r := range buildRecommendations(WeekComparison{}, Projection{}, trends, CashPosition{}, window) {
-		if !strings.Contains(r.Message, "até o dia 13") {
+		if !strings.Contains(r.Message, "até o dia 7") {
 			t.Errorf("recommendation %q does not name the window it measured: %q", r.Title, r.Message)
 		}
+	}
+}
+
+// The bug the comparison window exists for. On 3 August 2026 the pharmacy had
+// traded its opening weekend at exactly the rate every July weekend had brought
+// — it was doing precisely as well as the month before. The comparison ran the
+// 1st and 2nd, a Saturday and a Sunday, against the 1st and 2nd of July, a
+// Wednesday and a Thursday, and reported a 53% collapse with a red alert.
+func TestOpeningWeekDoesNotCompareMismatchedWeekdays(t *testing.T) {
+	var entries []domain.FinancialEntry
+	// July worked every day: R$1.500,00 on weekdays, R$700,00 at weekends.
+	for d := day(t, "2026-07-01").Time(); !d.After(day(t, "2026-07-31").Time()); d = d.AddDate(0, 0, 1) {
+		amount := int64(150000)
+		if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			amount = 70000
+		}
+		entries = append(entries, sale(t, d.Format("2006-01-02"), amount))
+	}
+	// August's Saturday and Sunday, at July's own weekend rate.
+	august := []domain.FinancialEntry{sale(t, "2026-08-01", 70000), sale(t, "2026-08-02", 70000)}
+
+	got := Build(Input{
+		Month:                  "2026-08",
+		Entries:                august,
+		PreviousEntries:        entries,
+		RevenueEntries:         august,
+		PreviousRevenueEntries: entries,
+		Now:                    at12(t, "2026-08-03"),
+	})
+
+	if got.Period.ThroughDay != 2 {
+		t.Errorf("ThroughDay = %d, want 2 — two days really have closed", got.Period.ThroughDay)
+	}
+	if got.Period.ComparableThroughDay != 0 {
+		t.Errorf("ComparableThroughDay = %d, want 0 — no whole week has closed", got.Period.ComparableThroughDay)
+	}
+	if got.Trends.Faturamento.Direction != TrendStable || got.Trends.Faturamento.Change != 0 {
+		t.Errorf("Faturamento trend = %+v, want no direction: a weekend against two weekdays is not a comparison",
+			got.Trends.Faturamento)
+	}
+	for _, r := range got.Recommendations {
+		if r.Title == "Receita caiu" {
+			t.Errorf("recommendation %q fired on a pharmacy trading exactly as it did last month: %s", r.Title, r.Message)
+		}
+	}
+	for _, m := range got.Health.Messages {
+		if m.Type == InsightRevenueDrop || m.Type == InsightExpenseGrowth {
+			t.Errorf("month-over-month insight %q fired in the opening week: %s", m.Type, m.Description)
+		}
+	}
+}
+
+func TestComparableWindowClosesOnWholeWeeks(t *testing.T) {
+	tests := []struct {
+		name       string
+		month, now string
+		want       int
+	}{
+		{"the first day", "2026-08", "2026-08-01", 0},
+		{"mid opening week", "2026-08", "2026-08-03", 0},
+		// The 8th: the 1st through the 7th have closed, one of every weekday.
+		{"the last day of the opening week", "2026-08", "2026-08-07", 0},
+		{"the first day with a whole week behind it", "2026-08", "2026-08-08", 7},
+		{"the window holds until the next week closes", "2026-08", "2026-08-14", 7},
+		{"two weeks", "2026-08", "2026-08-15", 14},
+		{"a closed month is compared whole", "2026-07", "2026-08-03", 31},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clock(t, tc.month, tc.now).comparableThrough(); got != tc.want {
+				t.Errorf("comparableThrough = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// The opening week loses the comparison, not the month. What has actually
+// happened here still gets reported — and each line names the window it was
+// measured over, which mid-month are two different windows.
+func TestOpeningWeekStillReportsTheMonthItself(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-08-01", 70000),
+		sale(t, "2026-08-02", 70000),
+		expense(t, "2026-08-01", "aluguel", 30000),
+	}
+	compared := buildComparison(clock(t, "2026-08", "2026-08-03"), entries, nil, entries, nil)
+
+	if compared.realized.balance != 110000 {
+		t.Errorf("realized balance = %d, want both closed days (110000)", compared.realized.balance)
+	}
+	if compared.current.revenue != 0 {
+		t.Errorf("comparison revenue = %d, want nothing — there is no comparable window yet", compared.current.revenue)
+	}
+	if compared.comparable() {
+		t.Error("comparable = true, want false in the opening week")
+	}
+
+	health := buildHealth(entries, compared, WeekComparison{}, Projection{})
+	var positive bool
+	for _, m := range health.Messages {
+		if m.Title == "Resultado positivo" {
+			positive = true
+			if want := "Entradas maiores que despesas (até o dia 2)"; m.Description != want {
+				t.Errorf("description = %q, want %q", m.Description, want)
+			}
+		}
+		if m.Type == InsightMonthStart {
+			t.Error("month_start insight fired on the 3rd — two days have closed")
+		}
+	}
+	if !positive {
+		t.Errorf("expected the month's own result to still be reported, got %+v", health.Messages)
+	}
+}
+
+// Mid-month the two windows diverge, and every line has to name its own. A
+// result stated through the 13th beside a percentage measured through the 7th,
+// both labelled "até o dia 13", is the misstatement this split exists to stop.
+func TestTheTwoWindowsAreLabelledSeparately(t *testing.T) {
+	c := comparison{clock: clock(t, "2026-07", "2026-07-14")}
+
+	if want := " (até o dia 13)"; c.realizedSuffix() != want {
+		t.Errorf("realizedSuffix = %q, want %q", c.realizedSuffix(), want)
+	}
+	if want := " (até o dia 7)"; c.windowSuffix() != want {
+		t.Errorf("windowSuffix = %q, want %q", c.windowSuffix(), want)
+	}
+}
+
+func TestDigestSaysWhyThereIsNoComparisonYet(t *testing.T) {
+	analysis := Analysis{
+		Period: Period{ThroughDay: 2, ComparableThroughDay: 0, DaysRemaining: 29, DaysTotal: 31, InProgress: true},
+		Health: Health{Status: HealthBoa},
+	}
+
+	lines := analysis.DigestLines()
+	last := lines[len(lines)-1]
+	if want := "Comparação com o mês passado a partir do dia 8 — a primeira semana ainda não fechou."; last != want {
+		t.Errorf("last line = %q, want %q", last, want)
+	}
+	if analysis.ToolPayload()["sem_semana_fechada_para_comparar"] != true {
+		t.Error("the bot payload has to spell the missing comparison out; the model reads a 0 as a collapse")
+	}
+
+	// And on the 1st, where nothing has closed at all, the existing month-start
+	// line already says it — no second sentence about the week.
+	first := Analysis{Period: Period{ThroughDay: 0, DaysRemaining: 31, DaysTotal: 31, InProgress: true}}
+	if got := first.DigestLines(); len(got) != 1 {
+		t.Errorf("first-day digest = %v, want the single month-start line", got)
+	}
+}
+
+// The runway used to be the month's whole bill list against none of its sales.
+// Rent booked for the 5th sank the balance, and the alert fired at the start of
+// every month on a pharmacy that was never in danger.
+func TestRunwayCountsAnOrdinaryDaysReceipts(t *testing.T) {
+	now := at12(t, "2026-08-03")
+	// The booked curve: R$2.000,00 today, then R$1.500,00 of rent on the 5th.
+	points := []pkgfinance.CashFlowPoint{
+		{Date: "2026-08-03", RunningBalance: 200000},
+		{Date: "2026-08-04", RunningBalance: 200000},
+		{Date: "2026-08-05", ProjectedExpense: 350000, RunningBalance: -150000},
+		{Date: "2026-08-06", RunningBalance: -150000},
+	}
+	// An ordinary day brings R$1.000,00 in.
+	rates := dailyRates{sample: daysInWeek}
+	for d := range rates.avg {
+		rates.avg[d] = 100000
+	}
+
+	got := buildCashPosition(points, rates, now)
+
+	if got.CurrentBalance != 200000 {
+		t.Errorf("CurrentBalance = %d, want today's booked balance untouched (200000)", got.CurrentBalance)
+	}
+	if got.DaysUntilNegative != nil {
+		t.Errorf("DaysUntilNegative = %d, want none: three days of ordinary takings cover the rent", *got.DaysUntilNegative)
+	}
+	if !got.ExpectsReceipts {
+		t.Error("ExpectsReceipts = false, want true — the window had trading in it")
+	}
+	// R$3.000,00 booked to the 6th plus four days at R$1.000,00.
+	if want := int64(250000); got.EndOfMonthProjection != want {
+		t.Errorf("EndOfMonthProjection = %d, want %d", got.EndOfMonthProjection, want)
+	}
+
+	// A hole an ordinary day cannot fill is still reported.
+	points[2] = pkgfinance.CashFlowPoint{Date: "2026-08-05", ProjectedExpense: 900000, RunningBalance: -700000}
+	points[3] = pkgfinance.CashFlowPoint{Date: "2026-08-06", RunningBalance: -700000}
+	deep := buildCashPosition(points, rates, now)
+	if deep.DaysUntilNegative == nil || *deep.DaysUntilNegative != 2 {
+		t.Errorf("DaysUntilNegative = %v, want 2 — this one really does go under", deep.DaysUntilNegative)
+	}
+}
+
+// A day that has already booked more than its weekday usually brings is not
+// credited twice, and never has takings subtracted from it.
+func TestRunwayDoesNotCountAReceiptTwice(t *testing.T) {
+	now := at12(t, "2026-08-03")
+	points := []pkgfinance.CashFlowPoint{
+		// Today has already taken R$800,00 of an ordinary R$1.000,00 day.
+		{Date: "2026-08-03", ProjectedIncome: 80000, RunningBalance: 80000},
+		// A crediário instalment lands on the 4th, well past an ordinary day.
+		{Date: "2026-08-04", ProjectedIncome: 500000, RunningBalance: 580000},
+	}
+	rates := dailyRates{sample: daysInWeek}
+	for d := range rates.avg {
+		rates.avg[d] = 100000
+	}
+
+	got := buildCashPosition(points, rates, now)
+
+	// R$5.800,00 booked, plus the R$200,00 left of today. The 4th adds nothing:
+	// it has already received more than an ordinary Tuesday brings.
+	if want := int64(600000); got.EndOfMonthProjection != want {
+		t.Errorf("EndOfMonthProjection = %d, want %d", got.EndOfMonthProjection, want)
+	}
+}
+
+// Without trading history the days ahead are priced at nothing, so the booked
+// curve stands unaltered — and must not be presented as a balance running out.
+func TestRunwayWithoutHistoryMakesNoClaim(t *testing.T) {
+	points := []pkgfinance.CashFlowPoint{
+		{Date: "2026-08-03", RunningBalance: 10000},
+		{Date: "2026-08-05", RunningBalance: -50000},
+	}
+	got := buildCashPosition(points, dailyRates{}, at12(t, "2026-08-03"))
+
+	if got.ExpectsReceipts {
+		t.Error("ExpectsReceipts = true, want false with nothing in the window")
+	}
+	recs := buildRecommendations(WeekComparison{}, Projection{}, Trends{}, got, comparison{})
+	for _, r := range recs {
+		if r.Title == "Saldo fica negativo em breve" {
+			t.Errorf("runway alert fired with no trading history to price the days ahead: %s", r.Message)
+		}
+	}
+}
+
+// The runway is about money landing, so it reads every inflow by its effective
+// date — not faturamento by the day of the sale. A crediário sale made on a
+// Monday and received on a Friday is a Friday receipt, and an aporte is a
+// receipt even though it is not a sale.
+func TestCashInRatesReadTheDayTheMoneyLands(t *testing.T) {
+	due := day(t, "2026-07-10") // a Friday
+	crediario := sale(t, "2026-07-06", 100000)
+	crediario.DueDate = &due
+	aporte := domain.FinancialEntry{
+		TransactionDate: day(t, "2026-07-17"), // also a Friday
+		Amount:          300000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "outros_receitas",
+		Origin:          domain.OriginAporteSocio,
+	}
+	entries := []domain.FinancialEntry{crediario, aporte, expense(t, "2026-07-10", "aluguel", 900000)}
+
+	rates := cashInRates(entries, day(t, "2026-06-08"), day(t, "2026-08-02"))
+
+	if rates.avg[int(time.Monday)] != 0 {
+		t.Errorf("Monday = %d, want nothing — the sale was made then but paid later", rates.avg[int(time.Monday)])
+	}
+	if want := int64(200000); rates.avg[int(time.Friday)] != want {
+		t.Errorf("Friday = %d, want both receipts averaged (%d)", rates.avg[int(time.Friday)], want)
 	}
 }

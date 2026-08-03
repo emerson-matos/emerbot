@@ -5,11 +5,15 @@ import "math"
 // buildTrends expresses the analysed month against the previous one, both
 // measured over the same finished days — see buildComparison.
 //
-// A month with no finished day yet gets flat, empty trends rather than a
-// direction: there is nothing behind us to have moved. Consumers tell the two
-// apart through Analysis.Period.ThroughDay, which is 0 in exactly that case.
+// A month with no comparable window yet gets flat, empty trends rather than a
+// direction: there is nothing behind us that can be held against last month on
+// the same terms. That covers the month's first day, where nothing has finished
+// at all, and its first week, where what has finished is a different set of
+// weekdays from the one the previous month offers. Consumers tell those apart
+// through Analysis.Period — ThroughDay 0 for the former,
+// ComparableThroughDay 0 for both.
 func buildTrends(c comparison) Trends {
-	if !c.clock.measurable() {
+	if !c.comparable() {
 		return Trends{
 			Faturamento: MonthTrend{Direction: TrendStable},
 			Despesa:     MonthTrend{Direction: TrendStable},

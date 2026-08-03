@@ -389,6 +389,11 @@ func (n *Notifier) humanize(body string) (string, bool) {
 			"ressalva junto do número — sem ela a comparação vira um mês inteiro. " +
 			"Se o rascunho disser que o mês está começando, não invente comparação " +
 			"nem diagnóstico: fale só do que vem pela frente. " +
+			// Days 2–7 have closed days to report on but no comparable window:
+			// the 1st and 2nd of one month are not the same weekdays as the 1st
+			// and 2nd of the one before.
+			"Se o rascunho disser que a primeira semana ainda não fechou, repita " +
+			"isso e não compare o mês com o anterior de nenhuma outra forma. " +
 			"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
 			"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
 			"depois da sua resposta.",

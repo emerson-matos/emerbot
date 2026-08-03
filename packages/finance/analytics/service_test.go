@@ -2,8 +2,9 @@ package analytics
 
 import (
 	"context"
-	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -150,7 +151,8 @@ func TestAssembleSkipsTheProjectionWindowForAClosedMonth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	// July and June, on both bases: four reads, none of them the window.
+	// July and June, on both bases: four reads, neither window among them —
+	// the window is read twice for a month in progress, once per basis.
 	if len(store.ranges) != 4 {
 		t.Errorf("ranges = %v, want only the two months on both bases", store.ranges)
 	}
@@ -164,11 +166,19 @@ func TestAssembleSkipsTheProjectionWindowForAClosedMonth(t *testing.T) {
 	if _, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03")); err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	if len(store.ranges) != 5 {
-		t.Errorf("ranges = %v, want the window read as well", store.ranges)
+	// Six: the two months on both bases, plus the window on both — transaction
+	// prices the revenue projection, effective prices the cash runway.
+	if len(store.ranges) != 6 {
+		t.Errorf("ranges = %v, want the window read on both bases as well", store.ranges)
 	}
-	if !slices.Contains(store.ranges, "2026-06-08..2026-08-02") {
-		t.Errorf("ranges = %v, want the eight-week window among them", store.ranges)
+	var windows int
+	for _, r := range store.ranges {
+		if r == "2026-06-08..2026-08-02" {
+			windows++
+		}
+	}
+	if windows != 2 {
+		t.Errorf("ranges = %v, want the eight-week window read twice, once per basis", store.ranges)
 	}
 }
 
@@ -185,5 +195,70 @@ func TestAssembleWorksOnAnEmptyLedger(t *testing.T) {
 	}
 	if got.Health.Status != HealthBoa || len(got.Recommendations) != 0 {
 		t.Errorf("analysis = %+v, want a quiet result rather than an error", got.Health)
+	}
+}
+
+// The reported case, end to end through the store. On the morning of 3 August
+// the panel showed two red recommendations — "Receita caiu 22% abaixo do mês
+// passado (até o dia 2)" and "Saldo fica negativo em 1 dia" — to a pharmacy
+// that was trading normally and whose balance was never in danger. Both were
+// artefacts of the month having just turned over.
+func TestThirdOfAugustHasNothingToAlarmAbout(t *testing.T) {
+	ctx := context.Background()
+	store := pkgfinance.NewInMemoryStore()
+
+	var entries []domain.FinancialEntry
+	// July worked every day: R$1.500,00 on weekdays, R$700,00 at weekends.
+	for d := day(t, "2026-07-01").Time(); !d.After(day(t, "2026-07-31").Time()); d = d.AddDate(0, 0, 1) {
+		amount := int64(150000)
+		if wd := d.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			amount = 70000
+		}
+		entries = append(entries, sale(t, d.Format("2006-01-02"), amount))
+	}
+	// July's outgoings leave R$1.100,00 to open August with.
+	entries = append(entries, expense(t, "2026-07-20", "fornecedor_geral", 3900000))
+	// August's opening weekend, at exactly July's weekend rate: the pharmacy is
+	// doing precisely as well as it was last month.
+	entries = append(entries, sale(t, "2026-08-01", 70000), sale(t, "2026-08-02", 70000))
+	// And the rent, booked on the 1st for the 5th, as rent is.
+	entries = append(entries, expense(t, "2026-08-05", "aluguel", 500000))
+	seed(t, store, entries...)
+
+	got, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03"))
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	for _, r := range got.Recommendations {
+		if r.Title == "Receita caiu" || r.Title == "Saldo fica negativo em breve" {
+			t.Errorf("recommendation %q fired on an ordinary 3rd of the month: %s", r.Title, r.Message)
+		}
+	}
+	if got.CashPosition.DaysUntilNegative != nil {
+		t.Errorf("DaysUntilNegative = %d, want none — three ordinary days cover the rent",
+			*got.CashPosition.DaysUntilNegative)
+	}
+	if !got.CashPosition.ExpectsReceipts {
+		t.Error("ExpectsReceipts = false, want true — July is right there in the window")
+	}
+
+	// The contrast, on the same data: priced from lançamentos alone — the whole
+	// month's bills against none of its sales — the balance crosses zero on the
+	// 5th, which is the "negativo em 1 dia" the user was shown.
+	points, err := store.CashFlowForecast(ctx, "u1", "2026-08")
+	if err != nil {
+		t.Fatalf("CashFlowForecast: %v", err)
+	}
+	booked := buildCashPosition(points, dailyRates{}, at12(t, "2026-08-03"))
+	if booked.DaysUntilNegative == nil || *booked.DaysUntilNegative != 2 {
+		t.Fatalf("booked-only runway = %v, want a crossing in 2 days — the fixture must reproduce the report",
+			booked.DaysUntilNegative)
+	}
+
+	// And the digest says why there is no comparison rather than going quiet.
+	lines := got.DigestLines()
+	if last := lines[len(lines)-1]; !strings.Contains(last, "a primeira semana ainda não fechou") {
+		t.Errorf("digest ends with %q, want the reason the comparison is missing", last)
 	}
 }

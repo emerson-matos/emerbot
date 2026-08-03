@@ -234,6 +234,18 @@ export interface Period {
    * month is starting rather than draw a fall to zero.
    */
   throughDay: number;
+  /**
+   * Last day the *month-over-month* figures were measured through, on both
+   * sides. It closes on whole weeks, so it trails `throughDay` by up to six
+   * days and is 0 for the whole opening week: the first N days of two months
+   * hold different weekdays unless N is a multiple of seven, and a percentage
+   * over mismatched weekdays measures the calendar rather than the pharmacy.
+   *
+   * Every "vs mês passado" label belongs to this window and no other. 0 means
+   * there is no comparison to draw — say the week has not closed, never render
+   * a fall to zero. Figures about this month alone keep using `throughDay`.
+   */
+  comparableThroughDay: number;
   /** Days still to trade, today included. 0 for a closed month. */
   daysRemaining: number;
   daysTotal: number;
@@ -386,12 +398,26 @@ export interface Recommendation {
   message: string;
 }
 
+/**
+ * `currentBalance` is booked fact — money in the account today. Every other
+ * figure is a projection: the days from today on are credited with what an
+ * ordinary day of that weekday receives, while expenses stand exactly as
+ * scheduled. Without that the curve was the month's whole bill list against
+ * none of its sales, and it announced a negative balance within days every time
+ * a month opened.
+ */
 export interface CashPosition {
   currentBalance: number;
   endOfMonthProjection: number;
   daysUntilNegative: number | null;
   lowestProjected: number;
   lowestProjectedDate: string;
+  /**
+   * Whether there was any trading history to credit the days ahead with. False
+   * means the forward figures are bills against nothing — do not present them
+   * as a balance heading for zero.
+   */
+  expectsReceipts: boolean;
 }
 
 export interface Analysis {
