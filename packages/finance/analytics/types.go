@@ -121,6 +121,19 @@ type Period struct {
 	// figure here is empty and there is no percentage to quote. Consumers must
 	// render that as "the month is starting", never as a fall to zero.
 	ThroughDay int `json:"throughDay"`
+	// ComparableThroughDay is the last day of the month the month-over-month
+	// figures were measured through, on both sides. It closes on whole weeks
+	// while the month runs, so it trails ThroughDay by up to six days and is
+	// zero for the whole first week — the first N days of two months hold
+	// different weekdays unless N is a multiple of seven, and a percentage over
+	// mismatched weekdays measures the calendar.
+	//
+	// Every percentage in Trends, and every "vs mês passado" line, is over this
+	// window and no other. Zero means there is no comparison to render at all:
+	// consumers must say the month has not closed a week yet, never draw a fall
+	// to zero. Figures about this month alone — the result, the traffic light,
+	// the days with movement — keep using ThroughDay.
+	ComparableThroughDay int `json:"comparableThroughDay"`
 	// DaysRemaining counts the days still to trade, today included — today is a
 	// day the pharmacy can still sell on. Zero for a closed month.
 	DaysRemaining int `json:"daysRemaining"`
@@ -326,6 +339,13 @@ type Recommendation struct {
 }
 
 // CashPosition summarizes the month's daily balance projection.
+//
+// CurrentBalance is booked fact — money in the account today. Every other figure
+// here is a projection: the days from today on are credited with what an
+// ordinary day of that weekday receives, on top of what they have booked, while
+// expenses stand exactly as scheduled. Without that the curve was all of the
+// month's bills against none of its sales, and it announced a negative balance
+// within days at the start of every month.
 type CashPosition struct {
 	CurrentBalance       int64 `json:"currentBalance"`
 	EndOfMonthProjection int64 `json:"endOfMonthProjection"`
@@ -334,6 +354,11 @@ type CashPosition struct {
 	DaysUntilNegative   *int   `json:"daysUntilNegative"`
 	LowestProjected     int64  `json:"lowestProjected"`
 	LowestProjectedDate string `json:"lowestProjectedDate"`
+	// ExpectsReceipts is whether the projection had any trading history to
+	// credit the days ahead with. False means the forward figures are bills
+	// against nothing — true of a pharmacy that has never recorded an inflow,
+	// and consumers must not present that as a balance heading for zero.
+	ExpectsReceipts bool `json:"expectsReceipts"`
 }
 
 // KPIs are the headline numbers.
@@ -391,7 +416,16 @@ type KPIs struct {
 // /analysis). Nothing consumes that endpoint today — the dashboard reads
 // /analysis/monthly, which is computed live — but a future consumer would see a
 // gap of up to a day.
-const SchemaVersion = 4
+//
+// 5: month-over-month figures changed window — trends and every "vs mês
+// passado" line now close on whole weeks (period.comparableThroughDay) instead
+// of on the last finished day, so they are empty through the 7th rather than
+// comparing mismatched weekdays. cashPosition's forward figures changed basis:
+// the days from today on are credited with an ordinary day's receipts instead
+// of standing as bills against nothing. Added period.comparableThroughDay and
+// cashPosition.expectsReceipts. health.status reads the same trends, so the
+// same phantom-movement argument as 4 applies here.
+const SchemaVersion = 5
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

@@ -50,7 +50,11 @@ func buildHealth(
 	// the days that have finished. For a closed month this is the whole month
 	// and equals summary.ExpectedBalance; for a month in progress it is
 	// deliberately smaller, and on its first day there is none at all.
-	realized := compared.current.balance
+	//
+	// It reads `realized`, not the comparison window: the traffic light is a
+	// statement about this month, so it must cover every closed day of it. The
+	// window is narrower during the first week and is only for percentages.
+	realized := compared.realized.balance
 
 	if !compared.clock.measurable() {
 		messages = append(messages, Insight{
@@ -118,19 +122,24 @@ func buildHealth(
 
 // closedDayInsights are the readings that only mean something once a day of the
 // month has finished: how the result stands, how the days went, and how the
-// month compares with the one before it. All of them are measured over
-// `compared`'s window, so they agree with each other and with the percentages
-// printed beside them.
+// month compares with the one before it.
+//
+// The first three are about this month alone and cover every closed day of it.
+// The month-over-month pair below them is measured over the comparison window
+// instead, which during the first week of a month does not exist — so a fresh
+// month reports how it is doing without inventing a percentage against the
+// previous one. Each line carries the suffix of the window it was actually
+// measured over, and the two suffixes really do differ mid-month.
 func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []Insight {
 	messages := []Insight{}
-	current := compared.current
+	current := compared.realized
 
 	if current.balance > 0 {
 		messages = append(messages, Insight{
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
 			Title:       "Resultado positivo",
-			Description: "Entradas maiores que despesas" + compared.suffix(),
+			Description: "Entradas maiores que despesas" + compared.realizedSuffix(),
 		})
 	}
 
@@ -157,23 +166,24 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 			Type:        InsightGoodPerformance,
 			Severity:    SeverityInfo,
 			Title:       fmt.Sprintf("Despesas representam %d%%", pct),
-			Description: "do faturamento" + compared.suffix(),
+			Description: "do faturamento" + compared.realizedSuffix(),
 		})
 	}
 
 	// Month-over-month only says anything when both months actually sold
 	// something up to this point; a percentage against a month with no sales is
-	// noise.
+	// noise. Both totals are zero outright until the month's first week closes,
+	// which is what keeps the two insights below quiet through the 7th.
 	//
 	// Measured on faturamento, not on cash in: both insights below are
 	// performance readings. A month propped up by a loan must still report that
 	// sales fell, and expenses outgrowing borrowed money is not the warning
 	// anyone means by "despesas cresceram".
-	if compared.previous.revenue > 0 && current.revenue > 0 {
-		revenueChange := percentChange(current.revenue, compared.previous.revenue)
+	if compared.previous.revenue > 0 && compared.current.revenue > 0 {
+		revenueChange := percentChange(compared.current.revenue, compared.previous.revenue)
 		var expenseChange float64
 		if compared.previous.expense > 0 {
-			expenseChange = percentChange(current.expense, compared.previous.expense)
+			expenseChange = percentChange(compared.current.expense, compared.previous.expense)
 		}
 
 		// Expenses growing is only a problem when sales are not keeping up.
@@ -182,7 +192,7 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 				Type:        InsightExpenseGrowth,
 				Severity:    SeverityWarning,
 				Title:       "Despesas cresceram",
-				Description: fmt.Sprintf("%d%% acima do mês passado%s", roundToInt(expenseChange), compared.suffix()),
+				Description: fmt.Sprintf("%d%% acima do mês passado%s", roundToInt(expenseChange), compared.windowSuffix()),
 				Value:       ptr(expenseChange),
 			})
 		}
@@ -192,7 +202,7 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 				Type:        InsightRevenueDrop,
 				Severity:    SeverityWarning,
 				Title:       "Faturamento caiu",
-				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-revenueChange), compared.suffix()),
+				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-revenueChange), compared.windowSuffix()),
 				Value:       ptr(revenueChange),
 			})
 		}
@@ -203,7 +213,7 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 			Type:        InsightLowCashFlow,
 			Severity:    SeverityCritical,
 			Title:       "Fluxo negativo",
-			Description: "Saídas maiores que entradas" + compared.suffix(),
+			Description: "Saídas maiores que entradas" + compared.realizedSuffix(),
 		})
 	}
 

@@ -112,13 +112,46 @@ func (c monthClock) projectionWindow() (from, to domain.CalendarDate) {
 // insights — has to say "not yet" instead of quoting a number.
 func (c monthClock) measurable() bool { return c.through > 0 }
 
+// comparableThrough is the last day of the month the *month-over-month*
+// comparison may measure through — whole weeks from the 1st while the month
+// runs, the month's own last day once it is closed. Zero for the first week of
+// a month, which has nothing to compare yet.
+//
+// It is a different line from `through`, and the difference is the whole point.
+// `through` answers "what has happened here"; this answers "what can honestly
+// be held against last month". A window of N consecutive days starting on the
+// 1st carries the same mix of weekdays on both sides only when N is a multiple
+// of seven — any other length gives one month more Saturdays than the other,
+// and the percentage then measures the calendar rather than the pharmacy.
+//
+// On 3 August 2026 the comparison ran the 1st and 2nd — a Saturday and a
+// Sunday — against the 1st and 2nd of July, a Wednesday and a Thursday. A
+// pharmacy that had traded both weekend days at exactly its usual weekend rate
+// was told "Receita caiu 53% abaixo do mês passado" and given a red alert. That
+// is not a small sample being honest; it is a biased one, and it fires in the
+// first week of every single month.
+//
+// The cost is that the figure moves in weekly steps rather than daily ones —
+// between the 8th and the 13th it stays on days 1–7. That is affordable
+// precisely because the day-to-day reading already exists and is already
+// weekday-aligned: WeekPace compares this week against last week over the same
+// weekdays. The month-over-month reading is about the month, and it can wait
+// for a week to close.
+func (c monthClock) comparableThrough() int {
+	if !c.inProgress {
+		return c.through
+	}
+	return c.through - c.through%daysInWeek
+}
+
 // period exports the clock for consumers, so the dashboard can label a window
 // and the digest can say which days it is talking about.
 func (c monthClock) period() Period {
 	return Period{
-		ThroughDay:    c.through,
-		DaysRemaining: c.remaining,
-		DaysTotal:     c.total,
-		InProgress:    c.inProgress,
+		ThroughDay:           c.through,
+		ComparableThroughDay: c.comparableThrough(),
+		DaysRemaining:        c.remaining,
+		DaysTotal:            c.total,
+		InProgress:           c.inProgress,
 	}
 }

@@ -32,7 +32,7 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 			Severity: RecWarning,
 			Title:    "Despesas acima do normal",
 			Message: fmt.Sprintf("Cresceram %d%% vs mês passado%s. Revise gastos para manter a margem.",
-				trends.Despesa.Change, window.suffix()),
+				trends.Despesa.Change, window.windowSuffix()),
 		})
 	}
 
@@ -41,15 +41,20 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 			Severity: RecDanger,
 			Title:    "Receita caiu",
 			Message: fmt.Sprintf("%d%% abaixo do mês passado%s. Identifique causas e aja rapidamente.",
-				abs(trends.Faturamento.Change), window.suffix()),
+				abs(trends.Faturamento.Change), window.windowSuffix()),
 		})
 	}
 
-	if cash.DaysUntilNegative != nil && *cash.DaysUntilNegative <= cashRunwayDays {
+	// ExpectsReceipts gates this the way hasBaseline gates the two above, and for
+	// the same reason: without any trading history the days ahead are priced at
+	// nothing, so the balance crosses zero on paper for a pharmacy that has
+	// simply not recorded a sale yet. "Reduza despesas" is not the advice that
+	// case needs.
+	if cash.ExpectsReceipts && cash.DaysUntilNegative != nil && *cash.DaysUntilNegative <= cashRunwayDays {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Saldo fica negativo em breve",
-			Message: fmt.Sprintf("O saldo fica negativo em %s. Reduza despesas ou antecipe recebimentos.",
+			Message: fmt.Sprintf("Mesmo contando o recebimento de um dia normal, o saldo fica negativo em %s. Reduza despesas ou antecipe recebimentos.",
 				pluralDias(*cash.DaysUntilNegative)),
 		})
 	}
@@ -65,9 +70,10 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 // already require a real baseline; these say the same thing to the same person
 // on the same page, so they require one too.
 //
-// It also covers the month's first day, where buildTrends zeroes both sides
-// because nothing has finished — that is what used to open the 1st with
-// "Receita caiu 100% abaixo do mês passado".
+// It also covers the month's opening week, where buildTrends zeroes both sides
+// because there is no like-for-like window yet — that is what used to open the
+// 1st with "Receita caiu 100% abaixo do mês passado", and the 3rd with a red
+// alert for a pharmacy trading exactly as it had the month before.
 func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 
 // weeklyPaceRecommendation crosses this week's pace with whether the month is

@@ -57,22 +57,20 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		return Analysis{}, err
 	}
 
-	// The projection's window is not month-aligned and reaches back past the
-	// previous month, so neither read above covers it. It is one more Query and
-	// a cheap one: on the transaction basis the range goes straight into a
-	// BETWEEN on the table's own sort key, so a window crossing month boundaries
-	// costs the same as a single month.
+	// The trailing window is not month-aligned and reaches back past the
+	// previous month, so neither read above covers it. Both bases are needed and
+	// for different things: transaction prices the revenue projection, effective
+	// prices the cash runway (see Input.WindowEntries).
 	//
-	// A closed month has no day left to price, so it does not pay for the window
-	// at all — and every month but the current one is closed, which is most of
-	// what the dashboard asks for when someone browses back through the year.
-	var windowRevenueEntries []domain.FinancialEntry
-	if clock := newMonthClock(month, now); clock.inProgress {
-		windowFrom, windowTo := clock.projectionWindow()
-		windowRevenueEntries, err = rangeEntries(ctx, store, userID, windowFrom.Time(), windowTo.Time(), pkgfinance.BasisTransaction)
-		if err != nil {
-			return Analysis{}, err
-		}
+	// Two Queries, and cheap ones: each range goes straight into a BETWEEN on
+	// the sort key of its own basis — the base table for transaction, GSI2 for
+	// effective — so a window crossing month boundaries costs the same as a
+	// single month. Folding the five entry reads into two contiguous ones is a
+	// real saving and a separate change; it rewrites Input and every test around
+	// it.
+	windowRevenueEntries, windowEntries, err := windowReads(ctx, store, userID, month, now)
+	if err != nil {
+		return Analysis{}, err
 	}
 
 	summaryByMonth, err := store.MultiMonthlySummary(ctx, userID, months)
@@ -108,6 +106,7 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		RevenueEntries:         revenueEntries,
 		PreviousRevenueEntries: previousRevenueEntries,
 		WindowRevenueEntries:   windowRevenueEntries,
+		WindowEntries:          windowEntries,
 		Summaries:              summaries,
 		Goals:                  goals,
 		CashFlowPoints:         points,
@@ -125,6 +124,32 @@ func monthEntries(ctx context.Context, store LedgerReader, userID, month string,
 		return nil, fmt.Errorf("month %s: %w", month, err)
 	}
 	return entries, nil
+}
+
+// windowReads fetches the trailing window on both date bases: faturamento by
+// the day of the sale, for the revenue projection, and everything by the day it
+// lands, for the cash runway.
+//
+// A closed month has no day left to price, so it does not pay for the window at
+// all — and every month but the current one is closed, which is most of what the
+// dashboard asks for when someone browses back through the year. buildProjection
+// decides "fechado" before consulting the rates, so skipping the reads here
+// cannot turn into a "sem_base" label.
+func windowReads(ctx context.Context, store LedgerReader, userID, month string, now time.Time) (revenue, cash []domain.FinancialEntry, err error) {
+	clock := newMonthClock(month, now)
+	if !clock.inProgress {
+		return nil, nil, nil
+	}
+	from, to := clock.projectionWindow()
+	revenue, err = rangeEntries(ctx, store, userID, from.Time(), to.Time(), pkgfinance.BasisTransaction)
+	if err != nil {
+		return nil, nil, err
+	}
+	cash, err = rangeEntries(ctx, store, userID, from.Time(), to.Time(), pkgfinance.BasisEffective)
+	if err != nil {
+		return nil, nil, err
+	}
+	return revenue, cash, nil
 }
 
 // rangeEntries reads an arbitrary span of days, both ends inclusive. The

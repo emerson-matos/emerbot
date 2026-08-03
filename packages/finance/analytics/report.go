@@ -64,6 +64,15 @@ func (a Analysis) DigestLines() []string {
 		shown++
 	}
 
+	// Said once, plainly, rather than left as a silence: through the 7th there
+	// is no month-over-month line in the digest at all, and a reader who saw one
+	// yesterday is owed the reason. Last, because it explains an absence —
+	// whatever is actually wrong with the month comes first.
+	if a.Period.InProgress && a.Period.ComparableThroughDay == 0 {
+		lines = append(lines, fmt.Sprintf(
+			"Comparação com o mês passado a partir do dia %d — a primeira semana ainda não fechou.", daysInWeek+1))
+	}
+
 	return lines
 }
 
@@ -125,10 +134,16 @@ func (a Analysis) ToolPayload() map[string]any {
 		// Today counts as a day still to sell on, so the model never tells
 		// someone on the last day of the month that there is nothing left to do.
 		"dias_restantes_no_mes_com_hoje": a.Period.DaysRemaining,
-		// Every percentage below is measured over both months' finished days,
-		// up to this one. The model must not present it as a whole month, and
-		// the system prompt says so — see apps/notifier.
-		"comparacao_ate_o_dia": a.Period.ThroughDay,
+		// Every percentage below is measured over both months' days up to this
+		// one — whole weeks from the 1st, so the two sides hold the same days of
+		// the week. The model must not present it as a whole month, and the
+		// system prompt says so — see apps/notifier. Zero means there is no
+		// comparison to quote; the flags below spell out which case it is.
+		"comparacao_ate_o_dia": a.Period.ComparableThroughDay,
+		// The month's own days, which run further than the comparison window
+		// during the first week of a month. The result and the traffic light are
+		// over these.
+		"mes_fechado_ate_o_dia": a.Period.ThroughDay,
 		"tendencia": map[string]any{
 			"faturamento_pct": a.Trends.Faturamento.Change,
 			"despesa_pct":     a.Trends.Despesa.Change,
@@ -185,6 +200,14 @@ func (a Analysis) ToolPayload() map[string]any {
 	if a.Period.InProgress && a.Period.ThroughDay == 0 {
 		payload["mes_comecando_sem_dia_fechado"] = true
 	}
+	// The same spelling-out for the rest of the opening week, where the month
+	// *has* closed days to report on but none that can be held against the
+	// previous month: the 1st and 2nd of a month are not the same weekdays as
+	// the 1st and 2nd of the one before, and the model presented the resulting
+	// percentage as a real fall.
+	if a.Period.InProgress && a.Period.ComparableThroughDay == 0 && a.Period.ThroughDay > 0 {
+		payload["sem_semana_fechada_para_comparar"] = true
+	}
 	// Only where a window was actually consulted. A closed month projected
 	// nothing and an empty window measured nothing, and quoting "janela de 8
 	// semanas" beside either invites the model to describe a figure as an
@@ -192,6 +215,10 @@ func (a Analysis) ToolPayload() map[string]any {
 	if a.Projection.Basis == ProjectionFromWindow || a.Projection.Basis == ProjectionPartial {
 		payload["projecao_janela_em_semanas"] = projectionWindowWeeks
 	}
+	// Whether the runway below already counts an ordinary day's receipts. False
+	// means it does not — there is no trading history — and the model must not
+	// read the figures as a balance about to run out.
+	payload["caixa"].(map[string]any)["conta_recebimento_esperado"] = a.CashPosition.ExpectsReceipts
 	if a.Projection.NeededPerDay > 0 {
 		payload["necessario_por_dia_para_bater_a_meta"] = reais(a.Projection.NeededPerDay)
 	}

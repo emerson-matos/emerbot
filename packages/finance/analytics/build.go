@@ -47,6 +47,14 @@ type Input struct {
 	// It may carry days from outside the window — projectionRates applies the
 	// range itself, so an over-fetching caller cannot widen the averages.
 	WindowRevenueEntries []domain.FinancialEntry
+	// WindowEntries is the same window read on the effective-date basis, and it
+	// prices the cash runway. It is a separate read from WindowRevenueEntries
+	// for the same reason Entries is separate from RevenueEntries: a runway is
+	// about money landing, so it counts every inflow and dates it by the day it
+	// arrives, while faturamento counts sales and dates them by the day they
+	// were made. Using one for the other credits the account with crediário it
+	// has not been paid.
+	WindowEntries []domain.FinancialEntry
 	// Summaries and Goals run oldest-first over the trailing HistoryMonths
 	// window ending at Month, so the analysed month is the *last* slot. A month
 	// with no data is a nil hole rather than a shorter slice — collapsing it
@@ -115,7 +123,11 @@ func Build(in Input) Analysis {
 	// partial-month distortion.
 	compared := buildComparison(clock, in.Entries, in.PreviousEntries, in.RevenueEntries, in.PreviousRevenueEntries)
 	trends := buildTrends(compared)
-	cashPosition := buildCashPosition(in.CashFlowPoints, in.Now)
+	// The runway reads the same trailing window, on the cash basis: the booked
+	// curve carries the whole month's bills from the 1st and none of its sales,
+	// so left alone it reports a balance going negative within days every time a
+	// month opens.
+	cashPosition := buildCashPosition(in.CashFlowPoints, cashInRates(in.WindowEntries, windowFrom, windowTo), in.Now)
 
 	return Analysis{
 		Schema:             SchemaVersion,

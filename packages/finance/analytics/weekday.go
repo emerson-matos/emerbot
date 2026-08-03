@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
+	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
 // daysInWeek is spelled out because it is a divisor and a window length in
@@ -19,27 +20,40 @@ type weekdayBucket struct {
 	dates map[string]struct{}
 }
 
-// weekdayBuckets buckets faturamento by day of the week, keeping only the
-// entries whose transaction date `keep` accepts. The predicate is the caller's
-// because the two readings want different windows out of the same shape: the
-// dashboard's weekday card is about the analysed month, the projection about
-// the trailing weeks.
+// weekdayBuckets buckets entries by day of the week. `pick` returns the date to
+// bucket an entry on and whether to count it at all, so the caller owns both the
+// window and the meaning: which entries are in, and which of their several dates
+// the weekly rhythm should be read off.
 //
-// entries must be on the transaction basis (see finance.DateBasis).
-func weekdayBuckets(entries []domain.FinancialEntry, keep func(domain.CalendarDate) bool) [daysInWeek]weekdayBucket {
+// It is the caller's because the three readings genuinely differ. The weekday
+// card and the revenue projection bucket faturamento by the day of the *sale*
+// (transaction basis) over different windows; the cash runway buckets every
+// inflow by the day the money *lands* (effective basis), because a runway is
+// about the account balance and a sale on credit does not pay a bill.
+func weekdayBuckets(entries []domain.FinancialEntry, pick func(domain.FinancialEntry) (domain.CalendarDate, bool)) [daysInWeek]weekdayBucket {
 	var buckets [daysInWeek]weekdayBucket
 	for i := range buckets {
 		buckets[i].dates = map[string]struct{}{}
 	}
 	for _, e := range entries {
-		if !domain.IsRevenue(e) || !keep(e.TransactionDate) {
+		date, ok := pick(e)
+		if !ok {
 			continue
 		}
-		b := &buckets[int(e.TransactionDate.Time().Weekday())]
+		b := &buckets[int(date.Time().Weekday())]
 		b.total += e.Amount
-		b.dates[e.TransactionDate.String()] = struct{}{}
+		b.dates[date.String()] = struct{}{}
 	}
 	return buckets
+}
+
+// within reports whether a calendar day falls inside an inclusive range.
+// Compared as "YYYY-MM-DD" strings: the bounds and the date are calendar days
+// with no time or zone of their own, and string order is the only comparison
+// between them that cannot slide by a day.
+func within(d, from, to domain.CalendarDate) bool {
+	day := d.String()
+	return day >= from.String() && day <= to.String()
 }
 
 // avg is the bucket's faturamento per day it traded, 0 for a weekday that never
@@ -67,8 +81,10 @@ func weekdayStats(entries []domain.FinancialEntry, now time.Time, clock monthClo
 	// already scoped to the analysed month, so this was latent — but "day of the
 	// month <= through" alone lets 1 July into an August card whenever August has
 	// reached its 2nd, and the card's whole claim is that it is about one month.
-	buckets := weekdayBuckets(entries, func(d domain.CalendarDate) bool {
-		return d.Year() == clock.first.Year() && d.Month() == clock.first.Month() &&
+	buckets := weekdayBuckets(entries, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+		d := e.TransactionDate
+		return d, domain.IsRevenue(e) &&
+			d.Year() == clock.first.Year() && d.Month() == clock.first.Month() &&
 			d.Day() <= clock.through
 	})
 
@@ -122,15 +138,41 @@ type dailyRates struct {
 // window may carry days from outside the window; the range is applied here, so
 // a caller that over-fetches cannot widen the average by accident.
 func projectionRates(window []domain.FinancialEntry, from, to domain.CalendarDate) dailyRates {
-	// Compared as "YYYY-MM-DD" strings: the bounds and the entry are calendar
-	// days with no time or zone of their own, and string order is the only
-	// comparison between them that cannot slide by a day.
-	start, end := from.String(), to.String()
-	buckets := weekdayBuckets(window, func(d domain.CalendarDate) bool {
-		day := d.String()
-		return day >= start && day <= end
+	buckets := weekdayBuckets(window, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+		return e.TransactionDate, domain.IsRevenue(e) && within(e.TransactionDate, from, to)
 	})
+	return ratesFromBuckets(buckets)
+}
 
+// cashInRates is projectionRates for the cash runway: the same trailing window
+// and the same weekly rhythm, but over every centavo that *lands*, bucketed by
+// the day it lands on.
+//
+// It is deliberately not the revenue rates. A runway asks whether the account
+// survives the week, and that turns on money arriving — a crediário sale made
+// today pays no bill on Friday, while a loan or an aporte does. Feeding
+// faturamento into the balance would credit the account with sales it has not
+// been paid for.
+//
+// entries must be on the effective-date basis, the same basis the cash flow
+// forecast buckets by, so the projection and the booked curve it is added to
+// agree about which day a receipt belongs to.
+func cashInRates(window []domain.FinancialEntry, from, to domain.CalendarDate) dailyRates {
+	buckets := weekdayBuckets(window, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+		if e.Type != domain.EntryTypeIncome {
+			return domain.CalendarDate{}, false
+		}
+		d := domain.NewCalendarDate(pkgfinance.EffectiveDate(e))
+		return d, within(d, from, to)
+	})
+	return ratesFromBuckets(buckets)
+}
+
+// ratesFromBuckets turns per-weekday buckets into the rates a day still to come
+// is priced at. It is shared by the revenue rates and the cash ones so that "a
+// weekday that never traded stays at zero, and a thin window under-projects
+// rather than over-projects" is written once and cannot drift between the two.
+func ratesFromBuckets(buckets [daysInWeek]weekdayBucket) dailyRates {
 	var rates dailyRates
 	for d := range buckets {
 		rates.sample += len(buckets[d].dates)

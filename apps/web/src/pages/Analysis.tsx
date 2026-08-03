@@ -160,11 +160,18 @@ const WEEKDAY_FULL_PT: Record<string, string> = {
 // Saying so is the only honest label: this card used to read "↓ 100% vs mês
 // passado até o dia 1" on every 1st, comparing an empty morning with a whole
 // trading day.
+//
+// The rest of the opening week is the same failure one size smaller, and the
+// backend zeroes it for the same reason: days 1–2 of August are a Saturday and
+// a Sunday, days 1–2 of July a Wednesday and a Thursday. The card read "↓ 22%
+// vs mês passado até o dia 2" for a pharmacy trading exactly as it had the
+// month before. period.comparableThroughDay is 0 through the 7th.
 function trendLabel(trend: MonthTrend, period: Period): string {
   if (period.inProgress && period.throughDay === 0) return 'Mês começando — sem dia fechado'
+  if (period.inProgress && period.comparableThroughDay === 0) return 'Primeira semana — sem base para comparar'
   if (trend.previous === 0) return 'Sem base no mês passado'
   const window = period.inProgress
-    ? `vs mês passado até o dia ${period.throughDay}`
+    ? `vs mês passado até o dia ${period.comparableThroughDay}`
     : 'vs mês passado'
   return `${TREND_ARROW[trend.direction]} ${Math.abs(trend.change)}% ${window}`
 }
@@ -400,21 +407,28 @@ function ProjectionSection({ projection, faturamento, period }: {
             <span className="text-sm text-muted-foreground">Faturado até agora</span>
             <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
           </div>
-          {period.inProgress && period.throughDay === 0 ? (
+          {period.inProgress && period.comparableThroughDay === 0 ? (
+            /* Two different reasons, and the user is owed the right one. On the
+               1st nothing has closed at all; through the 7th days have closed
+               but they are not the same weekdays the previous month offers, so
+               the two sides were never comparable. Both used to be drawn as a
+               fall. */
             <p className="text-sm text-muted-foreground">
-              O mês está começando — ainda não há dia fechado para comparar.
+              {period.throughDay === 0
+                ? 'O mês está começando — ainda não há dia fechado para comparar.'
+                : 'A primeira semana do mês ainda não fechou — a comparação com o mês passado começa no dia 8.'}
             </p>
           ) : (
             <>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Este mês {period.inProgress ? `(até o dia ${period.throughDay})` : '(fechado)'}
+                  Este mês {period.inProgress ? `(até o dia ${period.comparableThroughDay})` : '(fechado)'}
                 </span>
                 <span className="text-sm tabular-nums">{formatBRL(faturamento.current)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Mês passado {period.inProgress ? `(até o dia ${period.throughDay})` : '(fechado)'}
+                  Mês passado {period.inProgress ? `(até o dia ${period.comparableThroughDay})` : '(fechado)'}
                 </span>
                 <span className="text-sm tabular-nums">{formatBRL(faturamento.previous)}</span>
               </div>
@@ -594,7 +608,18 @@ function CashPositionSection({ data }: { data: Analysis['cashPosition'] }) {
             {formatBRL(data.endOfMonthProjection)}
           </span>
         </div>
-        {data.daysUntilNegative !== null && (
+        {/* What the projection assumes, said out loud. The month's bills are all
+            booked on the 1st and its sales are recorded as they happen, so a
+            curve of lançamentos alone dives every month — the days ahead are
+            credited with an ordinary day's receipts to make the figure mean
+            what the label says. Without any trading history there is nothing to
+            credit them with, and the card says that instead of alarming. */}
+        <p className="text-xs text-muted-foreground">
+          {data.expectsReceipts
+            ? 'Contando o recebimento médio de cada dia da semana nos dias que faltam.'
+            : 'Sem histórico de recebimento para projetar os dias que faltam — só o que já está lançado.'}
+        </p>
+        {data.expectsReceipts && data.daysUntilNegative !== null && (
           <div className="border-t pt-2">
             <p className="text-sm text-destructive">
               Saldo fica negativo em {pluralDias(data.daysUntilNegative)}
