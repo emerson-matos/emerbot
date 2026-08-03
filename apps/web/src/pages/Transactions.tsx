@@ -21,7 +21,7 @@ import PaymentList from '../components/payments/PaymentList'
 import { formatBRL, formatSignedBRL, parseAmountToCents } from '@/lib/format'
 import { categoriesByType } from '@/lib/categories'
 import {
-  activeFilterCount, buildGroups, compileFilters, defaultFilters, formatRangeLabel,
+  activeFilterCount, buildGroups, compileFilters, defaultFilters, filtersEqual, formatRangeLabel,
   groupIntoMonthPages, ledgerTotals, toISORange,
   type FilterState, type OriginFilter, type StatusFilter, type TypeFilter,
 } from '@/lib/transaction-filters'
@@ -109,10 +109,7 @@ export default function Transactions() {
   // the ways the controls and the list could get stuck disagreeing.
   const appliedCount = activeFilterCount(filters)
   const hasActiveFilters = appliedCount > 0 || activeFilterCount(pending) > 0
-  const isDirty = useMemo(
-    () => JSON.stringify(pending) !== JSON.stringify(filters),
-    [pending, filters],
-  )
+  const isDirty = !filtersEqual(pending, filters)
 
   function handleSubmit(e: SyntheticEvent) {
     e.preventDefault()

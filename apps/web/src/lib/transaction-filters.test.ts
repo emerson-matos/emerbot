@@ -226,7 +226,21 @@ describe('buildGroups', () => {
       ],
     }]
     expect(buildGroups(pages, currentMonth, TODAY, matchAll).map(g => g.key)).toEqual([
-      'upcoming', 'today', 'overdue', 'history',
+      'overdue', 'today', 'upcoming', 'history',
+    ])
+  })
+
+  it('anchors the current month at the top, ahead of future and past blocks', () => {
+    const pages = [
+      { month: '2026-06', entries: [makeEntry({ EntryID: 'jun', TransactionDate: '2026-06-10' })] },
+      { month: '2026-09', entries: [makeEntry({ EntryID: 'set', TransactionDate: '2026-09-10' })] },
+      {
+        month: currentMonth,
+        entries: [makeEntry({ EntryID: 'ago', DueDate: '2026-08-20', PaymentStatus: 'pending' })],
+      },
+    ]
+    expect(buildGroups(pages, currentMonth, TODAY, matchAll).map(g => g.key)).toEqual([
+      'upcoming', '2026-09', '2026-06',
     ])
   })
 

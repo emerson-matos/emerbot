@@ -429,12 +429,34 @@ func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter E
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return sortDate(filter.DateBasis, entries[i]).After(sortDate(filter.DateBasis, entries[j]))
+		return lessByBasis(filter.DateBasis, entries[i], entries[j])
 	})
 	if filter.Limit > 0 && len(entries) > filter.Limit {
 		entries = entries[:filter.Limit]
 	}
 	return entries, nil
+}
+
+// lessByBasis is the total order both stores return entries in: most recent
+// first by the basis date, ties broken by descending EntryID.
+//
+// The tiebreak is not cosmetic. Dates repeat — a dozen invoices can share a due
+// date — and a comparison on the date alone leaves those entries free to come
+// back in any order. sort.Slice is not stable, and the in-memory store feeds it
+// from a Go map, whose iteration order is randomised per call, so the two
+// implementations could disagree on the same data and the in-memory one could
+// disagree with itself.
+//
+// It breaks on the id *descending* because the id is the second half of the
+// GSI2 sort key (date#id) and the cursor walks that key backwards. Ordering ties
+// any other way would make the returned order stop matching the key the cursor
+// pages through, and paginating could then skip or repeat them.
+func lessByBasis(b DateBasis, x, y domain.FinancialEntry) bool {
+	dx, dy := sortDate(b, x), sortDate(b, y)
+	if !dx.Equal(dy) {
+		return dx.After(dy)
+	}
+	return x.EntryID > y.EntryID
 }
 
 // sortDate is the date the returned slice is ordered by — the same one the

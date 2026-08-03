@@ -529,6 +529,40 @@ func TestStoresAgreeOnEntryFilters(t *testing.T) {
 	})
 }
 
+// TestStoresAgreeOnListEntriesTieOrder guards the tiebreak both stores use
+// when several entries share the same effective date, a case that comes up
+// constantly — a dozen invoices can share a due date. DynamoDB orders those
+// ties by the sort key it has; the in-memory store scans a Go map, whose
+// iteration order is randomised per call. Without an explicit tiebreak the two
+// implementations can return the same ledger in different orders, and the
+// in-memory one can disagree with itself between calls.
+func TestStoresAgreeOnListEntriesTieOrder(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		for _, e := range []domain.FinancialEntry{
+			entry(t, "c", "2026-07-10", 100),
+			entry(t, "a", "2026-07-10", 200),
+			entry(t, "b", "2026-07-10", 300),
+		} {
+			if err := s.SaveEntry(ctx, e); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+
+		got, err := s.ListEntries(ctx, "u1", EntryFilter{})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		// EntryID descending: it is the second half of the GSI2 sort key
+		// (date#id), and the cursor walks that key backwards, so any other
+		// tiebreak would desync the returned order from the key pagination
+		// pages through.
+		if want := []string{"c", "b", "a"}; strings.Join(ids(got), ",") != strings.Join(want, ",") {
+			t.Fatalf("ids = %v, want %v", ids(got), want)
+		}
+	})
+}
+
 func TestStoresAgreeOnGoalsAndCategories(t *testing.T) {
 	eachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

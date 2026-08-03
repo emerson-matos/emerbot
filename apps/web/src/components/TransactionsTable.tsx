@@ -5,10 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Entry } from "../api/types";
-import { bucketByUrgency } from "@/lib/entries";
+import { urgencyGroups } from "@/lib/payment-groups";
 import EmptyState from "./EmptyState";
 import PaymentList from "./payments/PaymentList";
-import type { PaymentGroupData } from "./payments/PaymentGroup";
 
 interface Props {
   entries: Entry[];
@@ -20,27 +19,12 @@ interface Props {
 export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDelete }: Props) {
   const [showHistory, setShowHistory] = useState(false);
   const todayISO = format(new Date(), "yyyy-MM-dd");
-  const { overdue, dueToday, upcoming, history } = bucketByUrgency(entries, todayISO);
 
-  const groups: PaymentGroupData[] = [];
-  if (overdue.length) {
-    groups.push({ key: "overdue", label: "Em atraso", kind: "status", tone: "negative", items: overdue });
-  }
-  if (dueToday.length) {
-    groups.push({
-      key: "today",
-      label: `Hoje · ${format(new Date(), "dd/MM")}`,
-      kind: "status",
-      tone: "warning",
-      items: dueToday,
-    });
-  }
-  if (upcoming.length) {
-    groups.push({ key: "upcoming", label: "Próximos vencimentos", kind: "status", tone: "info", items: upcoming });
-  }
-  if (showHistory && history.length) {
-    groups.push({ key: "history", label: "Histórico do mês", kind: "status", tone: "neutral", items: history });
-  }
+  // The card shows the same groups, in the same order, as the Transações page —
+  // it just keeps the settled ones folded away until asked.
+  const allGroups = urgencyGroups(entries, todayISO);
+  const historyCount = allGroups.find(g => g.key === "history")?.items.length ?? 0;
+  const groups = showHistory ? allGroups : allGroups.filter(g => g.key !== "history");
 
   return (
     <Card>
@@ -65,11 +49,11 @@ export default function TransactionsTable({ entries, isLoading, onMarkPaid, onDe
         ) : (
           <>
             <PaymentList groups={groups} onMarkPaid={onMarkPaid} onDelete={onDelete} />
-            {history.length > 0 && (
+            {historyCount > 0 && (
               <div className="flex justify-center pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setShowHistory(v => !v)}>
                   {showHistory ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                  {showHistory ? "Ocultar" : "Mostrar"} histórico do mês ({history.length})
+                  {showHistory ? "Ocultar" : "Mostrar"} histórico do mês ({historyCount})
                 </Button>
               </div>
             )}

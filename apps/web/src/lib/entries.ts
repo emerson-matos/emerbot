@@ -35,6 +35,30 @@ export function netAmount(entries: Entry[]): number {
   return entries.reduce((sum, e) => sum + (e.Type === 'income' ? e.Amount : -e.Amount), 0)
 }
 
+export type SortDirection = 'asc' | 'desc'
+
+/**
+ * Orders entries by effective date, then by amount descending, then by id.
+ *
+ * The last two keys are what make the order *total*: dates repeat constantly —
+ * a dozen invoices can fall due on the same day — and a comparator that only
+ * looks at the date leaves those rows free to land in any order, so the list
+ * reshuffles itself on every refetch. Amount decides what a reader would ask
+ * for next (the biggest obligation first) and the id guarantees there is always
+ * a tiebreak left.
+ */
+export function compareEntries(a: Entry, b: Entry, direction: SortDirection = 'desc'): number {
+  const da = effectiveDate(a) ?? ''
+  const db = effectiveDate(b) ?? ''
+  if (da !== db) return direction === 'asc' ? da.localeCompare(db) : db.localeCompare(da)
+  if (a.Amount !== b.Amount) return b.Amount - a.Amount
+  return a.EntryID.localeCompare(b.EntryID)
+}
+
+export function sortEntries(entries: Entry[], direction: SortDirection = 'desc'): Entry[] {
+  return [...entries].sort((a, b) => compareEntries(a, b, direction))
+}
+
 export interface UrgencyBuckets {
   overdue: Entry[]
   dueToday: Entry[]
@@ -42,9 +66,16 @@ export interface UrgencyBuckets {
   history: Entry[]
 }
 
-// Splits entries relative to today: overdue (pending, past due), due today
-// (any status), upcoming (any status, future-dated), and history (already
-// paid, past-dated — kept separate so callers can hide it by default).
+/**
+ * Splits entries relative to today: overdue (pending, past due), due today
+ * (any status), upcoming (any status, future-dated), and history (already
+ * paid, past-dated — kept separate so callers can hide it by default).
+ *
+ * Each bucket is sorted here rather than inherited from the caller. Overdue
+ * runs oldest first, because the debt that has been unpaid longest is the one
+ * that needs attention, and upcoming runs soonest first for the same reason
+ * read forwards; history is most recent first, the way a statement is read.
+ */
 export function bucketByUrgency(entries: Entry[], todayISO: string): UrgencyBuckets {
   const overdue: Entry[] = []
   const dueToday: Entry[] = []
@@ -57,6 +88,10 @@ export function bucketByUrgency(entries: Entry[], todayISO: string): UrgencyBuck
     else if (e.PaymentStatus === 'pending') overdue.push(e)
     else history.push(e)
   }
-  upcoming.reverse()
-  return { overdue, dueToday, upcoming, history }
+  return {
+    overdue: sortEntries(overdue, 'asc'),
+    dueToday: sortEntries(dueToday, 'asc'),
+    upcoming: sortEntries(upcoming, 'asc'),
+    history: sortEntries(history, 'desc'),
+  }
 }

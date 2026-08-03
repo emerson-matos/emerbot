@@ -157,15 +157,71 @@ describe("bucketByUrgency", () => {
     expect(buckets.history).toEqual([]);
   });
 
-  // The API hands back newest-first, so upcoming is reversed to put the
-  // nearest due date at the top of the table.
-  it("reverses upcoming so the nearest due date comes first", () => {
+  it("puts the nearest due date first in upcoming", () => {
     const far = makeEntry({ EntryID: "far", DueDate: "2026-03-30" });
     const near = makeEntry({ EntryID: "near", DueDate: "2026-02-10" });
 
     const buckets = bucketByUrgency([far, near], today);
 
     expect(buckets.upcoming.map((e) => e.EntryID)).toEqual(["near", "far"]);
+  });
+
+  /**
+   * The bucket used to inherit the API's newest-first order, which put the
+   * entry that had been unpaid the shortest time at the top and buried the
+   * oldest debt at the bottom — backwards for a list titled "Em atraso".
+   */
+  it("puts the oldest debt first in overdue", () => {
+    const recent = makeEntry({ EntryID: "recent", DueDate: "2026-02-04", PaymentStatus: "pending" });
+    const ancient = makeEntry({ EntryID: "ancient", DueDate: "2025-11-02", PaymentStatus: "pending" });
+
+    const buckets = bucketByUrgency([recent, ancient], today);
+
+    expect(buckets.overdue.map((e) => e.EntryID)).toEqual(["ancient", "recent"]);
+  });
+
+  it("puts the most recent first in history", () => {
+    const older = makeEntry({ EntryID: "older", DueDate: "2026-01-02", PaymentStatus: "paid" });
+    const newer = makeEntry({ EntryID: "newer", DueDate: "2026-02-02", PaymentStatus: "paid" });
+
+    const buckets = bucketByUrgency([older, newer], today);
+
+    expect(buckets.history.map((e) => e.EntryID)).toEqual(["newer", "older"]);
+  });
+
+  it("breaks a shared date on the larger amount", () => {
+    const small = makeEntry({ EntryID: "small", DueDate: today, Amount: 1000 });
+    const large = makeEntry({ EntryID: "large", DueDate: today, Amount: 90000 });
+
+    const buckets = bucketByUrgency([small, large], today);
+
+    expect(buckets.dueToday.map((e) => e.EntryID)).toEqual(["large", "small"]);
+  });
+
+  /**
+   * The order has to be total, not merely sorted: dates repeat constantly, and
+   * an order that leaves ties free to move reshuffles the list on every
+   * refetch. Same entries in, same order out, whatever order they arrive in.
+   */
+  it("does not depend on the order the entries arrive in", () => {
+    const entries = [
+      makeEntry({ EntryID: "a", DueDate: today, Amount: 500 }),
+      makeEntry({ EntryID: "b", DueDate: today, Amount: 500 }),
+      makeEntry({ EntryID: "c", DueDate: today, Amount: 500 }),
+      makeEntry({ EntryID: "d", DueDate: "2026-02-20" }),
+      makeEntry({ EntryID: "e", DueDate: "2026-01-02", PaymentStatus: "pending" }),
+    ];
+    const ids = (list: ReturnType<typeof bucketByUrgency>) => [
+      ...list.overdue,
+      ...list.dueToday,
+      ...list.upcoming,
+      ...list.history,
+    ].map((e) => e.EntryID);
+
+    const forwards = ids(bucketByUrgency(entries, today));
+    const backwards = ids(bucketByUrgency([...entries].reverse(), today));
+
+    expect(backwards).toEqual(forwards);
   });
 
   it("treats an entry with no date as overdue when still pending", () => {

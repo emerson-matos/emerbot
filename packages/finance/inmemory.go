@@ -146,8 +146,11 @@ func (s *InMemoryStore) ListEntries(_ context.Context, userID string, filter Ent
 		result = append(result, e)
 	}
 
+	// The scan above walks a map, so result arrives in a different order every
+	// call; lessByBasis is a total order, which is what makes the output the
+	// same anyway — and the same as the DynamoDB store's.
 	sort.Slice(result, func(i, j int) bool {
-		return sortDate(filter.DateBasis, result[i]).After(sortDate(filter.DateBasis, result[j]))
+		return lessByBasis(filter.DateBasis, result[i], result[j])
 	})
 	if filter.Limit > 0 && len(result) > filter.Limit {
 		result = result[:filter.Limit]

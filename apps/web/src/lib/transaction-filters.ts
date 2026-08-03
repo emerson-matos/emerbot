@@ -2,7 +2,8 @@ import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import type { DateRange } from 'react-day-picker'
 import type { PaymentGroupData } from '@/components/payments/PaymentGroup'
-import { bucketByUrgency, effectiveDate } from '@/lib/entries'
+import { effectiveDate, sortEntries } from '@/lib/entries'
+import { urgencyGroups } from '@/lib/payment-groups'
 import { parseAmountToCents } from '@/lib/format'
 import type { Entry, IncomeOrigin } from '@/api/types'
 
@@ -108,6 +109,25 @@ export function activeFilterCount(f: FilterState): number {
 
 // An entry the calendar cannot place gets a label instead of a crash: date-fns
 // throws on an invalid date, and a group header is no place to take that risk.
+// Whether two filter states mean the same thing. The dates are compared as the
+// ISO window they resolve to, so two different Date objects for the same day
+// count as equal.
+export function filtersEqual(a: FilterState, b: FilterState): boolean {
+  const rangeA = toISORange(a.date)
+  const rangeB = toISORange(b.date)
+  return (
+    a.search === b.search &&
+    a.type === b.type &&
+    a.status === b.status &&
+    a.category === b.category &&
+    a.origin === b.origin &&
+    a.minAmount === b.minAmount &&
+    a.maxAmount === b.maxAmount &&
+    rangeA?.from === rangeB?.from &&
+    rangeA?.to === rangeB?.to
+  )
+}
+
 export function monthLabel(monthKey: string): string {
   const date = new Date(`${monthKey}-01T00:00:00`)
   if (Number.isNaN(date.getTime())) return 'Sem data'
@@ -138,8 +158,17 @@ export function groupIntoMonthPages(entries: Entry[]): MonthPage[] {
   return [...byMonth.entries()].map(([month, monthEntries]) => ({ month, entries: monthEntries }))
 }
 
-// Orders the page: months ahead of the current one ascending, the current month
-// split by urgency, then past months descending — nearest to today, outward.
+/**
+ * Orders the page by distance from today: the current month anchors the top,
+ * split by urgency, then the months ahead nearest-first, then the months behind
+ * most-recent-first.
+ *
+ * One axis, applied at both levels — the entries inside a month block are sorted
+ * the same way the block itself is placed, forwards for months ahead and
+ * backwards for months behind. Previously the blocks ran +1, +2, 0, −1, −2,
+ * because the future was sorted ascending and everything else descending, which
+ * is neither chronological nor by proximity.
+ */
 export function buildGroups(
   pages: MonthPage[],
   currentMonthKey: string,
@@ -148,35 +177,22 @@ export function buildGroups(
 ): PaymentGroupData[] {
   const result: PaymentGroupData[] = []
 
+  const current = pages.find(p => p.month === currentMonthKey)
+  if (current) {
+    result.push(...urgencyGroups(current.entries.filter(matches), todayISO))
+  }
+
   const future = pages.filter(p => p.month > currentMonthKey).sort((a, b) => a.month.localeCompare(b.month))
   for (const p of future) {
-    const items = p.entries.filter(matches)
+    const items = sortEntries(p.entries.filter(matches), 'asc')
     if (items.length) {
       result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'info', items })
     }
   }
 
-  const current = pages.find(p => p.month === currentMonthKey)
-  if (current) {
-    const { overdue, dueToday, upcoming, history } = bucketByUrgency(current.entries.filter(matches), todayISO)
-    if (upcoming.length) {
-      result.push({ key: 'upcoming', label: 'Próximos vencimentos', kind: 'status', tone: 'info', items: upcoming })
-    }
-    if (dueToday.length) {
-      const day = format(new Date(`${todayISO}T00:00:00`), 'dd/MM')
-      result.push({ key: 'today', label: `Hoje · ${day}`, kind: 'status', tone: 'warning', items: dueToday })
-    }
-    if (overdue.length) {
-      result.push({ key: 'overdue', label: 'Em atraso', kind: 'status', tone: 'negative', items: overdue })
-    }
-    if (history.length) {
-      result.push({ key: 'history', label: 'Histórico do mês', kind: 'status', tone: 'neutral', items: history })
-    }
-  }
-
   const past = pages.filter(p => p.month < currentMonthKey).sort((a, b) => b.month.localeCompare(a.month))
   for (const p of past) {
-    const items = p.entries.filter(matches)
+    const items = sortEntries(p.entries.filter(matches), 'desc')
     if (items.length) {
       result.push({ key: p.month, label: monthLabel(p.month), kind: 'period', tone: 'neutral', items })
     }
