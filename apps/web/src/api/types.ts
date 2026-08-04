@@ -374,15 +374,33 @@ export type TodayTargetScale =
   (typeof TodayTargetScale)[keyof typeof TodayTargetScale];
 
 export interface TodayTarget {
+  /**
+   * False when there is no calculable target for today — no historical basis,
+   * a weekday the pharmacy does not trade, a goal already met, a closed month.
+   * The other fields are zero then and must not be rendered.
+   */
   valid: boolean;
   weekday: string;
+  /** What this weekday usually brings, over a whole day. */
   historical: number;
+  /** What it has to bring today to keep the month on its goal. */
   target: number;
+  /** `target` minus `historical`. Negative when today can afford to be lighter. */
   delta: number;
   deltaPercent: number;
   factor: number;
   status: TodayTargetScale;
 }
+
+export const ProjectionStatus = {
+  /** No goal to cover, so no verdict. Not the same as falling short of one. */
+  NoTarget: "",
+  Success: "success",
+  Warning: "warning",
+  Danger: "danger",
+} as const;
+export type ProjectionStatus =
+  (typeof ProjectionStatus)[keyof typeof ProjectionStatus];
 
 export interface Projection {
   actual: number;
@@ -401,8 +419,17 @@ export interface Projection {
    * of it traded.
    */
   basis: ProjectionBasis;
+  /**
+   * `projected / target`: 1.10 overshoots by 10%, 0.80 lands 20% short. 0 when
+   * there is no target. Render it; do not divide again here — a percentage
+   * rounded in the browser beside a colour read off `onTrack` is how one screen
+   * came to show "97% da meta" in red under a green "Ritmo suficiente".
+   */
+  coverage: number;
+  /** The verdict drawn from `coverage`. Render it; do not re-derive one. */
+  status: ProjectionStatus;
   /** Today's revenue target derived from historical weekday averages. */
-  todayTarget?: TodayTarget;
+  todayTarget: TodayTarget;
 }
 
 export const RecommendationSeverity = {

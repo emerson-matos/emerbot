@@ -22,7 +22,7 @@ import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { currentMonthKey } from '@/lib/entries'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, Recommendation, TodayTargetScale } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation, TodayTargetScale } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -141,8 +141,23 @@ function paceTone(status: TodayTargetScale): string {
   }
 }
 
+// The projection's own verdict, coloured. Three levels, matching the severity
+// the recommendation below the card carries — reading the colour off the
+// boolean onTrack instead put "97% da meta" in red under a green
+// "Ritmo suficiente" on the same screen.
+const PROJECTION_TONE: Record<ProjectionStatus, string> = {
+  '': 'text-muted-foreground',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+}
+
 function pluralDias(n: number): string {
   return n === 1 ? '1 dia' : `${n} dias`
+}
+
+function pluralFechados(n: number): string {
+  return n === 1 ? '1 dia fechado' : `${n} dias fechados`
 }
 
 // Keyed by the backend's weekday abbreviations (analytics.weekdayLabels).
@@ -154,6 +169,16 @@ const WEEKDAY_FULL_PT: Record<string, string> = {
   Qui: 'quinta',
   Sex: 'sexta',
   Sáb: 'sábado',
+}
+
+// segunda through sexta are -feira and so feminine; domingo and sábado are not.
+// One hardcoded "uma" in the sentence read "para uma domingo" two days a week.
+const WEEKDAY_ARTICLE_PT: Record<string, string> = { Dom: 'um', Sáb: 'um' }
+
+function weekdayWithArticle(label: string): string {
+  const name = WEEKDAY_FULL_PT[label]
+  if (!name) return label
+  return `${WEEKDAY_ARTICLE_PT[label] ?? 'uma'} ${name}`
 }
 
 // The backend compares both months over the same finished days, so a percentage
@@ -404,8 +429,8 @@ function ProjectionSection({ projection, faturamento, period }: {
               {formatBRL(projection.projected)}
             </p>
             {projection.target > 0 && (
-              <p className={`mt-0.5 text-xs ${projection.onTrack ? 'text-success' : 'text-destructive'}`}>
-                Equivale a {Math.round(projection.projected / projection.target * 100)}% da meta
+              <p className={`mt-0.5 text-xs ${PROJECTION_TONE[projection.status]}`}>
+                Equivale a {Math.round(projection.coverage * 100)}% da meta
               </p>
             )}
             {/* How the number was reached. The days still to come used to be
@@ -506,18 +531,21 @@ function ProjectionSection({ projection, faturamento, period }: {
                     {formatBRL(projection.todayTarget.historical)}
                   </span>
                 </div>
-                {/* Separador visual — valores acima, interpretação abaixo */}
+                {/* Separador visual — valores acima, interpretação abaixo.
+                    A direção vem do sinal do delta: o texto era sempre "acima
+                    do esperado" e imprimia "-R$ 500,00 acima do esperado" num
+                    dia em que a farmácia podia vender menos. */}
                 <div className="pt-1">
                   <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
-                    {projection.todayTarget.delta >= 0 ? '+' : ''}{formatBRL(projection.todayTarget.delta)} acima do esperado
+                    {projection.todayTarget.delta === 0
+                      ? 'Em linha com o esperado'
+                      : `${formatBRL(Math.abs(projection.todayTarget.delta))} ${projection.todayTarget.delta > 0 ? 'acima' : 'abaixo'} do esperado`}
                   </p>
                   <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
-                    ≈ {projection.todayTarget.factor.toFixed(1)}× o esperado para uma {WEEKDAY_FULL_PT[projection.todayTarget.weekday] ?? projection.todayTarget.weekday}
+                    ≈ {projection.todayTarget.factor.toFixed(1)}× o esperado para {weekdayWithArticle(projection.todayTarget.weekday)}
                   </p>
                 </div>
               </div>
-            ) : projection.todayTarget === undefined ? (
-              <p className="text-sm text-destructive">Erro ao calcular a meta de hoje.</p>
             ) : projection.neededPerDay > 0 ? (
               <div className="flex items-center justify-between">
                 {/* Every remaining day, not just business days: the shop trades
@@ -560,9 +588,14 @@ function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
           <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
           <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
         </div>
+        {/* An accumulated total over the finished days, not a mean: the backend
+            sums faturamento across the window (see buildWeekComparison). The
+            row below it is the same sum over last week's matching days, which
+            is what makes the two comparable — labelling this one "Média diária"
+            printed three days of takings as one day's average. */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
-            Média diária ({data.pace.days} dia{data.pace.days > 1 ? 's' : ''} fechado{data.pace.days > 1 ? 's' : ''})
+            Ritmo até ontem ({pluralFechados(data.pace.days)})
           </span>
           <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
         </div>

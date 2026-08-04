@@ -70,6 +70,8 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 	// The verdict stands on a closed month too — it either reached its target
 	// or it did not. Only the per-day ask needs days left to spread over.
 	projection.OnTrack = projection.Projected >= projection.Target
+	projection.Coverage = float64(projection.Projected) / float64(projection.Target)
+	projection.Status = projectionStatus(projection.Coverage)
 	if gap := projection.Target - projection.Projected; gap > 0 {
 		projection.Gap = gap
 	}
@@ -95,7 +97,15 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 			totalHistAvg += rates.avg[int(d.Weekday())]
 		}
 
-		missing := projection.Target - projection.Actual
+		// Measured from what the till held when the day opened, not from Actual.
+		// Actual already carries today's sales, while totalHistAvg prices today
+		// at a whole day's average — numerator net of the morning, denominator
+		// gross of it. The target then shrank hour by hour while "Histórico"
+		// stayed a whole-day figure beside it, so a pharmacy trading exactly to
+		// plan watched "× o esperado" drift down through the afternoon. Both
+		// sides now cover the same whole day, which is also the only reading the
+		// card asserts when it compares the two.
+		missing := projection.Target - (projection.Actual - todayRevenue)
 		if totalHistAvg > 0 && todayAvg > 0 && missing > 0 {
 			factor := float64(missing) / float64(totalHistAvg)
 			todayTarget := roundToInt64(float64(todayAvg) * factor)

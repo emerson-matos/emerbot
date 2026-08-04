@@ -85,6 +85,9 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       daysRemaining: 5,
       neededPerDay: 164500,
       basis: "janela",
+      // 3.370.501 / 3.600.000 — short of the goal, but not far short.
+      coverage: 0.9362,
+      status: "warning",
       todayTarget: {
         valid: true,
         weekday: "Seg",
@@ -207,6 +210,67 @@ describe("Analysis page", () => {
     // When todayTarget is not valid (e.g., no historical basis), falls back to neededPerDay
     expect(screen.getByText("Necessário por dia (5 dias, hoje incluído)")).toBeInTheDocument();
     expect(screen.queryByText("Meta para hoje")).not.toBeInTheDocument();
+  });
+
+  // A day the pharmacy can afford to take lighter is a real answer. The line
+  // was worded "acima do esperado" whatever the sign, so it read
+  // "-R$ 200,00 acima do esperado" — the number and the sentence disagreeing.
+  it("says a lighter day is below the average, not a negative amount above it", () => {
+    const data = analysisData();
+    data.projection = {
+      ...data.projection,
+      todayTarget: {
+        ...data.projection.todayTarget,
+        valid: true,
+        target: 91700,
+        historical: 111700,
+        delta: -20000,
+        deltaPercent: -0.179,
+        factor: 0.821,
+        status: "below",
+      },
+    };
+    renderWith(data);
+
+    expect(screen.getByText("R$ 200,00 abaixo do esperado")).toBeInTheDocument();
+    expect(screen.queryByText(/acima do esperado/)).not.toBeInTheDocument();
+  });
+
+  // domingo and sábado are masculine; the sentence used to hardcode "uma".
+  it("agrees with the gender of the weekday it names", () => {
+    const data = analysisData();
+    data.projection = {
+      ...data.projection,
+      todayTarget: { ...data.projection.todayTarget, weekday: "Dom" },
+    };
+    renderWith(data);
+
+    expect(screen.getByText(/o esperado para um domingo/)).toBeInTheDocument();
+  });
+
+  // The card used to round its own percentage and colour it by the boolean
+  // onTrack, so a month covering 97% of its goal showed a red "97% da meta"
+  // under a green "Ritmo suficiente" in the insights list.
+  it("reads the coverage and its verdict off the payload", () => {
+    const data = analysisData();
+    data.projection = { ...data.projection, coverage: 0.97, status: "success" };
+    const { container } = renderWith(data);
+
+    const line = screen.getByText("Equivale a 97% da meta");
+    expect(line).toBeInTheDocument();
+    expect(line.className).toContain("text-success");
+    expect(container.textContent).not.toContain("Equivale a 94%");
+  });
+
+  // pace.current is faturamento accumulated over the finished days — the same
+  // shape as the "semana passada" row beneath it, which is what makes the two
+  // comparable. Calling it "Média diária" printed three days of takings as one
+  // day's average.
+  it("labels the week-to-date pace as a total, not a daily average", () => {
+    const { container } = renderWith(analysisData());
+
+    expect(screen.getByText("Ritmo até ontem (3 dias fechados)")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("Média diária");
   });
 
   it("prints the weekly recommendation once", () => {

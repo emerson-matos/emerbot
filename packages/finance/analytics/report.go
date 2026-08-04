@@ -90,21 +90,19 @@ func (a Analysis) AheadLines() []string {
 	}
 
 	var lines []string
-	recs := a.Recommendations
 	if a.Projection.Pacing() && a.Projection.NeededPerDay > 0 {
 		lines = append(lines, fmt.Sprintf("Faltam %s para a meta: %s/dia nos %s que restam (hoje incluído).",
 			formatBRL(a.Projection.Target-a.Projection.Actual),
 			formatBRL(a.Projection.NeededPerDay),
 			pluralDias(a.Projection.DaysRemaining)))
-		// Pacing() means recommendations[0] is the weekly-pace one (see
-		// buildRecommendations), and its message is the same per-day ask just
-		// printed. Whatever comes after it is a different point.
-		if len(recs) > 0 {
-			recs = recs[1:]
-		}
 	}
-	if len(recs) > 0 {
-		r := recs[0]
+	// The whole list, from the top. This used to drop recommendations[0]
+	// whenever a per-day ask had just been printed, because the weekly-pace
+	// recommendation that always sat there repeated it word for word. That one
+	// is gone; recommendations[0] is now the projection verdict, which says
+	// something the line above does not — and was being thrown away.
+	if len(a.Recommendations) > 0 {
+		r := a.Recommendations[0]
 		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
 	}
 	return lines
