@@ -39,7 +39,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
           type: "goal_behind",
           severity: "warning",
           title: "Precisa acelerar para bater a meta",
-          description: "Necessário R$ 1.645,00/dia nos próximos 5 dias",
+          description: "A projeção indica fechamento abaixo da meta.",
         },
       ],
     },
@@ -83,7 +83,6 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       gap: 229499,
       onTrack: false,
       daysRemaining: 5,
-      neededPerDay: 164500,
       basis: "janela",
       // 3.370.501 / 3.600.000 — short of the goal, but not far short.
       coverage: 0.9362,
@@ -113,7 +112,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
         severity: "danger",
         title: "Faturamento caiu e não bate a meta",
         message:
-          "Precisa de R$ 1.645,00/dia nos próximos 5 dias para atingir a meta do mês.",
+          "Precisa de R$ 1.645,00 nos próximos 5 dias para atingir a meta do mês.",
       },
       {
         severity: "warning",
@@ -190,31 +189,7 @@ describe("Analysis page", () => {
     expect(screen.queryByText(/dia útil/)).not.toBeInTheDocument();
   });
 
-  it("falls back to neededPerDay when todayTarget is not valid", () => {
-    const data = analysisData();
-    data.projection = {
-      ...data.projection,
-      todayTarget: {
-        valid: false,
-        weekday: "Seg",
-        historical: 0,
-        target: 0,
-        delta: 0,
-        deltaPercent: 0,
-        factor: 0,
-        status: "on_track",
-      },
-    };
-    renderWith(data);
-
-    // When todayTarget is not valid (e.g., no historical basis), falls back to neededPerDay
-    expect(screen.getByText("Necessário por dia (5 dias, hoje incluído)")).toBeInTheDocument();
-    expect(screen.queryByText("Meta para hoje")).not.toBeInTheDocument();
-  });
-
-  // The line was worded "acima do esperado" whatever the sign, so a day the
-  // pharmacy could take lighter read "-R$ 200,00 acima do esperado".
-  it("says a lighter day is below the average, not a negative amount above it", () => {
+   it("says a lighter day is below the average, not a negative amount above it", () => {
     const data = analysisData();
     data.projection = {
       ...data.projection,
@@ -314,12 +289,11 @@ describe("Analysis page", () => {
     // A month with no goal has no target for today either: the backend computes
     // one from `Target - (Actual - todayRevenue)` and leaves Valid false when
     // that is not positive (analytics/projection.go).
-    data.projection = {
-      ...data.projection,
-      target: 0,
-      neededPerDay: 0,
-      todayTarget: { ...data.projection.todayTarget, valid: false },
-    };
+     data.projection = {
+       ...data.projection,
+       target: 0,
+       todayTarget: { ...data.projection.todayTarget, valid: false },
+     };
     data.recommendations = [];
     data.expenseComposition = [];
     data.cashOutDays = [];

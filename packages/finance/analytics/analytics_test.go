@@ -661,11 +661,11 @@ func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 }
 
 func TestHealthGoalPaceMessages(t *testing.T) {
-	// 10 of 30 days gone, R$1.000,00 of a R$10.000,00 target: R$450/day still
-	// needed across the 20 days left, and a projection that misses.
+	// 10 of 30 days gone, R$1.000,00 of a R$10.000,00 target: R$700.000
+	// still short, and the projection misses.
 	projection := Projection{
 		Actual: 100000, Projected: 300000, Target: 1000000,
-		Gap: 700000, DaysRemaining: 20, NeededPerDay: 45000,
+		Gap: 700000, DaysRemaining: 20,
 	}
 	// Mid-month, with a day already behind us, so the pacing insight is the
 	// only thing this test is looking at.
@@ -681,8 +681,8 @@ func TestHealthGoalPaceMessages(t *testing.T) {
 	if behind == nil {
 		t.Fatalf("expected a goal-behind insight, got %+v", health.Messages)
 	}
-	if want := "Necessário R$ 450,00/dia nos próximos 20 dias"; behind.Description != want {
-		t.Errorf("description = %q, want %q", behind.Description, want)
+	if behind.Description != "A projeção indica fechamento abaixo da meta." {
+		t.Errorf("description = %q, want neutral projection message", behind.Description)
 	}
 }
 
@@ -831,11 +831,6 @@ func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 	if got.OnTrack {
 		t.Error("OnTrack = true, want false — the projection lands under the target")
 	}
-	// The one number the card, the insight and the recommendation all print:
-	// what is still missing, spread over the days left.
-	if want := int64(137083); got.NeededPerDay != want {
-		t.Errorf("NeededPerDay = %d, want (target-actual)/daysRemaining (%d)", got.NeededPerDay, want)
-	}
 }
 
 func TestProjectionCountsTodayAsADayStillToTrade(t *testing.T) {
@@ -852,10 +847,6 @@ func TestProjectionCountsTodayAsADayStillToTrade(t *testing.T) {
 	}
 	if !got.OnTrack {
 		t.Error("OnTrack = false, want true — an ordinary Friday closes the gap")
-	}
-	// Still R$1.000,00 short of the target, and one day to make it in.
-	if want := int64(100000); got.NeededPerDay != want {
-		t.Errorf("NeededPerDay = %d, want the whole shortfall on today (%d)", got.NeededPerDay, want)
 	}
 }
 
@@ -896,9 +887,6 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 		t.Errorf("Gap = %d, want %d", got.Gap, want)
 	}
 	// No days left to spread the shortfall over, so there is no ask to make.
-	if got.NeededPerDay != 0 {
-		t.Errorf("NeededPerDay = %d, want 0 with no days left", got.NeededPerDay)
-	}
 	// And nothing was estimated: Projected is July's own faturamento. Reading
 	// the basis off the rates called that "janela" — an eight-week estimate,
 	// stamped on the one figure in this struct that is not an estimate — and the
@@ -950,7 +938,7 @@ func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
 }
 
 // The share is weighted by the weekday, not spread flat: the whole difference
-// from NeededPerDay, which would ask a Saturday for as much as a Monday.
+// from a simple average, which would ask a Saturday for as much as a Monday.
 func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
 	// Saturday 2026-07-25 and Monday 2026-07-27, against the same rates.
 	rates := ratesFor(0, 200000, 200000, 200000, 200000, 200000, 100000)
@@ -1059,7 +1047,7 @@ func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
 	if got.Pacing() {
 		t.Error("Pacing = true, want false with no target")
 	}
-	if got.NeededPerDay != 0 || got.Gap != 0 || got.OnTrack {
+	if got.Gap != 0 || got.OnTrack {
 		t.Errorf("got %+v, want no verdict without a target", got)
 	}
 	// The projection itself still stands: Monday the 27th is the only day left
@@ -1592,10 +1580,10 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 		Now:            now,
 	})
 
-	if got.Projection.NeededPerDay <= 0 {
-		t.Fatalf("Projection = %+v, want a per-day ask", got.Projection)
+	if got.Projection.AccelerationPct() <= 0 {
+		t.Fatalf("Projection = %+v, want a non-zero acceleration pct", got.Projection)
 	}
-	asked := formatBRL(got.Projection.NeededPerDay)
+	pct := got.Projection.AccelerationPct()
 
 	var insight string
 	for _, m := range got.Health.Messages {
@@ -1603,11 +1591,11 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 			insight = m.Description
 		}
 	}
-	if !strings.Contains(insight, asked) {
-		t.Errorf("health insight = %q, want it to quote %s", insight, asked)
+	if insight != "A projeção indica fechamento abaixo da meta." {
+		t.Errorf("health insight = %q, want neutral projection message", insight)
 	}
-	if want := reais(got.Projection.NeededPerDay); got.ToolPayload()["necessario_por_dia_para_bater_a_meta"] != want {
-		t.Errorf("tool payload per-day ask = %v, want %v", got.ToolPayload()["necessario_por_dia_para_bater_a_meta"], want)
+	if want := pct; got.ToolPayload()["aceleracao_necessaria_pct"] != want {
+		t.Errorf("tool payload acceleration pct = %v, want %v", got.ToolPayload()["aceleracao_necessaria_pct"], want)
 	}
 	// And one projection of the month, not one per consumer.
 	if want := reais(got.Projection.Projected); got.ToolPayload()["projecao_do_mes"] != want {
@@ -1654,7 +1642,7 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	analysis := Analysis{
 		Period: Period{ThroughDay: 14, ComparableThroughDay: 14, DaysRemaining: 10, DaysTotal: 31, InProgress: true},
 		Projection: Projection{
-			Target: 1000000, Actual: 800000, DaysRemaining: 10, NeededPerDay: 20000,
+			Target: 1000000, Actual: 800000, DaysRemaining: 10,
 		},
 		Health: Health{
 			Status: HealthAtencao,
@@ -1665,8 +1653,6 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 		},
 		Recommendations: []Recommendation{
 			// recommendations[0] is the projection verdict, and is rendered.
-			// The digest used to skip it back when it was the weekly-pace one,
-			// whose message was the per-day ask AheadLines prints itself.
 			{Title: "Projeção abaixo da meta", Message: "O ritmo atual deve fechar o mês em torno de R$ 9.000,00."},
 			{Title: "Receita caiu", Message: "Aja rapidamente."},
 		},
@@ -1687,11 +1673,9 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 		}
 	}
 
-	// The one thing to do about it is the other half of the message, and it
-	// leads with the per-day ask rather than with the diagnosis.
+	// The one thing to do about it is the recommendation.
 	ahead := analysis.AheadLines()
 	wantAhead := []string{
-		"Faltam R$ 2.000,00 para a meta: R$ 200,00/dia nos 10 dias que restam (hoje incluído).",
 		"Projeção abaixo da meta: O ritmo atual deve fechar o mês em torno de R$ 9.000,00.",
 	}
 	if len(ahead) != len(wantAhead) {
@@ -1717,7 +1701,7 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 				{Type: InsightMonthStart, Severity: SeverityInfo, Title: "Mês começando", Description: "Ainda não há dia fechado para avaliar"},
 			},
 		},
-		Projection: Projection{Target: 3100000, Actual: 0, DaysRemaining: 31, NeededPerDay: 100000},
+		Projection: Projection{Target: 3100000, Actual: 0, DaysRemaining: 31},
 		Recommendations: []Recommendation{
 			{Title: "Projeção muito abaixo da meta", Message: "No ritmo atual o mês deve fechar em torno de R$ 0,00."},
 			{Title: "Saldo fica negativo em breve", Message: "Reduza despesas."},
@@ -1737,13 +1721,11 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 	// What is still ahead is unaffected — it is the only actionable half of a
 	// message that lands on the 1st.
 	ahead := analysis.AheadLines()
-	if len(ahead) != 2 || !strings.Contains(ahead[0], "R$ 1.000,00/dia") {
-		t.Errorf("AheadLines = %v, want the per-day ask and the recommendation", ahead)
+	if len(ahead) != 1 {
+		t.Errorf("AheadLines = %v, want one recommendation", ahead)
 	}
-	// The per-day ask is printed once, not twice: the verdict beside it quotes
-	// where the month lands, not what each day has to bring.
-	if strings.Contains(ahead[1], "/dia") {
-		t.Errorf("AheadLines repeats the per-day ask: %v", ahead)
+	if !strings.Contains(ahead[0], "Projeção muito abaixo da meta") {
+		t.Errorf("AheadLines = %v, want the recommendation", ahead)
 	}
 }
 
@@ -1992,9 +1974,6 @@ func TestFirstDayOfTheMonthReportsNothingRetrospective(t *testing.T) {
 	// is still ahead, and the target is priced across all of it.
 	if got.Projection.DaysRemaining != 31 {
 		t.Errorf("Projection.DaysRemaining = %d, want the whole month still to trade", got.Projection.DaysRemaining)
-	}
-	if want := int64(50000); got.Projection.NeededPerDay != want {
-		t.Errorf("NeededPerDay = %d, want the target spread over all 31 days (%d)", got.Projection.NeededPerDay, want)
 	}
 
 	lines := got.DigestLines()

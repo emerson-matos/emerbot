@@ -90,15 +90,6 @@ func (a Analysis) AheadLines() []string {
 	}
 
 	var lines []string
-	if a.Projection.Pacing() && a.Projection.NeededPerDay > 0 {
-		lines = append(lines, fmt.Sprintf("Faltam %s para a meta: %s/dia nos %s que restam (hoje incluído).",
-			formatBRL(a.Projection.Target-a.Projection.Actual),
-			formatBRL(a.Projection.NeededPerDay),
-			pluralDias(a.Projection.DaysRemaining)))
-	}
-	// From the top. This used to skip recommendations[0] whenever a per-day ask
-	// had been printed, because the weekly-pace one repeated it word for word —
-	// and kept skipping it once the projection verdict took its place.
 	if len(a.Recommendations) > 0 {
 		r := a.Recommendations[0]
 		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
@@ -222,8 +213,8 @@ func (a Analysis) ToolPayload() map[string]any {
 	// means it does not — there is no trading history — and the model must not
 	// read the figures as a balance about to run out.
 	payload["caixa"].(map[string]any)["conta_recebimento_esperado"] = a.CashPosition.ExpectsReceipts
-	if a.Projection.NeededPerDay > 0 {
-		payload["necessario_por_dia_para_bater_a_meta"] = reais(a.Projection.NeededPerDay)
+	if a.Projection.AccelerationPct() > 0 {
+		payload["aceleracao_necessaria_pct"] = a.Projection.AccelerationPct()
 	}
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)

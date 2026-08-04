@@ -68,19 +68,13 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 	}
 
 	// The verdict stands on a closed month too — it either reached its target
-	// or it did not. Only the per-day ask needs days left to spread over.
+	// or it did not.
 	projection.OnTrack = projection.Projected >= projection.Target
 	projection.Coverage = float64(projection.Projected) / float64(projection.Target)
 	projection.Status = projectionStatus(projection.Coverage)
 	if gap := projection.Target - projection.Projected; gap > 0 {
 		projection.Gap = gap
 	}
-	if projection.Pacing() {
-		if missing := projection.Target - projection.Actual; missing > 0 {
-			projection.NeededPerDay = roundToInt64(float64(missing) / float64(projection.DaysRemaining))
-		}
-	}
-
 	// TodayTarget scales today's historical weekday average by the factor
 	// computed from the ratio between the remaining revenue target and the sum
 	// of historical averages for all remaining calendar days. When the target

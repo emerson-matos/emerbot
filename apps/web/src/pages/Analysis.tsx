@@ -531,29 +531,18 @@ function ProjectionSection({ projection, faturamento, period }: {
               value={formatBRL(projection.gap)}
               valueClassName="text-base text-destructive"
             />
-            {/* Today's own target lives on the weekday strip below, drawn against
-                what this weekday usually brings. When the backend cannot compute
-                one, the month's remaining days share the shortfall evenly —
-                every remaining day, not just business days: the shop trades on
-                weekends too, and the label used to say "dia útil" over a figure
-                divided by all of them. */}
-            {!projection.todayTarget?.valid && (
-              projection.neededPerDay > 0 ? (
-                <Row
-                  label={`Necessário por dia (${pluralDias(projection.daysRemaining)}, hoje incluído)`}
-                  value={formatBRL(projection.neededPerDay)}
-                  valueClassName="text-base"
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">Mês encerrado — não há mais dias para recuperar.</p>
-              )
-            )}
-          </div>
-        )}
-      </>
-    </Section>
-  )
-}
+             {/* Today's own target lives on the weekday strip below, drawn against
+                 what this weekday usually brings. When the backend cannot compute
+                 one, the month's remaining days share the shortfall evenly —
+                 every remaining day, not just business days: the shop trades on
+                 weekends too, and the label used to say "dia útil" over a figure
+                 divided by all of them. */}
+           </div>
+         )}
+       </>
+     </Section>
+   )
+ }
 
 function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // The pace pair, not the running totals: both sides cover the same finished
