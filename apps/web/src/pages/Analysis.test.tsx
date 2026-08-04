@@ -311,7 +311,15 @@ describe("Analysis page", () => {
 
   it("keeps every section on the page and states its empty case", () => {
     const data = analysisData();
-    data.projection = { ...data.projection, target: 0, neededPerDay: 0 };
+    // A month with no goal has no target for today either: the backend computes
+    // one from `Target - (Actual - todayRevenue)` and leaves Valid false when
+    // that is not positive (analytics/projection.go).
+    data.projection = {
+      ...data.projection,
+      target: 0,
+      neededPerDay: 0,
+      todayTarget: { ...data.projection.todayTarget, valid: false },
+    };
     data.recommendations = [];
     data.expenseComposition = [];
     data.cashOutDays = [];
@@ -323,11 +331,11 @@ describe("Analysis page", () => {
     // back a different shape on every visit and "nothing to say" looked the
     // same as "failed to load".
     for (const title of [
-      "Projeção do Mês",
+      "Projeção do mês",
       "Insights do mês",
-      "Composição de Despesas",
-      "Dias com Maior Saída de Caixa",
-      "Média das Últimas 8 Semanas por Dia da Semana",
+      "Composição de despesas",
+      "Dias com maior saída de caixa",
+      "A semana da farmácia",
     ]) {
       expect(screen.getByText(title)).toBeInTheDocument();
     }
