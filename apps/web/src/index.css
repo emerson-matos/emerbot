@@ -32,6 +32,7 @@
     --color-border: var(--border);
     --color-destructive: var(--destructive);
     --color-accent-foreground: var(--accent-foreground);
+    --color-accent-strong: var(--accent-strong);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
     --color-muted: var(--muted);
@@ -74,6 +75,11 @@
     --muted-foreground: oklch(0.55 0.03 264);
     --accent: oklch(0.82 0.18 88);
     --accent-foreground: oklch(0.21 0.02 264);
+    /* The brand gold at L 0.82 sits at roughly 1.6:1 against white — fine as a
+       fill behind dark text, unreadable as text or as a hairline mark. This is
+       the same gold taken down to where it carries on a light background; in
+       dark mode the original is already the strong one. */
+    --accent-strong: oklch(0.48 0.12 75);
     --destructive: oklch(0.55 0.22 27);
     --success: oklch(0.72 0.17 145);
     --success-foreground: oklch(0.99 0.01 150);
@@ -116,6 +122,7 @@
     --muted-foreground: oklch(0.6 0.05 240);
     --accent: oklch(0.82 0.18 88);
     --accent-foreground: oklch(0.14 0.03 264);
+    --accent-strong: oklch(0.82 0.18 88);
     --destructive: oklch(0.64 0.16 27);
     --success: oklch(0.72 0.13 145);
     --success-foreground: oklch(0.16 0.03 150);
