@@ -103,24 +103,18 @@ func buildHealth(
 
 	if projection.Pacing() {
 		if projection.OnTrack {
-			description := "Faturamento já superou a meta"
-			if projection.NeededPerDay > 0 {
-				description = fmt.Sprintf("Necessário %s/dia — a projeção passa da meta", formatBRL(projection.NeededPerDay))
-			}
 			messages = append(messages, Insight{
 				Type:        InsightGoalOnTrack,
 				Severity:    SeverityInfo,
 				Title:       "No ritmo para bater a meta",
-				Description: description,
+				Description: "Faturamento já superou a meta",
 			})
-		} else if projection.NeededPerDay > 0 {
+		} else {
 			messages = append(messages, Insight{
-				Type:     InsightGoalBehind,
-				Severity: SeverityWarning,
-				Title:    "Precisa acelerar para bater a meta",
-				Description: fmt.Sprintf("Necessário %s/dia nos próximos %s",
-					formatBRL(projection.NeededPerDay), pluralDias(projection.DaysRemaining)),
-				Value: ptr(float64(projection.NeededPerDay)),
+				Type:        InsightGoalBehind,
+				Severity:    SeverityWarning,
+				Title:       "Precisa acelerar para bater a meta",
+				Description: "A projeção indica fechamento abaixo da meta.",
 			})
 		}
 	}

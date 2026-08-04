@@ -607,8 +607,8 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 		t.Errorf("digest does not say which days its verdict covers:\n%s", body)
 	}
 	// R$1.000 of a R$50.000 target with most of the month gone.
-	if !strings.Contains(body, "/dia") {
-		t.Errorf("digest does not say what the goal still needs per day:\n%s", body)
+	if !strings.Contains(body, "R$ 50.000,00") {
+		t.Errorf("digest does not say what the goal still needs:\n%s", body)
 	}
 }
 
@@ -733,8 +733,8 @@ func TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead(t *testing.T) {
 	if !strings.Contains(body, "começando") {
 		t.Errorf("digest does not say the month is just starting:\n%s", body)
 	}
-	// R$15.500,00 over all 31 days of August, today included.
-	if !strings.Contains(body, "R$ 500,00/dia nos 31 dias") {
+	// The recommendation is the only thing ahead of the month start.
+	if !strings.Contains(body, "Ritmo suficiente") {
 		t.Errorf("digest does not price the target over the whole month ahead:\n%s", body)
 	}
 }

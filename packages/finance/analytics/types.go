@@ -363,12 +363,6 @@ type Projection struct {
 	// dashboard card all read it rather than each deciding for themselves.
 	OnTrack       bool `json:"onTrack"`
 	DaysRemaining int  `json:"daysRemaining"`
-	// NeededPerDay is what each day left has to bring, measured from Actual, to
-	// reach Target. 0 when the target is already met or there is nothing to
-	// pace against. It is the arithmetic average — unlike TodayTarget, it
-	// ignores weekday seasonality and is useful for summaries and chatbot
-	// responses where the question is "how much per day on average?".
-	NeededPerDay int64 `json:"neededPerDay"`
 	// Basis is how much trading the projection was built from. Consumers render
 	// it as a qualifier; they must not re-derive one from the amounts.
 	Basis ProjectionBasis `json:"basis"`
@@ -383,6 +377,21 @@ type Projection struct {
 	// TodayTarget scales today's historical weekday average by the factor that
 	// would close the remaining gap if applied to every remaining day uniformly.
 	TodayTarget TodayTarget `json:"todayTarget"`
+}
+
+// AccelerationPct returns how much the projected revenue needs to grow, as a
+// fraction of the projection itself, to reach the target. Zero when the
+// projection already meets the target or when there is no projection to grow
+// from.
+func (p Projection) AccelerationPct() float64 {
+	if p.Projected <= 0 {
+		return 0
+	}
+	gap := p.Target - p.Projected
+	if gap <= 0 {
+		return 0
+	}
+	return float64(gap) / float64(p.Projected)
 }
 
 // Pacing reports whether there is anything to pace against: a target, and days
