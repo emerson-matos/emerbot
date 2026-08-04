@@ -362,18 +362,14 @@ type Projection struct {
 	// Basis is how much trading the projection was built from. Consumers render
 	// it as a qualifier; they must not re-derive one from the amounts.
 	Basis ProjectionBasis `json:"basis"`
-	// Coverage is Projected over Target: 1.10 overshoots the target by 10%, 0.80
-	// lands 20% short. 0 when there is no target, where Status is ProjNoTarget.
-	//
-	// It is carried rather than left for each consumer to divide for itself, for
-	// the same reason as Basis: the browser rounded its own percentage and read
-	// its colour off the boolean OnTrack while the recommendation beside it
-	// applied these thresholds, so a month covering 97% of its goal showed
-	// "Equivale a 97% da meta" in red under a green "Ritmo suficiente".
-	Coverage float64 `json:"coverage"`
-	// Status is the verdict drawn from Coverage. Consumers render it; they must
-	// not re-derive one from the amounts.
-	Status ProjectionStatus `json:"status"`
+	// Coverage is Projected over Target: 1.10 overshoots by 10%, 0.80 lands 20%
+	// short. 0 when there is no target, where Status is ProjNoTarget. Status is
+	// the verdict drawn from it. Consumers render both; like Basis, they must
+	// not re-derive one from the amounts — a percentage rounded in the browser
+	// beside a colour read off OnTrack put "97% da meta" in red under a green
+	// "Ritmo suficiente".
+	Coverage float64          `json:"coverage"`
+	Status   ProjectionStatus `json:"status"`
 	// TodayTarget scales today's historical weekday average by the factor that
 	// would close the remaining gap if applied to every remaining day uniformly.
 	TodayTarget TodayTarget `json:"todayTarget"`
@@ -403,16 +399,14 @@ const (
 	ProjDanger ProjectionStatus = "danger"
 )
 
-// The coverage cuts, in one place. Every reading of "is the month closing?" —
-// the card's colour, the recommendation's title, its wording, the digest —
-// comes off these, so moving one moves all of them together.
+// The coverage cuts, in one place: the card's colour, the recommendation's
+// title, its wording and the digest all come off these.
 const (
-	// coverageOnTarget — at or above this the projection is treated as reaching
-	// the goal. The last 5% is inside the noise of an eight-week average, and
-	// calling it a shortfall asks a pharmacist to act on rounding.
+	// coverageOnTarget — the last 5% is inside the noise of an eight-week
+	// average, and calling it a shortfall asks a pharmacist to act on rounding.
 	coverageOnTarget = 0.95
-	// coverageWithinReach — above this the shortfall is one the days left can
-	// still absorb; below it the month needs more than a good week.
+	// coverageWithinReach — above this the days left can still absorb the
+	// shortfall.
 	coverageWithinReach = 0.80
 	// coverageOutOfReach — below this no plausible acceleration closes the gap,
 	// and the copy says so instead of asking for one.

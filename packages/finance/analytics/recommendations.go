@@ -14,11 +14,9 @@ const (
 
 // buildRecommendations turns the month's state into actionable next steps.
 //
-// The list is read whole. recommendations[0] used to be the weekly-pace one,
-// which repeated the per-day ask its consumers had just printed, so both the
-// dashboard and the digest lifted it out and rendered the rest — a coupling
-// that survived the message changing underneath it and silently swallowed the
-// projection verdict that replaced it. Nothing here is positional now.
+// Nothing here is positional: consumers render the list whole. They used to
+// drop recommendations[0], which repeated the per-day ask they had just
+// printed, and went on dropping it after the message underneath changed.
 //
 // window is the comparison the trends were measured over; its suffix is
 // repeated in every month-over-month message, because a percentage from half a
@@ -79,10 +77,8 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 // alert for a pharmacy trading exactly as it had the month before.
 func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 
-// projectionRecommendation interprets the projection as a verdict on the
-// month. It reads the Status the projection already carries rather than
-// dividing again for itself, so the title here cannot disagree with the colour
-// the card draws from the same field.
+// projectionRecommendation words the Status the projection already carries, so
+// the title cannot disagree with the colour the card draws from the same field.
 func projectionRecommendation(projection Projection) Recommendation {
 	var severity RecommendationSeverity
 	var title string
@@ -100,11 +96,9 @@ func projectionRecommendation(projection Projection) Recommendation {
 	return Recommendation{Severity: severity, Title: title, Message: projectionMessage(projection)}
 }
 
-// projectionMessage words the verdict. It switches on Status rather than on
-// coverage so the sentence cannot end up graded differently from the title
-// above it; the one extra cut, inside ProjDanger, separates a goal that needs a
-// hard acceleration from one that is out of reach, and reads the same const
-// every other threshold here does.
+// projectionMessage switches on Status, not on coverage, so the sentence
+// cannot end up graded differently from the title above it. The one extra cut
+// separates a goal needing a hard acceleration from one out of reach.
 func projectionMessage(projection Projection) string {
 	switch projection.Status {
 	case ProjSuccess:

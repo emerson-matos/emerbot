@@ -141,9 +141,8 @@ function paceTone(status: TodayTargetScale): string {
   }
 }
 
-// The projection's own verdict, coloured. Three levels, matching the severity
-// the recommendation below the card carries — reading the colour off the
-// boolean onTrack instead put "97% da meta" in red under a green
+// Three levels, matching the severity the recommendation carries. Colouring by
+// the boolean onTrack instead put "97% da meta" in red under a green
 // "Ritmo suficiente" on the same screen.
 const PROJECTION_TONE: Record<ProjectionStatus, string> = {
   '': 'text-muted-foreground',
@@ -531,10 +530,9 @@ function ProjectionSection({ projection, faturamento, period }: {
                     {formatBRL(projection.todayTarget.historical)}
                   </span>
                 </div>
-                {/* Separador visual — valores acima, interpretação abaixo.
-                    A direção vem do sinal do delta: o texto era sempre "acima
-                    do esperado" e imprimia "-R$ 500,00 acima do esperado" num
-                    dia em que a farmácia podia vender menos. */}
+                {/* Separador visual — valores acima, interpretação abaixo. A
+                    direção vem do sinal do delta: o texto era fixo em "acima do
+                    esperado" e imprimia "-R$ 500,00 acima do esperado". */}
                 <div className="pt-1">
                   <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
                     {projection.todayTarget.delta === 0
@@ -588,11 +586,9 @@ function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
           <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
           <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
         </div>
-        {/* An accumulated total over the finished days, not a mean: the backend
-            sums faturamento across the window (see buildWeekComparison). The
-            row below it is the same sum over last week's matching days, which
-            is what makes the two comparable — labelling this one "Média diária"
-            printed three days of takings as one day's average. */}
+        {/* An accumulated total over the finished days, not a mean — the same
+            shape as the row below it, which is what makes the two comparable.
+            "Média diária" printed three days of takings as one day's average. */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
             Ritmo até ontem ({pluralFechados(data.pace.days)})

@@ -393,7 +393,7 @@ export interface TodayTarget {
 }
 
 export const ProjectionStatus = {
-  /** No goal to cover, so no verdict. Not the same as falling short of one. */
+  /** No goal to cover, so no verdict — not the same as falling short of one. */
   NoTarget: "",
   Success: "success",
   Warning: "warning",
@@ -421,12 +421,11 @@ export interface Projection {
   basis: ProjectionBasis;
   /**
    * `projected / target`: 1.10 overshoots by 10%, 0.80 lands 20% short. 0 when
-   * there is no target. Render it; do not divide again here — a percentage
-   * rounded in the browser beside a colour read off `onTrack` is how one screen
-   * came to show "97% da meta" in red under a green "Ritmo suficiente".
+   * there is no target. Render these; do not divide or re-derive a verdict here
+   * — a percentage rounded in the browser beside a colour read off `onTrack` is
+   * how one screen showed "97% da meta" in red under a green "Ritmo suficiente".
    */
   coverage: number;
-  /** The verdict drawn from `coverage`. Render it; do not re-derive one. */
   status: ProjectionStatus;
   /** Today's revenue target derived from historical weekday averages. */
   todayTarget: TodayTarget;

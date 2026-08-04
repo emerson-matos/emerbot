@@ -212,9 +212,8 @@ describe("Analysis page", () => {
     expect(screen.queryByText("Meta para hoje")).not.toBeInTheDocument();
   });
 
-  // A day the pharmacy can afford to take lighter is a real answer. The line
-  // was worded "acima do esperado" whatever the sign, so it read
-  // "-R$ 200,00 acima do esperado" — the number and the sentence disagreeing.
+  // The line was worded "acima do esperado" whatever the sign, so a day the
+  // pharmacy could take lighter read "-R$ 200,00 acima do esperado".
   it("says a lighter day is below the average, not a negative amount above it", () => {
     const data = analysisData();
     data.projection = {
@@ -248,9 +247,8 @@ describe("Analysis page", () => {
     expect(screen.getByText(/o esperado para um domingo/)).toBeInTheDocument();
   });
 
-  // The card used to round its own percentage and colour it by the boolean
-  // onTrack, so a month covering 97% of its goal showed a red "97% da meta"
-  // under a green "Ritmo suficiente" in the insights list.
+  // The card used to divide and colour by onTrack, so 97% of the goal showed a
+  // red "97% da meta" under a green "Ritmo suficiente".
   it("reads the coverage and its verdict off the payload", () => {
     const data = analysisData();
     data.projection = { ...data.projection, coverage: 0.97, status: "success" };
@@ -262,10 +260,8 @@ describe("Analysis page", () => {
     expect(container.textContent).not.toContain("Equivale a 94%");
   });
 
-  // pace.current is faturamento accumulated over the finished days — the same
-  // shape as the "semana passada" row beneath it, which is what makes the two
-  // comparable. Calling it "Média diária" printed three days of takings as one
-  // day's average.
+  // pace.current is accumulated over the finished days, so "Média diária"
+  // printed three days of takings as one day's average.
   it("labels the week-to-date pace as a total, not a daily average", () => {
     const { container } = renderWith(analysisData());
 
