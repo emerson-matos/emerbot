@@ -70,7 +70,7 @@ export default function Navigation({
                 {item.label}
               </span>
 
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                 em breve
               </span>
             </button>

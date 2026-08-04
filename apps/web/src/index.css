@@ -83,8 +83,13 @@
     --destructive: oklch(0.55 0.22 27);
     --success: oklch(0.72 0.17 145);
     --success-foreground: oklch(0.99 0.01 150);
-    --warning: oklch(0.78 0.16 70);
-    --warning-foreground: oklch(0.27 0.05 70);
+    /* 2,06:1 sobre branco no valor antigo (L 0.78): todo texto `text-warning`
+       ficava ilegível no tema claro, e é assim que a página escreve "acima do
+       esperado" e as quedas de ritmo. Em 5,05:1 fica na mesma faixa do
+       --destructive (5,43:1), que é o vizinho natural dele. O tema escuro
+       mantém o tom luminoso — lá o problema não existe. */
+    --warning: oklch(0.55 0.15 62);
+    --warning-foreground: oklch(0.98 0.01 70);
     --info: oklch(0.63 0.19 250);
     --info-foreground: oklch(0.99 0.01 240);
     --border: oklch(0.91 0.005 264);
