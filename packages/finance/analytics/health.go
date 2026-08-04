@@ -10,14 +10,23 @@ import (
 // Thresholds for the insight rules. Named because the numbers are a product
 // decision, not an implementation detail, and they are read in two places
 // (health and recommendations) that must agree.
+// Where a movement stops being worth mentioning. All of them are read against
+// the rounded percentages Trends publishes, so a threshold and the figure shown
+// beside it are the same number.
+//
+// They live together because two of them used to be the same rule written twice:
+// this file said "faturamento caiu" below -10 and recommendations.go recommended
+// acting below -10, from separate constants that only happened to agree. The
+// expense pair below genuinely differs in value — the insight flags at 10, the
+// recommendation only speaks up at 15 — and is kept apart on purpose.
 const (
 	// expenseGrowthPct — expenses growing faster than this, and faster than
 	// faturamento, is worth flagging.
 	expenseGrowthPct = 10
-	// revenueDropPct — faturamento falling more than this against last month.
-	revenueDropPct = -10
-	// weekPacePct — the dead band for week-over-week pace, either direction.
-	weekPacePct = 5
+	// revenueDropPct — faturamento falling more than this against last month,
+	// as a positive magnitude. Shared with the recommendation that accompanies
+	// the insight, so the two can never fire apart.
+	revenueDropPct = 10
 )
 
 // What each problem costs the health score. A warning is a dent; a critical
@@ -41,6 +50,7 @@ const (
 func buildHealth(
 	entries []domain.FinancialEntry,
 	compared comparison,
+	trends Trends,
 	week WeekComparison,
 	projection Projection,
 ) Health {
@@ -64,27 +74,29 @@ func buildHealth(
 			Description: "Ainda não há dia fechado para avaliar",
 		})
 	} else {
-		messages = append(messages, closedDayInsights(entries, compared)...)
+		messages = append(messages, closedDayInsights(entries, compared, trends)...)
 	}
 
+	// The pace's own verdict, not a second opinion on its numbers: the dead band
+	// that decides Direction is the one this insight used to apply itself, and
+	// the card renders the same pair.
 	if week.Pace.Days > 0 && week.Pace.Previous != 0 {
-		weekPct := percentChange(week.Pace.Current, week.Pace.Previous)
-		switch {
-		case weekPct > weekPacePct:
+		switch week.Pace.Direction {
+		case TrendUp:
 			messages = append(messages, Insight{
 				Type:        InsightWeeklyImprovement,
 				Severity:    SeverityInfo,
 				Title:       "Ritmo subiu vs semana passada",
-				Description: fmt.Sprintf("%d%% acima até ontem", roundToInt(weekPct)),
-				Value:       ptr(weekPct),
+				Description: fmt.Sprintf("%d%% acima até ontem", week.Pace.Change),
+				Value:       ptr(float64(week.Pace.Change)),
 			})
-		case weekPct < -weekPacePct:
+		case TrendDown:
 			messages = append(messages, Insight{
 				Type:        InsightWeeklyDecline,
 				Severity:    SeverityWarning,
 				Title:       "Ritmo caiu vs semana passada",
-				Description: fmt.Sprintf("%d%% abaixo até ontem", roundToInt(-weekPct)),
-				Value:       ptr(weekPct),
+				Description: fmt.Sprintf("%d%% abaixo até ontem", -week.Pace.Change),
+				Value:       ptr(float64(week.Pace.Change)),
 			})
 		}
 	}
@@ -130,7 +142,7 @@ func buildHealth(
 // month reports how it is doing without inventing a percentage against the
 // previous one. Each line carries the suffix of the window it was actually
 // measured over, and the two suffixes really do differ mid-month.
-func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []Insight {
+func closedDayInsights(entries []domain.FinancialEntry, compared comparison, trends Trends) []Insight {
 	messages := []Insight{}
 	current := compared.realized
 
@@ -179,12 +191,15 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 	// performance readings. A month propped up by a loan must still report that
 	// sales fell, and expenses outgrowing borrowed money is not the warning
 	// anyone means by "despesas cresceram".
+	//
+	// The percentages are the ones Trends already published — the same figures
+	// the KPI row prints and the recommendations act on. They used to be divided
+	// again here, from the same `compared`, with a raw denominator and no dead
+	// band, so this insight and the recommendation meant to accompany it read two
+	// slightly different numbers and parted ways at the threshold.
 	if compared.previous.revenue > 0 && compared.current.revenue > 0 {
-		revenueChange := percentChange(compared.current.revenue, compared.previous.revenue)
-		var expenseChange float64
-		if compared.previous.expense > 0 {
-			expenseChange = percentChange(compared.current.expense, compared.previous.expense)
-		}
+		revenueChange := trends.Faturamento.Change
+		expenseChange := trends.Despesa.Change
 
 		// Expenses growing is only a problem when sales are not keeping up.
 		if expenseChange > expenseGrowthPct && revenueChange < expenseChange {
@@ -192,18 +207,18 @@ func closedDayInsights(entries []domain.FinancialEntry, compared comparison) []I
 				Type:        InsightExpenseGrowth,
 				Severity:    SeverityWarning,
 				Title:       "Despesas cresceram",
-				Description: fmt.Sprintf("%d%% acima do mês passado%s", roundToInt(expenseChange), compared.windowSuffix()),
-				Value:       ptr(expenseChange),
+				Description: fmt.Sprintf("%d%% acima do mês passado%s", expenseChange, compared.windowSuffix()),
+				Value:       ptr(float64(expenseChange)),
 			})
 		}
 
-		if revenueChange < revenueDropPct {
+		if revenueChange < -revenueDropPct {
 			messages = append(messages, Insight{
 				Type:        InsightRevenueDrop,
 				Severity:    SeverityWarning,
 				Title:       "Faturamento caiu",
-				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", roundToInt(-revenueChange), compared.windowSuffix()),
-				Value:       ptr(revenueChange),
+				Description: fmt.Sprintf("%d%% abaixo do mês passado%s", -revenueChange, compared.windowSuffix()),
+				Value:       ptr(float64(revenueChange)),
 			})
 		}
 	}
@@ -292,12 +307,6 @@ func healthStatus(balance int64, messages []Insight) HealthStatus {
 		}
 	}
 	return status
-}
-
-// percentChange is the change from previous to current, as a percentage of
-// previous. Callers must ensure previous is non-zero.
-func percentChange[T int64 | int](current, previous T) float64 {
-	return float64(current-previous) / float64(previous) * 100
 }
 
 func ptr[T any](v T) *T { return &v }

@@ -533,6 +533,99 @@ func TestHealthStatusEscalates(t *testing.T) {
 	}
 }
 
+// The warning and the advice about the same fall are one decision, not two.
+//
+// They used to be two: the insight divided its own percentage from `compared`
+// with a raw denominator and no dead band, the recommendation read the rounded
+// trend, and each had its own threshold constant. At the boundary a month got
+// "Faturamento caiu" with no advice attached — -10.4% is past -10 as a float and
+// exactly -10 once rounded.
+func TestRevenueDropWarnsAndAdvisesTogether(t *testing.T) {
+	has := func(msgs []Insight, want InsightType) bool {
+		for _, m := range msgs {
+			if m.Type == want {
+				return true
+			}
+		}
+		return false
+	}
+	advised := func(recs []Recommendation) bool {
+		for _, r := range recs {
+			if r.Title == "Receita caiu" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Sweep the whole range either side of the threshold, at odd totals so the
+	// rounding boundary is actually crossed rather than stepped over.
+	for _, previous := range []int64{100000, 333333, 987654} {
+		for current := previous / 2; current <= previous; current += previous / 53 {
+			compared := comparison{
+				current:  monthTotals{revenue: current, income: current, expense: 1000, balance: current - 1000},
+				previous: monthTotals{revenue: previous, income: previous, expense: 1000, balance: previous - 1000},
+				clock:    clock(t, "2026-06", "2026-07-10"),
+			}
+			trends := buildTrends(compared)
+			health := buildHealth(nil, compared, trends, WeekComparison{}, Projection{})
+			recs := buildRecommendations(WeekComparison{}, Projection{}, trends, CashPosition{}, compared)
+
+			warned, advice := has(health.Messages, InsightRevenueDrop), advised(recs)
+			if warned != advice {
+				t.Fatalf("%d→%d (%d%%): insight=%v recommendation=%v — the two must fire together",
+					previous, current, trends.Faturamento.Change, warned, advice)
+			}
+			// And the figure the warning quotes is the one the page prints.
+			if warned && !strings.HasPrefix(health.Messages[len(health.Messages)-1].Description,
+				fmt.Sprintf("%d%%", -trends.Faturamento.Change)) {
+				t.Fatalf("%d→%d: warning does not quote trends.Faturamento.Change (%d)",
+					previous, current, trends.Faturamento.Change)
+			}
+		}
+	}
+}
+
+// The pace insight and the pace card read one verdict. The insight applied a
+// ±5 dead band and the card applied none, so a week inside the band showed an
+// arrow and a percentage next to insights calling it flat.
+func TestWeekPaceVerdictIsShared(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		current, previous int64
+		wantDirection     TrendDirection
+		wantInsight       InsightType
+	}{
+		{"inside the dead band", 103000, 100000, TrendStable, ""},
+		{"a real rise", 120000, 100000, TrendUp, InsightWeeklyImprovement},
+		{"a real fall", 80000, 100000, TrendDown, InsightWeeklyDecline},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []domain.FinancialEntry{
+				sale(t, "2026-07-27", tc.current),  // Monday of this week
+				sale(t, "2026-07-20", tc.previous), // the Monday before
+			}
+			// A Tuesday: Monday is the one finished day on both sides.
+			week := buildWeekComparison(entries, at12(t, "2026-07-28"), 0)
+
+			if week.Pace.Direction != tc.wantDirection {
+				t.Errorf("Direction = %q, want %q (change %d%%)", week.Pace.Direction, tc.wantDirection, week.Pace.Change)
+			}
+
+			health := buildHealth(nil, comparison{clock: clock(t, "2026-07", "2026-07-28")}, Trends{}, week, Projection{})
+			var got InsightType
+			for _, m := range health.Messages {
+				if m.Type == InsightWeeklyImprovement || m.Type == InsightWeeklyDecline {
+					got = m.Type
+				}
+			}
+			if got != tc.wantInsight {
+				t.Errorf("insight = %q, want %q — the card and the insight share one dead band", got, tc.wantInsight)
+			}
+		})
+	}
+}
+
 func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 	// Two closed months, so the comparison is whole-against-whole. Both insights
 	// read the revenue side: they are performance readings, so borrowed money
@@ -543,7 +636,7 @@ func TestHealthFlagsRevenueDropAndExpenseGrowth(t *testing.T) {
 		clock:    clock(t, "2026-06", "2026-07-10"),
 	}
 
-	health := buildHealth(nil, compared, WeekComparison{}, Projection{})
+	health := buildHealth(nil, compared, buildTrends(compared), WeekComparison{}, Projection{})
 
 	byType := map[InsightType]Insight{}
 	for _, m := range health.Messages {
@@ -576,7 +669,8 @@ func TestHealthGoalPaceMessages(t *testing.T) {
 	}
 	// Mid-month, with a day already behind us, so the pacing insight is the
 	// only thing this test is looking at.
-	health := buildHealth(nil, comparison{clock: clock(t, "2026-07", "2026-07-11")}, WeekComparison{}, projection)
+	midMonth := comparison{clock: clock(t, "2026-07", "2026-07-11")}
+	health := buildHealth(nil, midMonth, buildTrends(midMonth), WeekComparison{}, projection)
 
 	var behind *Insight
 	for i, m := range health.Messages {
@@ -2026,7 +2120,7 @@ func TestOpeningWeekStillReportsTheMonthItself(t *testing.T) {
 		t.Error("comparable = true, want false in the opening week")
 	}
 
-	health := buildHealth(entries, compared, WeekComparison{}, Projection{})
+	health := buildHealth(entries, compared, buildTrends(compared), WeekComparison{}, Projection{})
 	var positive bool
 	for _, m := range health.Messages {
 		if m.Title == "Resultado positivo" {

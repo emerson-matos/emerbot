@@ -4,9 +4,14 @@ import "fmt"
 
 // Thresholds above which a month-over-month move is worth a recommendation of
 // its own, on top of whatever the health insights already said.
+//
+// The revenue side deliberately has no constant here: a fall worth warning
+// about and a fall worth acting on are the same fall, so it reads
+// revenueDropPct alongside the insight it accompanies. It used to keep its own
+// incomeSlumpPct, equal in value but compared against a differently-rounded
+// percentage, which is how a month could get the warning and not the advice.
 const (
 	expenseSpikePct = 15
-	incomeSlumpPct  = 10
 	// cashRunwayDays — a balance going negative this soon needs acting on now,
 	// not at month end.
 	cashRunwayDays = 7
@@ -37,7 +42,7 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 		})
 	}
 
-	if hasBaseline(trends.Faturamento) && trends.Faturamento.Direction == TrendDown && abs(trends.Faturamento.Change) > incomeSlumpPct {
+	if hasBaseline(trends.Faturamento) && trends.Faturamento.Direction == TrendDown && trends.Faturamento.Change < -revenueDropPct {
 		recs = append(recs, Recommendation{
 			Severity: RecDanger,
 			Title:    "Receita caiu",

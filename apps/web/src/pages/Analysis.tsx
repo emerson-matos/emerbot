@@ -25,7 +25,7 @@ import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { WEEKDAY_FULL_PT } from '@/lib/weekdays'
 import { currentMonthKey } from '@/lib/entries'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation, TrendDirection } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -160,16 +160,25 @@ function RecommendationSection({ data }: { data: Analysis['recommendations'] }) 
 
 const TREND_ARROW = { up: '↑', down: '↓', stable: '—' } as const
 
-// The dead band the backend uses for a week-over-week move (weekPacePct): a
-// swing inside it is noise. The two percentages on this page used to colour
-// themselves at ±50%, so a fall the health card was calling a warning showed
-// up here in a neutral tone.
-const TREND_DEAD_BAND_PCT = 5
-
-function trendTone(pct: number): string {
-  if (pct < -TREND_DEAD_BAND_PCT) return 'text-warning'
-  if (pct > TREND_DEAD_BAND_PCT) return 'text-success'
-  return 'text-muted-foreground'
+// The tone comes from the direction the backend already decided, never from
+// re-thresholding the percentage here.
+//
+// This used to hold `change` against a dead band of its own — a copy of the
+// week's ±5, which is not the month's ±2 — and applied it to both readings on
+// the page. A month moving 3% was a direction to the backend, the health card
+// and the KPI arrow, and neutral grey here.
+//
+// Both MonthTrend and WeekPace fit: each carries its own direction, graded with
+// the band that suits its window. Without a baseline there is nothing to
+// colour — the backend reports a flat 100% up there, which is a placeholder,
+// not a rise.
+function trendTone(trend: { direction: TrendDirection; previous: number }): string {
+  if (trend.previous === 0) return 'text-muted-foreground'
+  switch (trend.direction) {
+    case 'up':   return 'text-success'
+    case 'down': return 'text-warning'
+    default:     return 'text-muted-foreground'
+  }
 }
 
 // Three levels, matching the severity the recommendation carries. Colouring by
@@ -427,16 +436,6 @@ function ProjectionSection({ projection, faturamento, period }: {
   faturamento: MonthTrend
   period: Period
 }) {
-  // Both sides come from the faturamento trend, which the backend measures over
-  // the same finished days of both months. This used to hold projection.actual —
-  // the whole month including a today that had barely been traded — against last
-  // month up to the same date in full, so the card reported a fall every morning
-  // and a 100% one on the 1st.
-  const prevDiff = faturamento.previous > 0
-    ? Math.round(((faturamento.current - faturamento.previous) / faturamento.previous) * 100)
-    : null
-
-  const windowLabel = period.inProgress ? `(até o dia ${period.comparableThroughDay})` : '(fechado)'
 
   return (
     <Section
@@ -494,18 +493,28 @@ function ProjectionSection({ projection, faturamento, period }: {
             </p>
           ) : (
             <>
-              <Row label={`Este mês ${windowLabel}`} value={formatBRL(faturamento.current)} />
-              <Row label={`Mês passado ${windowLabel}`} value={formatBRL(faturamento.previous)} />
-              {/* No previous month is not a 0% move: without a baseline there is
-                  no percentage to report, and printing one invented a comparison
-                  against a month that never traded. */}
-              {prevDiff === null ? (
-                <p className="text-sm text-muted-foreground">Sem faturamento no mês passado para comparar</p>
-              ) : (
-                <p className={`text-sm ${trendTone(prevDiff)}`}>
-                  {prevDiff > 0 ? '↑' : '↓'} {Math.abs(prevDiff)}% vs mês passado
-                </p>
-              )}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Este mês {period.inProgress ? `(até o dia ${period.comparableThroughDay})` : '(fechado)'}
+                </span>
+                <span className="text-sm tabular-nums">{formatBRL(faturamento.current)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Mês passado {period.inProgress ? `(até o dia ${period.comparableThroughDay})` : '(fechado)'}
+                </span>
+                <span className="text-sm tabular-nums">{formatBRL(faturamento.previous)}</span>
+              </div>
+              {/* The same trend the KPI row prints, through the same label. This
+                  used to divide faturamento.current by .previous here instead,
+                  ignoring the change and direction sitting on the very object it
+                  was handed — so a +1% month read "— 1%" three sections above and
+                  "↑ 1%" here, the browser having no dead band. trendLabel also
+                  carries the window suffix, which this line never did: a
+                  percentage from half a month said "vs mês passado" flat. */}
+              <p className={`text-sm ${trendTone(faturamento)}`}>
+                {trendLabel(faturamento, period)}
+              </p>
             </>
           )}
         </div>
@@ -551,9 +560,11 @@ function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // days of the week, so today — still being traded — is in neither. Comparing
   // this week including today against last week's matching weekday in full read
   // as a fall every morning, and as a 100% fall on a Monday.
-  const pct = data.pace.days > 0 && data.pace.previous !== 0
-    ? Math.round(((data.pace.current - data.pace.previous) / data.pace.previous) * 100)
-    : null
+  //
+  // The percentage is the backend's (pace.change), not a division done here. The
+  // one done here had no dead band, so this line read "↑ 3% vs semana anterior"
+  // beside health insights that were treating the same week as flat.
+  const hasBaseline = data.pace.days > 0 && data.pace.previous !== 0
 
   // The backend emits one label per elapsed day of this week, so the last one
   // is the day it actually measured through. Reading the browser clock instead
@@ -575,11 +586,11 @@ function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
         <Row label="Semana passada (mesmos dias)" value={formatBRL(data.pace.previous)} />
         {data.pace.days === 0 ? (
           <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
-        ) : pct === null ? (
+        ) : !hasBaseline ? (
           <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
         ) : (
-          <p className={`text-sm ${trendTone(pct)}`}>
-            {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
+          <p className={`text-sm ${trendTone(data.pace)}`}>
+            {TREND_ARROW[data.pace.direction]} {Math.abs(data.pace.change)}% vs semana anterior
           </p>
         )}
       </div>

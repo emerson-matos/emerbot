@@ -203,11 +203,13 @@ export interface FinancialHealth {
   messages: Insight[];
 }
 
+export type TrendDirection = "up" | "down" | "stable";
+
 export interface MonthTrend {
   current: number;
   previous: number;
   change: number;
-  direction: "up" | "down" | "stable";
+  direction: TrendDirection;
 }
 
 /**
@@ -329,6 +331,17 @@ export interface WeekPace {
   previous: number;
   /** Finished days of this week both sides cover; 0 on a Monday. */
   days: number;
+  /**
+   * The backend's own verdict on the pace, in the same shape as MonthTrend, and
+   * the only one to render. This card used to divide `current` by `previous`
+   * itself, without the dead band the health insight applies, so it printed
+   * "↑ 3% vs semana anterior" for a week the insights beside it called flat.
+   *
+   * A `previous` of 0 still reads as a flat 100% up: check `previous` and say
+   * "sem base" rather than quoting it.
+   */
+  change: number;
+  direction: TrendDirection;
 }
 
 /**
