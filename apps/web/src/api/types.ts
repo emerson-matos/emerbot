@@ -365,6 +365,25 @@ export const ProjectionBasis = {
 export type ProjectionBasis =
   (typeof ProjectionBasis)[keyof typeof ProjectionBasis];
 
+export const TodayTargetScale = {
+  Below: "below",
+  OnTrack: "on_track",
+  Above: "above",
+} as const;
+export type TodayTargetScale =
+  (typeof TodayTargetScale)[keyof typeof TodayTargetScale];
+
+export interface TodayTarget {
+  valid: boolean;
+  weekday: string;
+  historical: number;
+  target: number;
+  delta: number;
+  deltaPercent: number;
+  factor: number;
+  status: TodayTargetScale;
+}
+
 export interface Projection {
   actual: number;
   remaining: number;
@@ -382,6 +401,8 @@ export interface Projection {
    * of it traded.
    */
   basis: ProjectionBasis;
+  /** Today's revenue target derived from historical weekday averages. */
+  todayTarget?: TodayTarget;
 }
 
 export const RecommendationSeverity = {

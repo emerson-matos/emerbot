@@ -22,7 +22,7 @@ import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { currentMonthKey } from '@/lib/entries'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, Recommendation } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, Recommendation, TodayTargetScale } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -104,7 +104,7 @@ function Section({
 function RecommendationSection({ data }: { data: Analysis['recommendations'] }) {
   return (
     <Section
-      title="Recomendações"
+      title="Insights do mês"
       icon={Lightbulb}
       empty={data.length === 0 ? 'Nada a ajustar por enquanto — o mês está seguindo o previsto.' : undefined}
     >
@@ -131,6 +131,14 @@ function trendTone(pct: number): string {
   if (pct < -TREND_DEAD_BAND_PCT) return 'text-warning'
   if (pct > TREND_DEAD_BAND_PCT) return 'text-success'
   return 'text-muted-foreground'
+}
+
+function paceTone(status: TodayTargetScale): string {
+  switch (status) {
+    case 'above':   return 'text-warning'
+    case 'below':   return 'text-success'
+    case 'on_track': return 'text-muted-foreground'
+  }
 }
 
 function pluralDias(n: number): string {
@@ -383,9 +391,14 @@ function ProjectionSection({ projection, faturamento, period }: {
         <div className="grid grid-cols-[1fr_auto] gap-x-4">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Projeção</p>
-            <p className="truncate text-lg tabular-nums">
+            <p className="truncate text-2xl font-semibold tabular-nums">
               {formatBRL(projection.projected)}
             </p>
+            {projection.target > 0 && (
+              <p className={`mt-0.5 text-xs ${projection.onTrack ? 'text-success' : 'text-destructive'}`}>
+                Equivale a {Math.round(projection.projected / projection.target * 100)}% da meta
+              </p>
+            )}
             {/* How the number was reached. The days still to come used to be
                 priced from this month's own finished days, so on the 3rd every
                 weekday the month had not reached yet counted as zero and the
@@ -409,6 +422,10 @@ function ProjectionSection({ projection, faturamento, period }: {
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Faturado até agora</span>
             <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Estimativa restante</span>
+            <span className="text-sm tabular-nums">+{formatBRL(projection.remaining)}</span>
           </div>
           {period.inProgress && period.comparableThroughDay === 0 ? (
             /* Two different reasons, and the user is owed the right one. On the
@@ -461,7 +478,38 @@ function ProjectionSection({ projection, faturamento, period }: {
               <p className="text-sm text-muted-foreground">Faltam para a meta</p>
               <p className="text-base text-destructive tabular-nums">{formatBRL(projection.gap)}</p>
             </div>
-            {projection.neededPerDay > 0 ? (
+            {projection.todayTarget?.valid ? (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Meta para hoje
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Meta</span>
+                  <span className="text-sm font-medium tabular-nums">
+                    {formatBRL(projection.todayTarget.target)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Histórico ({projection.todayTarget.weekday})
+                  </span>
+                  <span className="text-sm tabular-nums">
+                    {formatBRL(projection.todayTarget.historical)}
+                  </span>
+                </div>
+                {/* Separador visual — valores acima, interpretação abaixo */}
+                <div className="pt-1">
+                  <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
+                    {projection.todayTarget.delta >= 0 ? '+' : ''}{formatBRL(projection.todayTarget.delta)} acima do esperado
+                  </p>
+                  <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
+                    ≈ {projection.todayTarget.factor.toFixed(1)}× o esperado para uma {WEEKDAY_FULL_PT[projection.todayTarget.weekday] ?? projection.todayTarget.weekday}
+                  </p>
+                </div>
+              </div>
+            ) : projection.todayTarget === undefined ? (
+              <p className="text-sm text-destructive">Erro ao calcular a meta de hoje.</p>
+            ) : projection.neededPerDay > 0 ? (
               <div className="flex items-center justify-between">
                 {/* Every remaining day, not just business days: the shop trades
                     on weekends too, and the label used to say "dia útil" over a
@@ -481,7 +529,7 @@ function ProjectionSection({ projection, faturamento, period }: {
   )
 }
 
-function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekComparison']; recommendation?: Recommendation }) {
+function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // The pace pair, not the running totals: both sides cover the same finished
   // days of the week, so today — still being traded — is in neither. Comparing
   // this week including today against last week's matching weekday in full read
@@ -498,36 +546,31 @@ function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekC
 
   return (
     <Section title="Comportamento Semanal" icon={Clock}>
-      <>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Ritmo até ontem ({pluralDias(data.pace.days)})</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Semana passada (mesmos dias)</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.pace.previous)}</span>
-          </div>
-          {data.pace.days === 0 ? (
-            <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
-          ) : pct === null ? (
-            <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
-          ) : (
-            <p className={`text-sm ${trendTone(pct)}`}>
-              {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
-            </p>
-          )}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
+          <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
         </div>
-        {recommendation && (
-          <div className="border-t pt-2">
-            <RecommendationItem recommendation={recommendation} />
-          </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            Média diária ({data.pace.days} dia{data.pace.days > 1 ? 's' : ''} fechado{data.pace.days > 1 ? 's' : ''})
+          </span>
+          <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Semana passada (mesmos dias)</span>
+          <span className="text-sm tabular-nums">{formatBRL(data.pace.previous)}</span>
+        </div>
+        {data.pace.days === 0 ? (
+          <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
+        ) : pct === null ? (
+          <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
+        ) : (
+          <p className={`text-sm ${trendTone(pct)}`}>
+            {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
+          </p>
         )}
-      </>
+      </div>
     </Section>
   )
 }
@@ -673,11 +716,6 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
 }
 
 function AnalysisBody({ analysis }: { analysis: Analysis }) {
-  // recommendations[0] is the weekly one, which captions the week-comparison
-  // card (see the backend's buildRecommendations). The list below carries the
-  // rest — printing it in both places put the same sentence on screen twice.
-  const [weeklyRec, ...otherRecs] = analysis.recommendations
-
   return (
     <>
       {/* The headline numbers first: the cards below break them down, and the
@@ -689,14 +727,14 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         period={analysis.period}
       />
       <HealthSection data={analysis.health} />
-      <RecommendationSection data={otherRecs} />
+      <RecommendationSection data={analysis.recommendations} />
       <WeekdaySection data={analysis.weekdays} />
       <ProjectionSection
         projection={analysis.projection}
         faturamento={analysis.trends.faturamento}
         period={analysis.period}
       />
-      <WeekComparisonSection data={analysis.weekComparison} recommendation={weeklyRec} />
+      <WeekComparisonSection data={analysis.weekComparison} />
       <CashPositionSection data={analysis.cashPosition} />
       <CashOutSection data={analysis.cashOutDays} />
       <CompositionSection data={analysis.expenseComposition} />

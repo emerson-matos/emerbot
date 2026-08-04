@@ -84,6 +84,16 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       daysRemaining: 5,
       neededPerDay: 164500,
       basis: "janela",
+      todayTarget: {
+        valid: true,
+        weekday: "Seg",
+        historical: 111700,
+        target: 121100,
+        delta: 9400,
+        deltaPercent: 0.084,
+        factor: 1.084,
+        status: "above",
+      },
     },
     history: [],
     cashPosition: {
@@ -128,8 +138,8 @@ describe("Analysis page", () => {
     // The card used to divide the shortfall left after its own projection
     // (R$459,00 here) while the insight above it quoted the shortfall from
     // real faturamento — two daily targets on one screen.
-    expect(screen.getByText(/Necessário por dia/)).toBeInTheDocument();
-    expect(screen.getByText("R$ 1.645,00")).toBeInTheDocument();
+    expect(screen.getByText(/Meta para hoje/)).toBeInTheDocument();
+    expect(screen.getByText("R$ 1.211,00")).toBeInTheDocument();
     expect(normalizeSpaces(container.textContent ?? "")).not.toContain(
       "R$ 459,00",
     );
@@ -171,8 +181,22 @@ describe("Analysis page", () => {
   it("labels the per-day ask by every day left, not business days", () => {
     renderWith(analysisData());
 
-    expect(screen.getByText("Necessário por dia (5 dias, hoje incluído)")).toBeInTheDocument();
+    // When todayTarget is valid, it shows "Meta para hoje" instead of "Necessário por dia"
+    expect(screen.getByText("Meta para hoje")).toBeInTheDocument();
     expect(screen.queryByText(/dia útil/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to neededPerDay when todayTarget is not valid", () => {
+    const data = analysisData();
+    data.projection = {
+      ...data.projection,
+      todayTarget: { ...data.projection.todayTarget, valid: false },
+    };
+    renderWith(data);
+
+    // When todayTarget is not valid (e.g., no historical basis), falls back to neededPerDay
+    expect(screen.getByText("Necessário por dia (5 dias, hoje incluído)")).toBeInTheDocument();
+    expect(screen.queryByText("Meta para hoje")).not.toBeInTheDocument();
   });
 
   it("prints the weekly recommendation once", () => {
@@ -230,7 +254,7 @@ describe("Analysis page", () => {
     // same as "failed to load".
     for (const title of [
       "Projeção do Mês",
-      "Recomendações",
+      "Insights do mês",
       "Composição de Despesas",
       "Dias com Maior Saída de Caixa",
       "Média das Últimas 8 Semanas por Dia da Semana",

@@ -290,6 +290,51 @@ const (
 	ProjectionClosed ProjectionBasis = "fechado"
 )
 
+// TodayTargetScale says how today's target compares to its historical weekday
+// average. The backend decides this so the frontend renders a colour without
+// deriving thresholds from the amounts.
+type TodayTargetScale string
+
+const (
+	// PaceBelow means today's target is below the historical average — the
+	// pharmacy is ahead and can afford a lighter day.
+	PaceBelow TodayTargetScale = "below"
+	// PaceOnTrack means the target is within ±5% of the historical average —
+	// neither a stretch nor a slack day.
+	PaceOnTrack TodayTargetScale = "on_track"
+	// PaceAbove means today's target exceeds the historical average — the
+	// pharmacy needs to sell more than it usually does on this weekday.
+	PaceAbove TodayTargetScale = "above"
+)
+
+// TodayTarget is the recommended revenue target for the current day.
+//
+// Rather than evenly distributing the remaining goal across the calendar,
+// it allocates today's share proportionally to the expected weekday demand.
+// This keeps Saturday targets naturally lower than Monday targets while
+// remaining consistent with the monthly projection model. A factor of 1.08
+// means the pharmacy needs to sell 8% above its usual Monday rhythm to close
+// the gap; 0.92 means it can sell 8% below and still be fine.
+//
+// Internally this is computed using Gaussian-smoothed weekday averages.
+//
+// Unlike NeededPerDay, it accounts for weekday seasonality. NeededPerDay is
+// the arithmetic average per day, useful for summaries and chatbot responses
+// where the question is "how much per day on average?" rather than "how much
+// should I sell today?".
+type TodayTarget struct {
+	// Valid is false when there is no calculable daily target — a closed month,
+	// no historical basis, or the day of the week the pharmacy does not open.
+	Valid        bool             `json:"valid"`
+	Weekday      string           `json:"weekday"`
+	Historical   int64            `json:"historical"`
+	Target       int64            `json:"target"`
+	Delta        int64            `json:"delta"`
+	DeltaPercent float64          `json:"deltaPercent"`
+	Factor       float64          `json:"factor"`
+	Status       TodayTargetScale `json:"status"`
+}
+
 // Projection is where the month lands and what it would take to close the gap
 // to the income goal. Every amount is faturamento (see isFaturamento),
 // matching how the target is set.
@@ -310,11 +355,16 @@ type Projection struct {
 	DaysRemaining int  `json:"daysRemaining"`
 	// NeededPerDay is what each day left has to bring, measured from Actual, to
 	// reach Target. 0 when the target is already met or there is nothing to
-	// pace against.
+	// pace against. It is the arithmetic average — unlike TodayTarget, it
+	// ignores weekday seasonality and is useful for summaries and chatbot
+	// responses where the question is "how much per day on average?".
 	NeededPerDay int64 `json:"neededPerDay"`
 	// Basis is how much trading the projection was built from. Consumers render
 	// it as a qualifier; they must not re-derive one from the amounts.
 	Basis ProjectionBasis `json:"basis"`
+	// TodayTarget scales today's historical weekday average by the factor that
+	// would close the remaining gap if applied to every remaining day uniformly.
+	TodayTarget TodayTarget `json:"todayTarget"`
 }
 
 // Pacing reports whether there is anything to pace against: a target, and days
@@ -322,6 +372,43 @@ type Projection struct {
 // per-day ask to make.
 func (p Projection) Pacing() bool {
 	return p.Target > 0 && p.DaysRemaining > 0
+}
+
+// ProjectionStatus is the qualitative verdict on whether the current pace will
+// close the gap to the income goal.
+type ProjectionStatus string
+
+const (
+	// ProjSuccess means the projection reaches or exceeds the target.
+	ProjSuccess ProjectionStatus = "success"
+	// ProjWarning means the projection falls short but remains within reach.
+	ProjWarning ProjectionStatus = "warning"
+	// ProjDanger means the projection falls far short of the target.
+	ProjDanger ProjectionStatus = "danger"
+)
+
+// Coverage is the ratio of projected revenue to the income target. A value of
+// 1.10 means the projection overshoots the target by 10%; 0.80 means it lands
+// 20% short. It returns 0 when there is no target.
+func (p Projection) Coverage() float64 {
+	if p.Target <= 0 {
+		return 0
+	}
+	return float64(p.Projected) / float64(p.Target)
+}
+
+// Status returns the qualitative verdict on the projection. The thresholds are
+// concentrated here so every consumer — dashboard, WhatsApp, health insights —
+// agrees on the same reading.
+func (p Projection) Status() ProjectionStatus {
+	switch c := p.Coverage(); {
+	case c >= 0.95:
+		return ProjSuccess
+	case c >= 0.80:
+		return ProjWarning
+	default:
+		return ProjDanger
+	}
 }
 
 // RecommendationSeverity drives the recommendation's colour.
