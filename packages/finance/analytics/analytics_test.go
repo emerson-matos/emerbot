@@ -655,9 +655,8 @@ func TestRecommendationsProjectionCoverageMatrix(t *testing.T) {
 }
 
 func TestProjectionStatusBoundaries(t *testing.T) {
-	// The exact cuts, against the one function that owns them. Reading them off
-	// a Projection built from a float ratio would test Go's rounding as much as
-	// the thresholds.
+	// Against the function that owns the cuts: reading them off a Projection
+	// built from a float ratio would test Go's rounding as much as the cuts.
 	tests := []struct {
 		coverage float64
 		want     ProjectionStatus
@@ -820,9 +819,8 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	}
 }
 
-// TodayTarget prices today at its own weekday average scaled by what it would
-// take to close the gap if every remaining day pulled the same weight. A flat
-// week makes the arithmetic checkable by hand.
+// TodayTarget is today's weekday average scaled by what it would take to close
+// the gap if every remaining day pulled the same weight.
 func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
 	// Monday 2026-07-27: five days left in July, all priced at R$1.000,00.
 	now := at12(t, "2026-07-27")
@@ -856,9 +854,8 @@ func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
 	}
 }
 
-// The share is weighted by the weekday, not spread flat: that is the whole
-// difference from NeededPerDay. A Saturday worth half a Monday is asked for
-// half as much on the same factor.
+// The share is weighted by the weekday, not spread flat: the whole difference
+// from NeededPerDay, which would ask a Saturday for as much as a Monday.
 func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
 	// Saturday 2026-07-25 and Monday 2026-07-27, against the same rates.
 	rates := ratesFor(0, 200000, 200000, 200000, 200000, 200000, 100000)
@@ -872,15 +869,12 @@ func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
 	if sat.Historical != 100000 || mon.Historical != 200000 {
 		t.Fatalf("Historical: Sat = %d, Mon = %d — want the weekday averages", sat.Historical, mon.Historical)
 	}
-	// Saturday is asked for less in reais than Monday even though both are
-	// stretched by their own factor. NeededPerDay would ask both for the same.
 	if sat.Target >= mon.Target {
 		t.Errorf("Sat target = %d, Mon target = %d, want Saturday asked for less", sat.Target, mon.Target)
 	}
 }
 
-// A day already half traded must not deflate its own target. missing is
-// measured from what the till held when the day opened, because the historical
+// A day already half traded must not deflate its own target: the historical
 // average it is compared against is a whole day's takings.
 func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
 	now := at12(t, "2026-07-27")
@@ -900,8 +894,8 @@ func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
 	}
 }
 
-// Below its average is a real answer, not an absent one: a pharmacy running
-// ahead of its goal can afford a lighter day, and the card says so.
+// Below the average is a real answer, not an absent one: a pharmacy running
+// ahead of its goal can afford a lighter day.
 func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
 	now := at12(t, "2026-07-27")
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
@@ -1500,11 +1494,9 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 			},
 		},
 		Recommendations: []Recommendation{
-			// recommendations[0] is the projection verdict. It used to be the
-			// weekly-pace one, whose message was the per-day ask AheadLines
-			// prints itself, so the digest skipped it — and went on skipping it
-			// after the message underneath changed into something the ask does
-			// not say. Nothing is positional now; the list is read from the top.
+			// recommendations[0] is the projection verdict, and is rendered.
+			// The digest used to skip it back when it was the weekly-pace one,
+			// whose message was the per-day ask AheadLines prints itself.
 			{Title: "Projeção abaixo da meta", Message: "O ritmo atual deve fechar o mês em torno de R$ 9.000,00."},
 			{Title: "Receita caiu", Message: "Aja rapidamente."},
 		},
@@ -1526,8 +1518,7 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	}
 
 	// The one thing to do about it is the other half of the message, and it
-	// leads with the per-day ask rather than with the diagnosis. The verdict
-	// follows: what the ask is worth if nothing changes.
+	// leads with the per-day ask rather than with the diagnosis.
 	ahead := analysis.AheadLines()
 	wantAhead := []string{
 		"Faltam R$ 2.000,00 para a meta: R$ 200,00/dia nos 10 dias que restam (hoje incluído).",
@@ -1579,9 +1570,8 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 	if len(ahead) != 2 || !strings.Contains(ahead[0], "R$ 1.000,00/dia") {
 		t.Errorf("AheadLines = %v, want the per-day ask and the recommendation", ahead)
 	}
-	// The per-day ask is printed once, not twice. The recommendation beside it
-	// is the projection verdict, which quotes where the month lands rather than
-	// what each day has to bring.
+	// The per-day ask is printed once, not twice: the verdict beside it quotes
+	// where the month lands, not what each day has to bring.
 	if strings.Contains(ahead[1], "/dia") {
 		t.Errorf("AheadLines repeats the per-day ask: %v", ahead)
 	}
