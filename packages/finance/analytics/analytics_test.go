@@ -1141,6 +1141,106 @@ func TestTheMonthIsProjectedAtTheRatesTheCardShows(t *testing.T) {
 	}
 }
 
+// Actual + Remaining = Projected is the identity the card is read through:
+// "faturado até agora" above "estimativa restante" above "projeção", and a
+// reader who adds the first two must land on the third. It is asserted across
+// every shape the projection comes in — not only the ordinary mid-month one —
+// because the shapes are exactly where the three figures could drift apart: a
+// closed month adds nothing, a day already traded past its average adds nothing
+// either, and neither may leave Projected quoting a sum that was never taken.
+func TestProjectionIsAlwaysActualPlusRemaining(t *testing.T) {
+	week := ratesFor(60000, 122400, 119100, 102900, 121400, 121100, 148100)
+	inAugust := GoalProgress{RevenueTarget: 4000000, RevenueActual: 358837, DaysTotal: 31, DaysRemaining: 28}
+
+	tests := []struct {
+		name         string
+		rates        dailyRates
+		goals        GoalProgress
+		month, now   string
+		todayRevenue int64
+	}{
+		{"mid-month", week, inAugust, "2026-08", "2026-08-04", 0},
+		{"today already part traded", week, inAugust, "2026-08", "2026-08-04", 50000},
+		{"today already past its average", week, inAugust, "2026-08", "2026-08-04", 500000},
+		{"the first day of the month", week, GoalProgress{RevenueTarget: 4000000, DaysTotal: 31, DaysRemaining: 31}, "2026-08", "2026-08-01", 0},
+		{"the last day of the month", week, GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 1}, "2026-07", "2026-07-31", 0},
+		{"a closed month", week, GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}, "2026-07", "2026-08-04", 0},
+		{"no window to price the days from", dailyRates{}, inAugust, "2026-08", "2026-08-04", 0},
+		{"no target to pace against", week, GoalProgress{RevenueActual: 358837, DaysTotal: 31, DaysRemaining: 28}, "2026-08", "2026-08-04", 0},
+		{"a target already beaten", week, GoalProgress{RevenueTarget: 1000000, RevenueActual: 4000000, DaysTotal: 31, DaysRemaining: 28}, "2026-08", "2026-08-04", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildProjection(tc.rates, tc.goals, at12(t, tc.now), clock(t, tc.month, tc.now), tc.todayRevenue)
+
+			if got.Actual != tc.goals.RevenueActual {
+				t.Errorf("Actual = %d, want the faturamento already booked (%d)", got.Actual, tc.goals.RevenueActual)
+			}
+			// Never negative: a day that has beaten its average has nothing left
+			// to bring, and must not be allowed to eat into what has been sold.
+			if got.Remaining < 0 {
+				t.Errorf("Remaining = %d, want nothing left rather than a negative estimate", got.Remaining)
+			}
+			if want := got.Actual + got.Remaining; got.Projected != want {
+				t.Errorf("Projected = %d, want Actual + Remaining (%d + %d = %d)",
+					got.Projected, got.Actual, got.Remaining, want)
+			}
+		})
+	}
+}
+
+// On 4 August 2026 the month has 28 days left — exactly four Sundays, four
+// Mondays and so on — so what is still to come can be checked in closed form:
+// four times the sum of the seven weekday averages. buildProjection never does
+// that arithmetic; it walks the calendar a day at a time. The two agreeing is
+// what ties the estimate on the card to the averages printed right beside it,
+// which is otherwise only ever checked by adding the card up by hand.
+func TestTheRestOfTheMonthIsPricedAtItsRemainingWeekdays(t *testing.T) {
+	monthClock := clock(t, "2026-08", "2026-08-04")
+	if want := 4 * daysInWeek; monthClock.remaining != want {
+		t.Fatalf("August has %d days left from the 4th, want %d — four of every weekday", monthClock.remaining, want)
+	}
+
+	// Every day of the window traded, at amounts that differ from week to week
+	// so a Gaussian-weighted average and a flat one cannot coincide by accident.
+	from, to := monthClock.projectionWindow()
+	var window []domain.FinancialEntry
+	for d := from.Time(); !d.After(to.Time()); d = d.AddDate(0, 0, 1) {
+		window = append(window, sale(t, domain.NewCalendarDate(d).String(), int64(100000+d.YearDay()*137)))
+	}
+	rates := projectionRates(window, from, to)
+
+	var perWeek int64
+	for _, avg := range rates.avg {
+		perWeek += avg
+	}
+
+	now := at12(t, "2026-08-04")
+	goals := GoalProgress{RevenueTarget: 4000000, RevenueActual: 358837, DaysTotal: 31, DaysRemaining: monthClock.remaining}
+	got := buildProjection(rates, goals, now, monthClock, 0)
+
+	if want := 4 * perWeek; got.Remaining != want {
+		t.Errorf("Remaining = %d, want four of every weekday average (%d)", got.Remaining, want)
+	}
+	if want := goals.RevenueActual + got.Remaining; got.Projected != want {
+		t.Errorf("Projected = %d, want faturamento so far plus the days left (%d)", got.Projected, want)
+	}
+
+	// The one thing the closed form has to bend for is today. What has already
+	// sold on the 4th sits in Actual, so only the rest of an ordinary Tuesday is
+	// still ahead — the sum drops by exactly the morning's takings, not by a
+	// whole day.
+	const soldToday = 20000
+	if tuesday := rates.avg[int(time.Tuesday)]; tuesday <= soldToday {
+		t.Fatalf("Tuesday averages %d, want more than the %d sold today so the day is netted rather than clamped", tuesday, soldToday)
+	}
+	partial := buildProjection(rates, goals, now, monthClock, soldToday)
+	if want := 4*perWeek - soldToday; partial.Remaining != want {
+		t.Errorf("Remaining = %d with %d already sold today, want %d", partial.Remaining, int64(soldToday), want)
+	}
+}
+
 // A weighted projection follows the pharmacy when its trading level actually
 // shifts. Under a flat average a doubling in the last fortnight was diluted by
 // six older weeks and the projection took the full window to catch up.
