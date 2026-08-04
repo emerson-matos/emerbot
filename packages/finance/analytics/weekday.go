@@ -112,82 +112,79 @@ func gaussianAvg(weeks weekTotals, endMonday domain.CalendarDate) int64 {
 	return roundToInt64(weighted / weight)
 }
 
-// weekdayStatsWeighted computes a Gaussian-weighted average of faturamento per
-// day of the week over the trailing 8-week window. It replaces the former
-// weekdayStats which only looked at the analysed month, because a month's own
-// first days could not price the weekdays still to come and an unusual single
-// week distorted the whole card.
-//
-// The Gaussian weighting (σ = 2 weeks) means recent weeks count more than
-// older ones: a single holiday or one-off event two months ago barely moves
-// the average, while a trend shift this week shows up almost immediately.
-//
-// Count is the number of distinct weeks that saw revenue for each weekday.
-//
-// Today is left out entirely: it is a day still being traded, and folding a
-// morning's takings in as though it were a whole Tuesday drags that weekday's
-// average down all day, further the earlier the analysis runs. It falls outside
-// the window rather than being skipped here — see monthClock.projectionWindow.
-func weekdayStatsWeighted(window []domain.FinancialEntry, from, to domain.CalendarDate, now time.Time) []WeekdayStat {
-	today := int(now.Weekday())
-	weeks, endMonday := weekdayWeekTotals(window, to, revenueOn(from, to))
-
-	stats := make([]WeekdayStat, 0, daysInWeek)
-	for d := 0; d < daysInWeek; d++ {
-		count := len(weeks[d])
-		var basis ProjectionBasis
-		switch {
-		case count == 0:
-			basis = ProjectionNoBasis
-		case count < daysInWeek:
-			basis = ProjectionPartial
-		default:
-			basis = ProjectionFromWindow
-		}
-		stats = append(stats, WeekdayStat{
-			Day:     d,
-			Label:   weekdayLabels[d],
-			Avg:     gaussianAvg(weeks[d], endMonday),
-			Count:   count,
-			IsToday: d == today,
-			Basis:   basis,
-		})
-	}
-	return stats
-}
-
 // dayFromStr parses a "YYYY-MM-DD" string back into a CalendarDate. It is used
-// inside weekdayStatsWeighted to recover a date from a map key for weekOffset
-// computation. The string always comes from CalendarDate.String(), so the parse
-// cannot fail.
+// to recover a date from a map key for weekOffset computation. The string always
+// comes from CalendarDate.String(), so the parse cannot fail.
 func dayFromStr(s string) domain.CalendarDate {
 	t, _ := time.Parse("2006-01-02", s)
 	return domain.NewCalendarDate(t)
 }
 
-// dailyRates prices each day of the week for the projection: what a Tuesday
-// still to come is expected to bring.
+// dailyRates is a window's weekly rhythm, read once: what a Tuesday still to
+// come is expected to bring, and how much evidence that stands on.
+//
+// It is also what the weekday card renders — see weekdayStats. The card used to
+// aggregate the same window a second time to draw itself, which is how it ended
+// up Gaussian-weighted while the projection beside it was not. There is one
+// reading now, and the card is a view of it rather than a rival calculation.
 type dailyRates struct {
 	avg [daysInWeek]int64
-	// sample is how many distinct dates traded inside the window — the evidence
-	// the rates stand on, and the only thing that can honestly qualify them.
-	// One (weekday, week) pair is one calendar date, so counting the pairs
-	// counts the dates.
-	sample int
+	// weeks is how many distinct weeks each day of the week traded in. It is the
+	// evidence behind avg — both the card's "3 semanas" caption and the
+	// projection's basis are graded from it.
+	weeks [daysInWeek]int
+}
+
+// sample is how many distinct dates traded inside the window — the evidence the
+// rates stand on as a whole, and the only thing that can honestly qualify them.
+// One (weekday, week) pair is one calendar date, so counting the pairs counts
+// the dates.
+func (r dailyRates) sample() int {
+	total := 0
+	for _, n := range r.weeks {
+		total += n
+	}
+	return total
+}
+
+// weekdayStats renders the rates as the weekday card: the same averages the
+// month is projected from, one row per day of the week.
+//
+// Today is left out of the averages entirely — it is a day still being traded,
+// and folding a morning's takings in as though it were a whole Tuesday drags
+// that weekday down all day, further the earlier the analysis runs. It falls
+// outside the window rather than being skipped here; see
+// monthClock.projectionWindow. IsToday only marks the row.
+func (r dailyRates) weekdayStats(now time.Time) []WeekdayStat {
+	today := int(now.Weekday())
+	stats := make([]WeekdayStat, 0, daysInWeek)
+	for d := range r.avg {
+		stats = append(stats, WeekdayStat{
+			Day:     d,
+			Label:   weekdayLabels[d],
+			Avg:     r.avg[d],
+			Count:   r.weeks[d],
+			IsToday: d == today,
+			// Graded per weekday: a row standing on one week must not read as
+			// confidently as one standing on eight, even when the window as a
+			// whole is well backed.
+			Basis: basisFor(r.weeks[d]),
+		})
+	}
+	return stats
 }
 
 // projectionRates averages faturamento per day of the week over the projection
-// window, inclusive at both ends, with the same Gaussian weighting the weekday
-// card is drawn from.
+// window, inclusive at both ends, weighting recent weeks more heavily. It is the
+// one reading of the window: the weekday card is a view of what it returns
+// (dailyRates.weekdayStats), not a second aggregation.
 //
-// The weighting used to stop at the card. The projection took a flat average of
-// the window instead, so the page showed one Tuesday average and projected the
-// month off a different one — and the flat figure was the worse of the two: a
-// holiday or a one-off eight weeks ago priced next Tuesday exactly as heavily as
-// last Tuesday did, and a genuine shift in trading took the full eight weeks to
-// show up in the projection. Both readings now come from the same weighted
-// averages (see weekdayStatsWeighted), so a day still to come is priced at what
-// the card says that day of the week is worth.
+// The weighting used to stop at the card, which built its own. The projection
+// took a flat average of the same window, so the page showed one Tuesday average
+// and projected the month off a different one — and the flat figure was the
+// worse of the two: a holiday or a one-off eight weeks ago priced next Tuesday
+// exactly as heavily as last Tuesday did, and a genuine shift in trading took
+// the full eight weeks to show up in the projection.
 //
 // The rates used to come from the analysed month alone, which meant that early
 // in a month most days of the week had never been seen and were priced at zero:
@@ -255,10 +252,27 @@ func cashInRates(window []domain.FinancialEntry, from, to domain.CalendarDate) d
 func ratesFromWeekTotals(weeks [daysInWeek]weekTotals, endMonday domain.CalendarDate) dailyRates {
 	var rates dailyRates
 	for d := range weeks {
-		rates.sample += len(weeks[d])
+		rates.weeks[d] = len(weeks[d])
 		rates.avg[d] = gaussianAvg(weeks[d], endMonday)
 	}
 	return rates
+}
+
+// basisFor grades how much a Gaussian-weighted average knows from the number of
+// observations behind it: none at all, fewer than a week's worth, or enough to
+// quote without a caveat. It is one function because the projection grades the
+// whole window and the weekday card grades each row, and the two thresholds
+// drifting apart would put a qualified card row beside an unqualified
+// projection built from that very row.
+func basisFor(observations int) ProjectionBasis {
+	switch {
+	case observations == 0:
+		return ProjectionNoBasis
+	case observations < daysInWeek:
+		return ProjectionPartial
+	default:
+		return ProjectionFromWindow
+	}
 }
 
 // basis reports what the projection is standing on, so the card and the bot can
@@ -267,16 +281,7 @@ func ratesFromWeekTotals(weeks [daysInWeek]weekTotals, endMonday domain.Calendar
 // There is deliberately no "borrowed from earlier weeks" value: the window
 // always reaches back past the analysed month, so such a caveat would fire every
 // day of every month, and a warning that is always on is not read at all.
-func (r dailyRates) basis() ProjectionBasis {
-	switch {
-	case r.sample == 0:
-		return ProjectionNoBasis
-	case r.sample < daysInWeek:
-		return ProjectionPartial
-	default:
-		return ProjectionFromWindow
-	}
-}
+func (r dailyRates) basis() ProjectionBasis { return basisFor(r.sample()) }
 
 // The faturamento predicate used to live here as a private twin of
 // packages/finance.IsFaturamento, kept in sync by hand because this package
