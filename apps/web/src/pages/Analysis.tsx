@@ -351,7 +351,7 @@ function HealthSection({ data }: { data: Analysis['health'] }) {
 // faturamento, and captioning it "pela média das últimas 8 semanas" would
 // present the one number that is not a forecast as though it were one.
 const projectionBasisNote: Partial<Record<ProjectionBasis, string>> = {
-  janela: 'Pela média de cada dia da semana nas últimas 8 semanas.',
+  janela: 'Pela média de cada dia da semana nas últimas 8 semanas, com peso maior para as mais recentes.',
   parcial: 'Menos de uma semana de vendas registradas — ainda vai mudar bastante.',
   sem_base: 'Sem vendas registradas nas últimas 8 semanas para projetar.',
 }

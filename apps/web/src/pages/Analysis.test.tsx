@@ -156,7 +156,7 @@ describe("Analysis page", () => {
     // trailing window, and the card has to say so — the same number means
     // something different when it stands on two days than on eight weeks.
     expect(
-      screen.getByText("Pela média de cada dia da semana nas últimas 8 semanas."),
+      screen.getByText("Pela média de cada dia da semana nas últimas 8 semanas, com peso maior para as mais recentes."),
     ).toBeInTheDocument();
 
     const thin = analysisData();
@@ -178,7 +178,7 @@ describe("Analysis page", () => {
     renderWith(closed);
 
     expect(
-      screen.queryByText("Pela média de cada dia da semana nas últimas 8 semanas."),
+      screen.queryByText("Pela média de cada dia da semana nas últimas 8 semanas, com peso maior para as mais recentes."),
     ).not.toBeInTheDocument();
   });
 

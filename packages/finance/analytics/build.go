@@ -120,8 +120,10 @@ func Build(in Input) Analysis {
 	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
 	goals := goalProgress(currentSummary, currentGoal, clock, faturamento)
 	// The trailing window is computed once and shared by the weekday card and the
-	// projection: the card uses it with Gaussian weighting, the projection with
-	// a flat average. Both need the same range.
+	// projection, which read it the same way: per-weekday averages, Gaussian-
+	// weighted so recent weeks count for more. The card used to be the only one
+	// weighting them, so the average it displayed was not the one the month was
+	// projected from.
 	windowFrom, windowTo := clock.projectionWindow()
 	weekdays := weekdayStatsWeighted(in.WindowRevenueEntries, windowFrom, windowTo, in.Now)
 	// One projection of the month, and one per-day ask derived from it, shared
