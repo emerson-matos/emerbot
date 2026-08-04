@@ -126,6 +126,9 @@ up:
 down:
 	$(COMPOSE) $(COMPOSE_EXTRA) down
 
+cleanup:
+	$(COMPOSE) $(COMPOSE_EXTRA) down -v
+
 up-infra:
 	$(COMPOSE) up --build dynamodb-local dynamodb-admin dynamodb-init
 
@@ -143,7 +146,7 @@ seed:
 	$(GO) run ./scripts/seed \
 		--endpoint http://localhost:8000 \
 		--table emerbot-local-financial-entries \
-		--months 3
+		--months 12
 
 # Imports the recorded PagBank scenarios into dynamodb-local so the Adquirentes
 # page has data. -rebase moves the (2024-dated) scenarios into the current month,

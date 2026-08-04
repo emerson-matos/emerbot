@@ -18,7 +18,8 @@ func main() {
 	endpoint := flag.String("endpoint", shared.Getenv("DYNAMODB_ENDPOINT", "http://localhost:8000"), "DynamoDB endpoint")
 	table := flag.String("table", shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries"), "financial entries table name")
 	userID := flag.String("user-id", shared.FinanceLedgerID, "user ID to seed data for")
-	months := flag.Int("months", 3, "number of past months to generate data for")
+	months := flag.Int("months", 12, "number of past months to generate data for")
+	seed := flag.Int64("seed", 0, "RNG seed (0 = random)")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -27,21 +28,57 @@ func main() {
 		log.Fatalf("create store: %v", err)
 	}
 
-	rng := rand.New(rand.NewSource(42)) // deterministic seed for reproducibility
+	seedVal := *seed
+	if seedVal == 0 {
+		seedVal = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(seedVal))
 	now := time.Now().UTC()
 	count := 0
 
 	for m := *months - 1; m >= 0; m-- {
 		base := time.Date(now.Year(), now.Month()-time.Month(m), 1, 0, 0, 0, 0, time.UTC)
-		count += seedMonth(ctx, store, *userID, base, rng)
+		count += seedMonth(ctx, store, *userID, base, m, *months, rng)
 	}
 
-	log.Printf("seeded %d entries for user %q across %d months", count, *userID, *months)
+	log.Printf("seeded %d entries for user %q across %d months (seed=%d)", count, *userID, *months, seedVal)
 }
 
-func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base time.Time, rng *rand.Rand) int {
+// seasonalMultiplier returns a factor that shifts revenue up or down based on
+// the calendar month. January and February dip post-holidays; November and
+// December peak on Black Friday and Christmas.
+func seasonalMultiplier(month time.Month) float64 {
+	switch month {
+	case time.January:
+		return 0.85
+	case time.February:
+		return 0.90
+	case time.June:
+		return 0.95
+	case time.October:
+		return 1.05
+	case time.November:
+		return 1.10
+	case time.December:
+		return 1.05
+	default:
+		return 1.0
+	}
+}
+
+// growthFactor returns a multiplier that simulates steady MoM growth.
+// monthIndex 0 = oldest month, monthCount-1 = current month.
+func growthFactor(monthIndex, monthCount int) float64 {
+	// ~3% growth per month, so oldest month is ~65% of current
+	return 1.0 + float64(monthIndex)*0.03
+}
+
+func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base time.Time, monthIndex, monthCount int, rng *rand.Rand) int {
 	count := 0
 	year, month := base.Year(), base.Month()
+
+	// Combined growth + seasonality factor applied to revenue.
+	revFactor := growthFactor(monthIndex, monthCount) * seasonalMultiplier(month)
 
 	save := func(e domain.FinancialEntry) {
 		if err := store.SaveEntry(ctx, e); err != nil {
@@ -54,28 +91,34 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 	// --- Fixed monthly expenses ---
 
 	// Folha de pagamento — day 5
-	save(expense(userID, date(year, month, 5), randBetween(rng, 800000, 1200000), "folha_pagamento", "Folha de Pagamento", "Farmácia Ltda", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 5), randBetween(rng, 500000, 800000), "folha_pagamento", "Folha de Pagamento", "Farmácia Ltda", domain.PaymentStatusPaid))
 
 	// Aluguel — day 10
-	save(expense(userID, date(year, month, 10), 350000, "aluguel", "Aluguel", "Imobiliária Central", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 10), randBetween(rng, 400000, 600000), "aluguel", "Aluguel", "Imobiliária Central", domain.PaymentStatusPaid))
 
 	// Energia + água — day 8
-	save(expense(userID, date(year, month, 8), randBetween(rng, 80000, 120000), "energia_agua", "Energia Elétrica / Água", "CEMIG / COPASA", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 8), randBetween(rng, 50000, 100000), "energia_agua", "Energia Elétrica / Água", "CEMIG / COPASA", domain.PaymentStatusPaid))
 
 	// Telefone/internet — day 12
-	save(expense(userID, date(year, month, 12), 35000, "telefone_internet", "Telefone / Internet", "Operadora", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 12), randBetween(rng, 20000, 40000), "telefone_internet", "Telefone / Internet", "Operadora", domain.PaymentStatusPaid))
 
 	// Imposto — DARF dia 20
-	save(expense(userID, date(year, month, 20), randBetween(rng, 150000, 400000), "impostos", "DARF Simples Nacional", "Receita Federal", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 20), randBetween(rng, 200000, 400000), "impostos", "DARF Simples Nacional", "Receita Federal", domain.PaymentStatusPaid))
 
 	// Cartão de crédito — day 15
-	save(expense(userID, date(year, month, 15), randBetween(rng, 200000, 500000), "cartao_credito", "Fatura Cartão Corporativo", "Banco", domain.PaymentStatusPaid))
+	save(expense(userID, date(year, month, 15), randBetween(rng, 100000, 200000), "cartao_credito", "Fatura Cartão Corporativo", "Banco", domain.PaymentStatusPaid))
+
+	// Empréstimo mensal — day 25
+	save(expense(userID, date(year, month, 25), randBetween(rng, 80000, 150000), "emprestimo", "Parcela Empréstimo Banco", "Banco", domain.PaymentStatusPaid))
+
+	// Manutenção — day 22 (new category)
+	save(expense(userID, date(year, month, 22), randBetween(rng, 20000, 50000), "manutencao", "Manutenção Preventiva", "Manutenção Ltda", domain.PaymentStatusPaid))
 
 	// --- Fornecedores (bi-weekly) ---
 	distributors := []string{"Alfarma", "Profarma", "Coop"}
 	for _, day := range []int{3, 17} {
 		dist := distributors[rng.Intn(len(distributors))]
-		save(expense(userID, date(year, month, day), randBetween(rng, 1500000, 2500000), "fornecedor_medicamentos", "Compra Distribuidora "+dist, "Distribuidora", domain.PaymentStatusPaid))
+		save(expense(userID, date(year, month, day), randBetween(rng, 500000, 750000), "fornecedor_medicamentos", "Compra Distribuidora "+dist, "Distribuidora", domain.PaymentStatusPaid))
 	}
 
 	// Fornecedor geral (embalagens, etc.) — weekly
@@ -83,53 +126,58 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 		if day > daysInMonth(year, month) {
 			continue
 		}
-		save(expense(userID, date(year, month, day), randBetween(rng, 50000, 200000), "fornecedor_geral", "Embalagens e Insumos", "Fornecedor Geral", domain.PaymentStatusPaid))
+		save(expense(userID, date(year, month, day), randBetween(rng, 50000, 150000), "fornecedor_geral", "Embalagens e Insumos", "Fornecedor Geral", domain.PaymentStatusPaid))
 	}
 
-	// Empréstimo mensal — day 25 (if this is within recent 6 months)
-	save(expense(userID, date(year, month, 25), 120000, "emprestimo", "Parcela Empréstimo Banco", "Banco", domain.PaymentStatusPaid))
-
 	// --- Receitas: vendas diárias (weekdays only) ---
+	// Base per-day range scaled by revFactor. Weekdays R$800-1400 base,
+	// Saturdays half that.
 	daysCount := daysInMonth(year, month)
 	for day := 1; day <= daysCount; day++ {
 		d := date(year, month, day)
 		weekday := d.Weekday()
 		if weekday == time.Saturday {
-			// Half day on Saturdays
-			save(income(userID, d, randBetween(rng, 60000, 120000), "venda_balcao", "Venda Balcão - Sábado", domain.OriginVenda))
+			amt := int64(float64(randBetween(rng, 40000, 70000)) * revFactor)
+			save(income(userID, d, amt, "venda_balcao", "Venda Balcão - Sábado", domain.OriginVenda))
 			continue
 		}
 		if weekday == time.Sunday {
 			continue // closed
 		}
-		save(income(userID, d, randBetween(rng, 120000, 350000), "venda_balcao", "Venda Balcão", domain.OriginVenda))
+		amt := int64(float64(randBetween(rng, 80000, 140000)) * revFactor)
+		save(income(userID, d, amt, "venda_balcao", "Venda Balcão", domain.OriginVenda))
 	}
 
-	// Convênio (monthly reimbursement — 30th or last day)
+	// Convênio — 2-3 repasses per month
 	lastDay := daysInMonth(year, month)
-	save(income(userID, date(year, month, lastDay), randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio", domain.OriginVenda))
+	save(income(userID, date(year, month, lastDay), int64(float64(randBetween(rng, 150000, 250000))*revFactor), "convenio", "Repasse Convênio", domain.OriginVenda))
+	if lastDay > 15 {
+		save(income(userID, date(year, month, 15), int64(float64(randBetween(rng, 100000, 180000))*revFactor), "convenio", "Repasse Convênio Unimed", domain.OriginVenda))
+	}
+	if lastDay > 20 {
+		save(income(userID, date(year, month, 20), int64(float64(randBetween(rng, 80000, 150000))*revFactor), "convenio", "Repasse Convênio Amil", domain.OriginVenda))
+	}
 
-	// --- Receitas avulsas no meio do mês ---
-
-	// Convênio adicional — dia 15 (ex.: Unimed)
-	save(income(userID, date(year, month, 15), randBetween(rng, 400000, 700000), "convenio", "Repasse Convênio Unimed", domain.OriginVenda))
-
-	// Delivery / retirada — dias 10 e 20
+	// Delivery / tele-entrega — 2-3 per month
 	for _, day := range []int{10, 20} {
-		save(income(userID, date(year, month, day), randBetween(rng, 80000, 250000), "delivery", "Delivery / Tele-entrega", domain.OriginVenda))
+		if day <= daysCount {
+			save(income(userID, date(year, month, day), int64(float64(randBetween(rng, 50000, 100000))*revFactor), "delivery", "Delivery / Tele-entrega", domain.OriginVenda))
+		}
 	}
 
 	// --- Entradas que NÃO são faturamento ---
-	// Sem elas os dois números do dashboard ficam idênticos e a separação entre
-	// faturamento e entradas de caixa não aparece na demo.
+	// Bonificação de laboratório — every month
+	save(income(userID, date(year, month, 8), randBetween(rng, 20000, 60000), "outros_receitas", "Bonificação Laboratório", domain.OriginOutros))
 
-	// Bonificação de laboratório — dinheiro que entrou sem venda.
-	save(income(userID, date(year, month, 8), randBetween(rng, 50000, 150000), "outros_receitas", "Bonificação Laboratório", domain.OriginOutros))
-	// Empréstimo — o caso que originou toda a separação: entra no caixa, não é
-	// faturamento e não pode mexer na meta.
-	save(income(userID, date(year, month, 12), randBetween(rng, 2000000, 3000000), "outros_receitas", "Empréstimo de capital de giro", domain.OriginEmprestimo))
-	// Aporte de sócio — mesma história.
-	save(income(userID, date(year, month, 18), randBetween(rng, 500000, 900000), "outros_receitas", "Aporte de sócio", domain.OriginAporteSocio))
+	// Empréstimo de capital de giro — only months 1 and 7 (oldest and mid-point)
+	if monthIndex == 0 || monthIndex == 6 {
+		save(income(userID, date(year, month, 12), randBetween(rng, 1000000, 1500000), "outros_receitas", "Empréstimo de capital de giro", domain.OriginEmprestimo))
+	}
+
+	// Aporte de sócio — only month 1
+	if monthIndex == 0 {
+		save(income(userID, date(year, month, 18), randBetween(rng, 300000, 500000), "outros_receitas", "Aporte de sócio", domain.OriginAporteSocio))
+	}
 
 	// --- Pending items for the current/future month only ---
 	now := time.Now().UTC()
@@ -142,14 +190,11 @@ func seedMonth(ctx context.Context, store pkgfinance.Store, userID string, base 
 
 		nextConvenio := time.Date(year, month, lastDay, 0, 0, 0, 0, time.UTC)
 		save(pendingIncome(
-			income(userID, now, randBetween(rng, 800000, 1500000), "convenio", "Repasse Convênio (a receber)", domain.OriginVenda),
+			income(userID, now, randBetween(rng, 150000, 250000), "convenio", "Repasse Convênio (a receber)", domain.OriginVenda),
 			nextConvenio,
 		))
 
-		// Venda no crediário atravessando o mês: vendida hoje, vence no mês que
-		// vem. É o caso que separa as duas bases de data — tem de aparecer no
-		// faturamento *deste* mês e em entrada de caixa de nenhum mês, até ser
-		// paga. Sem ela a demo não exercita a diferença.
+		// Venda no crediário atravessando o mês
 		save(pendingIncome(
 			income(userID, now, 450000, "venda_balcao", "Venda no crediário (recebe mês que vem)", domain.OriginVenda),
 			nextDue,
@@ -181,8 +226,8 @@ func seedMonthGoal(ctx context.Context, store pkgfinance.Store, userID string, b
 	goal := domain.Goal{
 		UserID:        userID,
 		Month:         base.Format("2006-01"),
-		RevenueTarget: 80000000, // R$ 80.000,00
-		ExpenseTarget: 60000000, // R$ 60.000,00
+		RevenueTarget: 2800000, // R$ 28.000,00
+		ExpenseTarget: 2200000, // R$ 22.000,00
 	}
 	if err := store.SaveGoal(ctx, goal); err != nil {
 		log.Printf("warn: seed goal: %v", err)
@@ -191,10 +236,6 @@ func seedMonthGoal(ctx context.Context, store pkgfinance.Store, userID string, b
 	}
 }
 
-// pendingIncome turns a paid inflow into a receivable due on the given day.
-// It clears PaymentDate, which income() sets: a pending entry with a payment
-// date fails domain.Validate, and the open-coded versions of this that the
-// seed used to carry left it behind.
 func pendingIncome(e domain.FinancialEntry, due time.Time) domain.FinancialEntry {
 	e.PaymentStatus = domain.PaymentStatusPending
 	e.PaymentDate = nil
@@ -233,10 +274,6 @@ func expense(userID string, d time.Time, amount int64, cat, desc, supplier strin
 	return e
 }
 
-// income builds a paid inflow. origin decides whether it is faturamento: only
-// domain.OriginVenda is, so the loan and the aporte seeded below show up in
-// entradas de caixa and not in the sales figures. Without at least one of each
-// the demo's two headline numbers are identical and the split is invisible.
 func income(userID string, d time.Time, amount int64, cat, desc string, origin domain.IncomeOrigin) domain.FinancialEntry {
 	now := time.Now().UTC()
 	date := domain.NewCalendarDate(d)
