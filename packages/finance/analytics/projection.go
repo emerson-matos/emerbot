@@ -97,14 +97,9 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 			totalHistAvg += rates.avg[int(d.Weekday())]
 		}
 
-		// Measured from what the till held when the day opened, not from Actual.
-		// Actual already carries today's sales, while totalHistAvg prices today
-		// at a whole day's average — numerator net of the morning, denominator
-		// gross of it. The target then shrank hour by hour while "Histórico"
-		// stayed a whole-day figure beside it, so a pharmacy trading exactly to
-		// plan watched "× o esperado" drift down through the afternoon. Both
-		// sides now cover the same whole day, which is also the only reading the
-		// card asserts when it compares the two.
+		// Measured from what the till held when the day opened: totalHistAvg
+		// prices today at a whole day's average, so a numerator net of the
+		// morning shrank the target hour by hour against a whole-day Histórico.
 		missing := projection.Target - (projection.Actual - todayRevenue)
 		if totalHistAvg > 0 && todayAvg > 0 && missing > 0 {
 			factor := float64(missing) / float64(totalHistAvg)

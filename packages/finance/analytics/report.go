@@ -96,11 +96,9 @@ func (a Analysis) AheadLines() []string {
 			formatBRL(a.Projection.NeededPerDay),
 			pluralDias(a.Projection.DaysRemaining)))
 	}
-	// The whole list, from the top. This used to drop recommendations[0]
-	// whenever a per-day ask had just been printed, because the weekly-pace
-	// recommendation that always sat there repeated it word for word. That one
-	// is gone; recommendations[0] is now the projection verdict, which says
-	// something the line above does not — and was being thrown away.
+	// From the top. This used to skip recommendations[0] whenever a per-day ask
+	// had been printed, because the weekly-pace one repeated it word for word —
+	// and kept skipping it once the projection verdict took its place.
 	if len(a.Recommendations) > 0 {
 		r := a.Recommendations[0]
 		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
