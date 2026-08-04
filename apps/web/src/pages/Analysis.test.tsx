@@ -190,7 +190,16 @@ describe("Analysis page", () => {
     const data = analysisData();
     data.projection = {
       ...data.projection,
-      todayTarget: { ...data.projection.todayTarget, valid: false },
+      todayTarget: {
+        valid: false,
+        weekday: "Seg",
+        historical: 0,
+        target: 0,
+        delta: 0,
+        deltaPercent: 0,
+        factor: 0,
+        status: "on_track",
+      },
     };
     renderWith(data);
 
