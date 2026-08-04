@@ -39,10 +39,13 @@ export default function GoalCard() {
 
   const actualRevenue = analysis?.goals.revenueActual ?? 0
   const actualExpense = analysis?.goals.expenseActual ?? 0
-  const revenuePct = goal?.RevenueTarget && goal.RevenueTarget > 0
-    ? Math.min(100, (actualRevenue / goal.RevenueTarget) * 100) : 0
-  const expPct = goal?.ExpenseTarget && goal.ExpenseTarget > 0
-    ? Math.min(100, (actualExpense / goal.ExpenseTarget) * 100) : 0
+  // The backend caps and rounds these (goalProgress) and ships them in the very
+  // object the two amounts above come from. This card used to take the amounts
+  // and recompute the percentages from the separately-fetched goal, so a card
+  // rendered mid-flight — a saved goal already refetched, the analysis not yet —
+  // could show a bar the analysis payload disagreed with.
+  const revenuePct = analysis?.goals.revenuePct ?? 0
+  const expPct = analysis?.goals.expensePct ?? 0
   const revenueColor = revenuePct >= 100 ? 'var(--success)' : 'var(--info)'
   const expColor = expPct > 100 ? 'var(--destructive)' : expPct >= 80 ? 'var(--warning)' : 'var(--info)'
 

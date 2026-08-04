@@ -52,7 +52,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     weekComparison: {
       current: 524604,
       previous: 813240,
-      pace: { current: 524604, previous: 813240, days: 3 },
+      pace: { current: 524604, previous: 813240, days: 3, change: -35, direction: 'down' },
       projectedWeekly: 524604,
       monthlyTarget: 3600000,
       labels: [],
@@ -347,7 +347,7 @@ describe("Analysis page", () => {
     const data = analysisData();
     data.weekComparison = {
       ...data.weekComparison,
-      pace: { current: 0, previous: 0, days: 3 },
+      pace: { current: 0, previous: 0, days: 3, change: 0, direction: 'stable' },
     };
     // The backend drops its own month-over-month copy without a baseline
     // (hasBaseline); only the weekly recommendation survives.
@@ -356,15 +356,14 @@ describe("Analysis page", () => {
     const { container } = renderWith(data);
 
     expect(
-      screen.getByText("Sem faturamento no mês passado para comparar"),
-    ).toBeInTheDocument();
-    expect(
       screen.getByText("Sem vendas na semana passada para comparar"),
     ).toBeInTheDocument();
-    // The KPI cards read the same empty baseline: the backend reports a
-    // previous of zero as a flat 100% rise, which they used to print as a real
-    // month-over-month move.
-    expect(screen.getAllByText("Sem base no mês passado")).toHaveLength(3);
+    // The KPI cards and the projection card read the same empty baseline
+    // through the same label: the backend reports a previous of zero as a flat
+    // 100% rise, which they used to print as a real month-over-month move. The
+    // projection card is the fourth — it had a sentence of its own for the same
+    // state until it started going through trendLabel like the rest.
+    expect(screen.getAllByText("Sem base no mês passado")).toHaveLength(4);
     expect(container.textContent).not.toContain("% vs mês passado");
   });
 });
@@ -471,7 +470,7 @@ describe("Analysis on the first day of a month", () => {
     };
     data.weekComparison = {
       ...data.weekComparison,
-      pace: { current: 0, previous: 0, days: 0 },
+      pace: { current: 0, previous: 0, days: 0, change: 0, direction: 'stable' },
     };
     // Without a finished day the backend has no baseline, so its own
     // month-over-month recommendations never fire; only the weekly pace one,

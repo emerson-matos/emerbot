@@ -31,13 +31,42 @@ func buildTrends(c comparison) Trends {
 	}
 }
 
-// buildTrend expresses current as a percentage change from previous.
+// Dead bands, in percentage points: movement inside one is noise, not a
+// direction the user is expected to act on. A month and a week get different
+// ones because a week is the shorter, noisier window.
+const (
+	monthDeadBandPct = 2
+	weekDeadBandPct  = 5
+)
+
+// buildTrend expresses current as a percentage change from the previous month.
+func buildTrend(current, previous int64) MonthTrend {
+	return trendOver(current, previous, monthDeadBandPct)
+}
+
+// trendOver is the one percentage-change reading in this package, and every
+// consumer that decides "subiu" or "caiu" reads what it returns rather than
+// dividing again.
+//
+// It used to have a twin. `percentChange` computed the same thing over the same
+// inputs with a raw denominator and no dead band, and the insights ran on it
+// while the recommendations ran on this — so a month at -10.4% got the "Faturamento
+// caiu" warning and no recommendation to go with it, the two having rounded the
+// same number differently. The browser then computed it a third time to caption
+// the projection card, without the dead band, so a +1% month printed "estável"
+// in the KPI row and "↑ 1%" three sections below.
 //
 // A previous of zero has no meaningful percentage — anything over nothing is
 // infinite growth — so it is reported as a flat 100% up (or stable at zero)
-// rather than a division by zero. The denominator is the absolute value so a
-// swing out of a negative balance reads as "up", not "down".
-func buildTrend(current, previous int64) MonthTrend {
+// rather than a division by zero. Consumers tell that case apart through
+// Previous and say "sem base" instead of quoting the 100%. The denominator is
+// the absolute value so a swing out of a negative balance reads as "up", not
+// "down".
+//
+// Change is rounded before Direction is decided, so the direction a consumer
+// acts on is the one the printed percentage supports: a figure shown as "↓ 10%"
+// can never sit beside an insight that only fires above 10.
+func trendOver(current, previous int64, deadBandPct int) MonthTrend {
 	if previous == 0 {
 		t := MonthTrend{Current: current, Previous: previous, Change: 0, Direction: TrendStable}
 		if current > 0 {
@@ -49,13 +78,11 @@ func buildTrend(current, previous int64) MonthTrend {
 	change := (float64(current-previous) / math.Abs(float64(previous))) * 100
 	rounded := roundToInt(change)
 
-	// ±2% is a dead band: month-to-month noise should not be reported as a
-	// direction the user is expected to act on.
 	direction := TrendStable
 	switch {
-	case rounded > 2:
+	case rounded > deadBandPct:
 		direction = TrendUp
-	case rounded < -2:
+	case rounded < -deadBandPct:
 		direction = TrendDown
 	}
 

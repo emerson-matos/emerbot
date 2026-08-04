@@ -262,6 +262,16 @@ type WeekPace struct {
 	// Days is how many finished days of this week both sides cover. Zero on a
 	// Monday, where the week has nothing to compare yet.
 	Days int `json:"days"`
+	// Change and Direction are the same reading MonthTrend carries, over a week
+	// instead of a month and with a wider dead band (see weekDeadBandPct). They
+	// are here because the health insight and the dashboard card both used to
+	// derive them, and only the insight applied the dead band — the card printed
+	// "↑ 3% vs semana anterior" for a week the insights treated as flat.
+	//
+	// A Previous of zero still reads as a flat 100% up, as it does for a month:
+	// consumers check Previous and say "sem base" rather than quoting it.
+	Change    int            `json:"change"`
+	Direction TrendDirection `json:"direction"`
 }
 
 // ProjectionBasis says how much the projection knows. The days still to come

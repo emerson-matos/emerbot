@@ -151,7 +151,7 @@ func Build(in Input) Analysis {
 		Month:              in.Month,
 		Period:             clock.period(),
 		KPIs:               kpis,
-		Health:             buildHealth(in.Entries, compared, week, projection),
+		Health:             buildHealth(in.Entries, compared, trends, week, projection),
 		Trends:             trends,
 		Weekdays:           weekdays,
 		WeekComparison:     week,
@@ -244,6 +244,14 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 		labels = append(labels, weekdayLabels[int(d.Weekday())])
 	}
 	week.Labels = labels
+
+	// The verdict on the pace, decided here rather than by each consumer. Only
+	// finished days can carry one: on a Monday both sides are empty and a
+	// percentage between two zeroes is not "estável", it is "não dá para dizer".
+	if finished > 0 {
+		t := trendOver(week.Pace.Current, week.Pace.Previous, weekDeadBandPct)
+		week.Pace.Change, week.Pace.Direction = t.Change, t.Direction
+	}
 
 	// Project the rest of this week at last week's daily average.
 	avgPerDay := float64(week.Previous) / 7
