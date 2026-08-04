@@ -362,6 +362,18 @@ type Projection struct {
 	// Basis is how much trading the projection was built from. Consumers render
 	// it as a qualifier; they must not re-derive one from the amounts.
 	Basis ProjectionBasis `json:"basis"`
+	// Coverage is Projected over Target: 1.10 overshoots the target by 10%, 0.80
+	// lands 20% short. 0 when there is no target, where Status is ProjNoTarget.
+	//
+	// It is carried rather than left for each consumer to divide for itself, for
+	// the same reason as Basis: the browser rounded its own percentage and read
+	// its colour off the boolean OnTrack while the recommendation beside it
+	// applied these thresholds, so a month covering 97% of its goal showed
+	// "Equivale a 97% da meta" in red under a green "Ritmo suficiente".
+	Coverage float64 `json:"coverage"`
+	// Status is the verdict drawn from Coverage. Consumers render it; they must
+	// not re-derive one from the amounts.
+	Status ProjectionStatus `json:"status"`
 	// TodayTarget scales today's historical weekday average by the factor that
 	// would close the remaining gap if applied to every remaining day uniformly.
 	TodayTarget TodayTarget `json:"todayTarget"`
@@ -379,6 +391,10 @@ func (p Projection) Pacing() bool {
 type ProjectionStatus string
 
 const (
+	// ProjNoTarget is the zero value: there is no goal to cover, so there is no
+	// verdict to give. A month with no target is not a month falling short of
+	// one, and must not render as danger.
+	ProjNoTarget ProjectionStatus = ""
 	// ProjSuccess means the projection reaches or exceeds the target.
 	ProjSuccess ProjectionStatus = "success"
 	// ProjWarning means the projection falls short but remains within reach.
@@ -387,24 +403,30 @@ const (
 	ProjDanger ProjectionStatus = "danger"
 )
 
-// Coverage is the ratio of projected revenue to the income target. A value of
-// 1.10 means the projection overshoots the target by 10%; 0.80 means it lands
-// 20% short. It returns 0 when there is no target.
-func (p Projection) Coverage() float64 {
-	if p.Target <= 0 {
-		return 0
-	}
-	return float64(p.Projected) / float64(p.Target)
-}
+// The coverage cuts, in one place. Every reading of "is the month closing?" —
+// the card's colour, the recommendation's title, its wording, the digest —
+// comes off these, so moving one moves all of them together.
+const (
+	// coverageOnTarget — at or above this the projection is treated as reaching
+	// the goal. The last 5% is inside the noise of an eight-week average, and
+	// calling it a shortfall asks a pharmacist to act on rounding.
+	coverageOnTarget = 0.95
+	// coverageWithinReach — above this the shortfall is one the days left can
+	// still absorb; below it the month needs more than a good week.
+	coverageWithinReach = 0.80
+	// coverageOutOfReach — below this no plausible acceleration closes the gap,
+	// and the copy says so instead of asking for one.
+	coverageOutOfReach = 0.50
+)
 
-// Status returns the qualitative verdict on the projection. The thresholds are
+// projectionStatus maps coverage to the verdict. The thresholds are
 // concentrated here so every consumer — dashboard, WhatsApp, health insights —
 // agrees on the same reading.
-func (p Projection) Status() ProjectionStatus {
-	switch c := p.Coverage(); {
-	case c >= 0.95:
+func projectionStatus(coverage float64) ProjectionStatus {
+	switch {
+	case coverage >= coverageOnTarget:
 		return ProjSuccess
-	case c >= 0.80:
+	case coverage >= coverageWithinReach:
 		return ProjWarning
 	default:
 		return ProjDanger
@@ -537,6 +559,10 @@ type KPIs struct {
 // both of these directly, and this is exactly the reading it was getting wrong:
 // booking the month's rent moved kpis.despesa with nothing having left the
 // account, and the digest reported it as the month's spending having risen.
+// Also in 6: recommendations[0] is the projection verdict rather than the
+// weekly-pace one, and consumers read the list whole instead of skipping it.
+// Added projection.coverage, projection.status and projection.todayTarget, all
+// verdicts the consumers used to derive for themselves or not have at all.
 const SchemaVersion = 6
 
 // Analysis is the full picture of one month — the payload of

@@ -14,9 +14,12 @@ const (
 
 // buildRecommendations turns the month's state into actionable next steps.
 //
-// The first recommendation is always the weekly one when a goal exists: the
-// dashboard pulls recommendations[0] out to caption the week-comparison card,
-// and the notifier leads its digest with it.
+// The list is read whole. recommendations[0] used to be the weekly-pace one,
+// which repeated the per-day ask its consumers had just printed, so both the
+// dashboard and the digest lifted it out and rendered the rest — a coupling
+// that survived the message changing underneath it and silently swallowed the
+// projection verdict that replaced it. Nothing here is positional now.
+//
 // window is the comparison the trends were measured over; its suffix is
 // repeated in every month-over-month message, because a percentage from half a
 // month presented as a whole one is how "receita caiu 100%" reached a WhatsApp.
@@ -77,42 +80,43 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 
 // projectionRecommendation interprets the projection as a verdict on the
-// month. Coverage is Projected / Target — the one number that tells whether
-// the current pace will close the gap. The thresholds are concentrated in
-// Projection.Status() so every consumer agrees on the same reading.
+// month. It reads the Status the projection already carries rather than
+// dividing again for itself, so the title here cannot disagree with the colour
+// the card draws from the same field.
 func projectionRecommendation(projection Projection) Recommendation {
-	if projection.Target <= 0 {
-		return Recommendation{}
-	}
-
-	status := projection.Status()
-	coverage := projection.Coverage()
-
 	var severity RecommendationSeverity
 	var title string
-	switch status {
+	switch projection.Status {
+	case ProjNoTarget:
+		return Recommendation{}
 	case ProjSuccess:
 		severity, title = RecSuccess, "Ritmo suficiente"
 	case ProjWarning:
 		severity, title = RecWarning, "Projeção abaixo da meta"
-	case ProjDanger:
+	default:
 		severity, title = RecDanger, "Projeção muito abaixo da meta"
 	}
 
-	return Recommendation{Severity: severity, Title: title, Message: projectionMessage(coverage, projection)}
+	return Recommendation{Severity: severity, Title: title, Message: projectionMessage(projection)}
 }
 
-func projectionMessage(coverage float64, projection Projection) string {
-	switch {
-	case coverage >= 0.95:
+// projectionMessage words the verdict. It switches on Status rather than on
+// coverage so the sentence cannot end up graded differently from the title
+// above it; the one extra cut, inside ProjDanger, separates a goal that needs a
+// hard acceleration from one that is out of reach, and reads the same const
+// every other threshold here does.
+func projectionMessage(projection Projection) string {
+	switch projection.Status {
+	case ProjSuccess:
 		return "O ritmo atual deve fechar o mês muito próximo da meta. Manter o desempenho nas próximas semanas deve ser suficiente para alcançá-la."
-	case coverage >= 0.80:
+	case ProjWarning:
 		return fmt.Sprintf("O ritmo atual deve fechar o mês em torno de %s. Será necessário aumentar as vendas nas próximas semanas para alcançar %s.",
 			formatBRL(projection.Projected), formatBRL(projection.Target))
-	case coverage >= 0.50:
-		return fmt.Sprintf("No ritmo atual o mês deve fechar em torno de %s. Será preciso uma aceleração consistente para alcançar %s.",
-			formatBRL(projection.Projected), formatBRL(projection.Target))
 	default:
+		if projection.Coverage >= coverageOutOfReach {
+			return fmt.Sprintf("No ritmo atual o mês deve fechar em torno de %s. Será preciso uma aceleração consistente para alcançar %s.",
+				formatBRL(projection.Projected), formatBRL(projection.Target))
+		}
 		return fmt.Sprintf("No ritmo atual o mês deve fechar em torno de %s. A meta de %s exige um desempenho muito acima do histórico recente.",
 			formatBRL(projection.Projected), formatBRL(projection.Target))
 	}
