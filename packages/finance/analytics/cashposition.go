@@ -58,7 +58,7 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 		CurrentBalance:      currentBalance,
 		LowestProjected:     currentBalance,
 		LowestProjectedDate: today,
-		ExpectsReceipts:     rates.sample > 0,
+		ExpectsReceipts:     rates.sample() > 0,
 	}
 
 	// expected accumulates the receipts the days from today on are expected to

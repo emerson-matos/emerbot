@@ -54,10 +54,11 @@ func expense(t *testing.T, date, category string, amount int64) domain.Financial
 
 // ratesFor builds the per-weekday rates a projection is priced from, Sunday
 // first, so a test can state what a day of the week is worth without going
-// through a window of fixture sales. sample is set past a week so the rates
-// read as an ordinary, fully-backed projection.
+// through a window of fixture sales. Every weekday is marked as observed for one
+// week, so the sample reaches seven and the rates read as an ordinary,
+// fully-backed projection.
 func ratesFor(avgs ...int64) dailyRates {
-	rates := dailyRates{sample: daysInWeek}
+	rates := dailyRates{weeks: [daysInWeek]int{1, 1, 1, 1, 1, 1, 1}}
 	copy(rates.avg[:], avgs)
 	return rates
 }
@@ -128,7 +129,7 @@ func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	from := day(t, "2026-06-19")
 	to := day(t, "2026-07-14")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15")) // a Wednesday
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15")) // a Wednesday
 
 	monday := stats[1]
 	if monday.Label != "Seg" {
@@ -222,7 +223,7 @@ func TestALoanIsNotASalesDayButIsStillCash(t *testing.T) {
 	// Wednesday (July 1) has only the sale.
 	from := day(t, "2026-06-15")
 	to := day(t, "2026-07-14")
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15"))
 
 	wednesday := stats[3] // July 1 is a Wednesday
 	if wednesday.Avg != 50000 {
@@ -1013,11 +1014,15 @@ func TestProjectionRatesLearnTheWeekFromTheTrailingWindow(t *testing.T) {
 	}
 }
 
-// The projection prices a day still to come at exactly what the weekday card
-// says that day of the week is worth. The card was Gaussian-weighted and the
-// projection was a flat average of the same window, so the page displayed one
-// Tuesday average and projected the month from a different one.
-func TestProjectionRatesMatchTheWeekdayCard(t *testing.T) {
+// The month is projected at exactly the rates the weekday card displays: add up
+// what the card says each day still to come is worth and you get the projection.
+//
+// The card used to aggregate the window a second time to draw itself, and only
+// that second pass was Gaussian-weighted — the page showed one Tuesday average
+// and projected the month off another. The card is now a view of the rates
+// rather than a rival calculation, so this walks the whole way round instead:
+// card → the days August has left → buildProjection's own arithmetic.
+func TestTheMonthIsProjectedAtTheRatesTheCardShows(t *testing.T) {
 	var window []domain.FinancialEntry
 	// Eight weeks of trading, every weekday, at amounts that differ week to week
 	// so a flat average and a weighted one cannot coincide by accident.
@@ -1029,15 +1034,28 @@ func TestProjectionRatesMatchTheWeekdayCard(t *testing.T) {
 		}
 	}
 
-	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	now := at12(t, "2026-08-03")
+	monthClock := clock(t, "2026-08", "2026-08-03")
+	from, to := monthClock.projectionWindow()
 	rates := projectionRates(window, from, to)
-	card := weekdayStatsWeighted(window, from, to, at12(t, "2026-08-03"))
+	card := rates.weekdayStats(now)
 
-	for d := 0; d < daysInWeek; d++ {
-		if rates.avg[d] != card[d].Avg {
-			t.Errorf("%s: projection prices the day at %d but the card shows %d",
-				card[d].Label, rates.avg[d], card[d].Avg)
-		}
+	// What the card promises for the 3rd through the 31st, read off the card
+	// itself by looking up each remaining date's weekday row.
+	var wantRemaining int64
+	for d := monthClock.today; d <= monthClock.total; d++ {
+		date := time.Date(2026, time.August, d, 12, 0, 0, 0, now.Location())
+		wantRemaining += card[int(date.Weekday())].Avg
+	}
+
+	got := buildProjection(rates, GoalProgress{RevenueActual: 500000, DaysRemaining: monthClock.remaining}, now, monthClock, 0)
+
+	if got.Remaining != wantRemaining {
+		t.Errorf("projection prices the rest of the month at %d, but the card's own rows add up to %d",
+			got.Remaining, wantRemaining)
+	}
+	if want := int64(500000) + wantRemaining; got.Projected != want {
+		t.Errorf("Projected = %d, want faturamento so far plus the card's remaining days (%d)", got.Projected, want)
 	}
 }
 
@@ -1112,8 +1130,8 @@ func TestProjectionRatesIgnoreWhatFallsOutsideTheWindow(t *testing.T) {
 	if want := int64(100000); rates.avg[1] != want {
 		t.Errorf("Monday = %d, want only the Monday inside the window (%d)", rates.avg[1], want)
 	}
-	if rates.sample != 1 {
-		t.Errorf("sample = %d, want the single day inside the window", rates.sample)
+	if rates.sample() != 1 {
+		t.Errorf("sample = %d, want the single day inside the window", rates.sample())
 	}
 }
 
@@ -1214,7 +1232,7 @@ func TestWeekdayStatsUseTrailingWindow(t *testing.T) {
 	from := day(t, "2026-06-26")
 	to := day(t, "2026-08-02")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-08-03"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-08-03"))
 
 	// July 1 (Wednesday) is inside the window, so Wednesday should have data.
 	if stats[3].Count != 1 {
@@ -1239,7 +1257,7 @@ func TestWeekdayStatsExcludeEntriesOutsideWindow(t *testing.T) {
 	from := day(t, "2026-06-10")
 	to := day(t, "2026-07-14")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15"))
 
 	// Monday should only have the July 6 entry, not the May 1 one.
 	monday := stats[1]
@@ -2076,7 +2094,7 @@ func TestRunwayCountsAnOrdinaryDaysReceipts(t *testing.T) {
 		{Date: "2026-08-06", RunningBalance: -150000},
 	}
 	// An ordinary day brings R$1.000,00 in.
-	rates := dailyRates{sample: daysInWeek}
+	rates := dailyRates{weeks: [daysInWeek]int{1, 1, 1, 1, 1, 1, 1}}
 	for d := range rates.avg {
 		rates.avg[d] = 100000
 	}
@@ -2116,7 +2134,7 @@ func TestRunwayDoesNotCountAReceiptTwice(t *testing.T) {
 		// A crediário instalment lands on the 4th, well past an ordinary day.
 		{Date: "2026-08-04", ProjectedIncome: 500000, RunningBalance: 580000},
 	}
-	rates := dailyRates{sample: daysInWeek}
+	rates := dailyRates{weeks: [daysInWeek]int{1, 1, 1, 1, 1, 1, 1}}
 	for d := range rates.avg {
 		rates.avg[d] = 100000
 	}
@@ -2227,7 +2245,7 @@ func TestWeekdayStatsWeightedConstantSeries(t *testing.T) {
 	from := day(t, "2026-06-01")
 	to := day(t, "2026-07-26")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-27")) // a Monday
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-27")) // a Monday
 
 	monday := stats[1]
 	if monday.Count != 8 {
@@ -2269,7 +2287,7 @@ func TestWeekdayStatsWeightedOutlierSuppression(t *testing.T) {
 	from := day(t, "2026-05-25")
 	to := day(t, "2026-07-13")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-14")) // a Tuesday
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-14")) // a Tuesday
 
 	monday := stats[1]
 	if monday.Count != 8 {
@@ -2311,7 +2329,7 @@ func TestWeekdayStatsWeightedRecencyBias(t *testing.T) {
 
 	from := day(t, "2026-05-18")
 	to := day(t, "2026-07-12")
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-13"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-13"))
 
 	monday := stats[1]
 	// The recent outlier (500000 at offset 0, w=1.0) must pull the average
@@ -2323,7 +2341,7 @@ func TestWeekdayStatsWeightedRecencyBias(t *testing.T) {
 
 func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
 	// No data → sem_base.
-	empty := weekdayStatsWeighted(nil, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	empty := projectionRates(nil, day(t, "2026-06-15"), day(t, "2026-07-14")).weekdayStats(at12(t, "2026-07-15"))
 	if empty[1].Basis != ProjectionNoBasis {
 		t.Errorf("empty Monday basis = %q, want %q", empty[1].Basis, ProjectionNoBasis)
 	}
@@ -2340,7 +2358,7 @@ func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
 			Origin:          domain.OriginVenda,
 		})
 	}
-	fewStats := weekdayStatsWeighted(few, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	fewStats := projectionRates(few, day(t, "2026-06-15"), day(t, "2026-07-14")).weekdayStats(at12(t, "2026-07-15"))
 	if fewStats[1].Basis != ProjectionPartial {
 		t.Errorf("3-week Monday basis = %q, want %q", fewStats[1].Basis, ProjectionPartial)
 	}
@@ -2357,7 +2375,7 @@ func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
 			Origin:          domain.OriginVenda,
 		})
 	}
-	manyStats := weekdayStatsWeighted(many, day(t, "2026-05-18"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	manyStats := projectionRates(many, day(t, "2026-05-18"), day(t, "2026-07-14")).weekdayStats(at12(t, "2026-07-15"))
 	if manyStats[1].Basis != ProjectionFromWindow {
 		t.Errorf("7-week Monday basis = %q, want %q", manyStats[1].Basis, ProjectionFromWindow)
 	}
@@ -2371,7 +2389,7 @@ func TestWeekdayStatsWeightedIsToday(t *testing.T) {
 	to := day(t, "2026-07-14")
 
 	// On a Wednesday, Monday is not today.
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15"))
 	if stats[1].IsToday {
 		t.Error("Monday should not be today on a Wednesday")
 	}
@@ -2388,7 +2406,7 @@ func TestWeekdayStatsWeightedExpensesExcluded(t *testing.T) {
 	from := day(t, "2026-06-15")
 	to := day(t, "2026-07-14")
 
-	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15"))
 	monday := stats[1]
 	if monday.Avg != 10000 {
 		t.Errorf("Avg = %d, want 10000 (expense must not count)", monday.Avg)
