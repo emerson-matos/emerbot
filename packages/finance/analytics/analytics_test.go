@@ -605,44 +605,52 @@ func TestHealthCountsPositiveDays(t *testing.T) {
 	}
 }
 
-func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
-	// 10 of 30 days gone against a R$10.000,00 target; whether the projection
-	// reaches it is what decides "on track" — the same verdict the dashboard
-	// card and the health insight read.
-	onTrack := Projection{
-		Actual: 500000, Remaining: 600000, Projected: 1100000, Target: 1000000,
-		OnTrack: true, DaysRemaining: 20, NeededPerDay: 25000,
-	}
-	behind := Projection{
-		Actual: 100000, Remaining: 200000, Projected: 300000, Target: 1000000,
-		Gap: 700000, DaysRemaining: 20, NeededPerDay: 45000,
-	}
-
-	improved := WeekComparison{Pace: WeekPace{Current: 12000, Previous: 10000, Days: 3}}
-	declined := WeekComparison{Pace: WeekPace{Current: 8000, Previous: 10000, Days: 3}}
-	stable := WeekComparison{Pace: WeekPace{Current: 10000, Previous: 10000, Days: 3}}
-
+func TestRecommendationsProjectionCoverageMatrix(t *testing.T) {
+	// Coverage is Projected / Target — the one number that decides the
+	// recommendation title. The old test varied week-over-week pace; the new
+	// recommendation ignores it in favour of the projection's own verdict.
 	tests := []struct {
 		name       string
-		week       WeekComparison
 		projection Projection
 		want       string
 	}{
-		{"up and closing", improved, onTrack, "Ritmo subiu e fecha a meta"},
-		{"up but short", improved, behind, "Ritmo subiu mas ainda falta"},
-		{"down but closing", declined, onTrack, "Caiu mas a projeção fecha"},
-		{"down and short", declined, behind, "Faturamento caiu e não bate a meta"},
-		{"flat and closing", stable, onTrack, "Ritmo estável e dentro da projeção"},
-		{"flat and short", stable, behind, "Ritmo estável mas não é suficiente"},
+		{"success", Projection{Projected: 1000000, Target: 1000000, OnTrack: true, DaysRemaining: 20}, "Ritmo suficiente"},
+		{"warning", Projection{Projected: 900000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção abaixo da meta"},
+		{"warning2", Projection{Projected: 850000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção abaixo da meta"},
+		{"danger", Projection{Projected: 300000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção muito abaixo da meta"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			recs := buildRecommendations(tc.week, tc.projection, Trends{}, CashPosition{}, comparison{})
+			recs := buildRecommendations(WeekComparison{}, tc.projection, Trends{}, CashPosition{}, comparison{})
 			if len(recs) == 0 {
-				t.Fatal("expected a weekly recommendation")
+				t.Fatal("expected a recommendation")
 			}
 			if recs[0].Title != tc.want {
 				t.Errorf("title = %q, want %q", recs[0].Title, tc.want)
+			}
+		})
+	}
+}
+
+func TestProjectionStatusBoundaries(t *testing.T) {
+	// Verify the exact boundary values for Coverage → Status.
+	tests := []struct {
+		coverage float64
+		want     ProjectionStatus
+	}{
+		{1.00, ProjSuccess},
+		{0.95, ProjSuccess},
+		{0.94, ProjWarning},
+		{0.80, ProjWarning},
+		{0.79, ProjDanger},
+		{0.50, ProjDanger},
+		{0.00, ProjDanger},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("coverage=%.2f", tc.coverage), func(t *testing.T) {
+			p := Projection{Projected: int64(tc.coverage * 1000000), Target: 1000000}
+			if got := p.Status(); got != tc.want {
+				t.Errorf("Status() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -1216,12 +1224,10 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	}
 }
 
-// The analysis page shows the per-day ask three times — in the health
-// insight, in the recommendation and on the projection card — and the bot
-// reads it back a fourth. They were computed separately and disagreed: the
-// card divided the shortfall left *after* its own projection, everyone else
-// divided the shortfall from real income, and the page told the user two
-// different daily targets at once.
+// The analysis page shows the per-day ask in the health insight, on the
+// projection card, and the bot reads it back via the tool payload. The
+// recommendation is now coverage-based and does not repeat the per-day ask —
+// it interprets the projection as a verdict instead.
 func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	now := at12(t, "2026-07-15")
 	entries := []domain.FinancialEntry{
@@ -1251,9 +1257,6 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	}
 	if !strings.Contains(insight, asked) {
 		t.Errorf("health insight = %q, want it to quote %s", insight, asked)
-	}
-	if len(got.Recommendations) == 0 || !strings.Contains(got.Recommendations[0].Message, asked) {
-		t.Errorf("recommendation = %+v, want it to quote %s", got.Recommendations, asked)
 	}
 	if want := reais(got.Projection.NeededPerDay); got.ToolPayload()["necessario_por_dia_para_bater_a_meta"] != want {
 		t.Errorf("tool payload per-day ask = %v, want %v", got.ToolPayload()["necessario_por_dia_para_bater_a_meta"], want)
