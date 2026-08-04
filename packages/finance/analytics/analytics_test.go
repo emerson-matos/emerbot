@@ -610,14 +610,31 @@ func TestRecommendationsProjectionCoverageMatrix(t *testing.T) {
 	// recommendation title. The old test varied week-over-week pace; the new
 	// recommendation ignores it in favour of the projection's own verdict.
 	tests := []struct {
-		name       string
-		projection Projection
-		want       string
+		name        string
+		projection  Projection
+		want        string
+		wantMessage string
 	}{
-		{"success", Projection{Projected: 1000000, Target: 1000000, OnTrack: true, DaysRemaining: 20}, "Ritmo suficiente"},
-		{"warning", Projection{Projected: 900000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção abaixo da meta"},
-		{"warning2", Projection{Projected: 850000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção abaixo da meta"},
-		{"danger", Projection{Projected: 300000, Target: 1000000, OnTrack: false, DaysRemaining: 20}, "Projeção muito abaixo da meta"},
+		{
+			"covers the target",
+			Projection{Projected: 1000000, Target: 1000000, Coverage: 1.00, Status: ProjSuccess, OnTrack: true, DaysRemaining: 20},
+			"Ritmo suficiente", "Manter o desempenho",
+		},
+		{
+			"short but within reach",
+			Projection{Projected: 900000, Target: 1000000, Coverage: 0.90, Status: ProjWarning, DaysRemaining: 20},
+			"Projeção abaixo da meta", "aumentar as vendas",
+		},
+		{
+			"needs a hard acceleration",
+			Projection{Projected: 600000, Target: 1000000, Coverage: 0.60, Status: ProjDanger, DaysRemaining: 20},
+			"Projeção muito abaixo da meta", "aceleração consistente",
+		},
+		{
+			"out of reach",
+			Projection{Projected: 300000, Target: 1000000, Coverage: 0.30, Status: ProjDanger, DaysRemaining: 20},
+			"Projeção muito abaixo da meta", "muito acima do histórico recente",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -628,31 +645,52 @@ func TestRecommendationsProjectionCoverageMatrix(t *testing.T) {
 			if recs[0].Title != tc.want {
 				t.Errorf("title = %q, want %q", recs[0].Title, tc.want)
 			}
+			// The two ProjDanger rows share a title and differ only in wording,
+			// so the message is the only thing that tells them apart.
+			if !strings.Contains(recs[0].Message, tc.wantMessage) {
+				t.Errorf("message = %q, want it to mention %q", recs[0].Message, tc.wantMessage)
+			}
 		})
 	}
 }
 
 func TestProjectionStatusBoundaries(t *testing.T) {
-	// Verify the exact boundary values for Coverage → Status.
+	// The exact cuts, against the one function that owns them. Reading them off
+	// a Projection built from a float ratio would test Go's rounding as much as
+	// the thresholds.
 	tests := []struct {
 		coverage float64
 		want     ProjectionStatus
 	}{
+		{1.20, ProjSuccess},
 		{1.00, ProjSuccess},
 		{0.95, ProjSuccess},
-		{0.94, ProjWarning},
+		{0.9499, ProjWarning},
 		{0.80, ProjWarning},
-		{0.79, ProjDanger},
+		{0.7999, ProjDanger},
 		{0.50, ProjDanger},
 		{0.00, ProjDanger},
 	}
 	for _, tc := range tests {
-		t.Run(fmt.Sprintf("coverage=%.2f", tc.coverage), func(t *testing.T) {
-			p := Projection{Projected: int64(tc.coverage * 1000000), Target: 1000000}
-			if got := p.Status(); got != tc.want {
-				t.Errorf("Status() = %q, want %q", got, tc.want)
+		t.Run(fmt.Sprintf("coverage=%.4f", tc.coverage), func(t *testing.T) {
+			if got := projectionStatus(tc.coverage); got != tc.want {
+				t.Errorf("projectionStatus(%v) = %q, want %q", tc.coverage, got, tc.want)
 			}
 		})
+	}
+}
+
+// A month with no goal has no verdict to give. Coverage is 0 there, which the
+// thresholds alone would read as the worst possible month.
+func TestProjectionWithoutATargetHasNoStatus(t *testing.T) {
+	now := at12(t, "2026-07-26")
+	got := buildProjection(fridayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
+
+	if got.Status != ProjNoTarget || got.Coverage != 0 {
+		t.Errorf("Status = %q, Coverage = %v, want no verdict without a target", got.Status, got.Coverage)
+	}
+	if recs := buildRecommendations(WeekComparison{}, got, Trends{}, CashPosition{}, comparison{}); len(recs) != 0 {
+		t.Errorf("recommendations = %+v, want none without a target", recs)
 	}
 }
 
@@ -780,6 +818,147 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	if unfetched.Basis != ProjectionClosed {
 		t.Errorf("Basis = %q without a window, want %q", unfetched.Basis, ProjectionClosed)
 	}
+}
+
+// TodayTarget prices today at its own weekday average scaled by what it would
+// take to close the gap if every remaining day pulled the same weight. A flat
+// week makes the arithmetic checkable by hand.
+func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
+	// Monday 2026-07-27: five days left in July, all priced at R$1.000,00.
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// R$7.500,00 still to find over five days worth R$5.000,00 at the usual
+	// rhythm: every day has to bring 1,5× what it normally does.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if !got.Valid {
+		t.Fatalf("TodayTarget = %+v, want a target on an ordinary Monday", got)
+	}
+	if got.Weekday != "Seg" {
+		t.Errorf("Weekday = %q, want the label for the day being asked about", got.Weekday)
+	}
+	if got.Historical != 100000 {
+		t.Errorf("Historical = %d, want Monday's average (100000)", got.Historical)
+	}
+	if got.Factor != 1.5 {
+		t.Errorf("Factor = %v, want 1.5", got.Factor)
+	}
+	if got.Target != 150000 {
+		t.Errorf("Target = %d, want the average at 1,5× (150000)", got.Target)
+	}
+	if got.Delta != 50000 {
+		t.Errorf("Delta = %d, want the stretch over an ordinary Monday (50000)", got.Delta)
+	}
+	if got.Status != PaceAbove {
+		t.Errorf("Status = %q, want %q", got.Status, PaceAbove)
+	}
+}
+
+// The share is weighted by the weekday, not spread flat: that is the whole
+// difference from NeededPerDay. A Saturday worth half a Monday is asked for
+// half as much on the same factor.
+func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
+	// Saturday 2026-07-25 and Monday 2026-07-27, against the same rates.
+	rates := ratesFor(0, 200000, 200000, 200000, 200000, 200000, 100000)
+	goals := func(remaining int) GoalProgress {
+		return GoalProgress{RevenueTarget: 2000000, RevenueActual: 0, DaysTotal: 31, DaysRemaining: remaining}
+	}
+
+	sat := buildProjection(rates, goals(7), at12(t, "2026-07-25"), clock(t, "2026-07", "2026-07-25"), 0).TodayTarget
+	mon := buildProjection(rates, goals(5), at12(t, "2026-07-27"), clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if sat.Historical != 100000 || mon.Historical != 200000 {
+		t.Fatalf("Historical: Sat = %d, Mon = %d — want the weekday averages", sat.Historical, mon.Historical)
+	}
+	// Saturday is asked for less in reais than Monday even though both are
+	// stretched by their own factor. NeededPerDay would ask both for the same.
+	if sat.Target >= mon.Target {
+		t.Errorf("Sat target = %d, Mon target = %d, want Saturday asked for less", sat.Target, mon.Target)
+	}
+}
+
+// A day already half traded must not deflate its own target. missing is
+// measured from what the till held when the day opened, because the historical
+// average it is compared against is a whole day's takings.
+func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+
+	// Same morning, told twice: nothing sold yet, then R$1.000,00 already
+	// through the till and folded into Actual.
+	opening := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+	midday := GoalProgress{RevenueTarget: 1000000, RevenueActual: 350000, DaysTotal: 31, DaysRemaining: 5}
+
+	before := buildProjection(flat, opening, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	after := buildProjection(flat, midday, now, clock(t, "2026-07", "2026-07-27"), 100000).TodayTarget
+
+	if before.Target != after.Target || before.Factor != after.Factor {
+		t.Errorf("target moved through the day: %d (×%v) then %d (×%v), want the same whole-day ask",
+			before.Target, before.Factor, after.Target, after.Factor)
+	}
+}
+
+// Below its average is a real answer, not an absent one: a pharmacy running
+// ahead of its goal can afford a lighter day, and the card says so.
+func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// R$2.500,00 left over five days worth R$5.000,00 — half an ordinary day
+	// each is enough.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 750000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if !got.Valid {
+		t.Fatalf("TodayTarget = %+v, want a target — a lighter day is still a day", got)
+	}
+	if got.Delta >= 0 {
+		t.Errorf("Delta = %d, want a negative stretch when the month is ahead", got.Delta)
+	}
+	if got.Status != PaceBelow {
+		t.Errorf("Status = %q, want %q", got.Status, PaceBelow)
+	}
+}
+
+// The cases with no honest answer, each for its own reason.
+func TestTodayTargetIsInvalidWithoutSomethingToStandOn(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+
+	t.Run("no window to price the days from", func(t *testing.T) {
+		got := buildProjection(dailyRates{}, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none without a basis", got)
+		}
+	})
+
+	t.Run("a weekday the pharmacy does not trade", func(t *testing.T) {
+		// Sunday 2026-07-26, priced at nothing: there is no usual rhythm to
+		// scale, and asking for a multiple of zero is not an answer.
+		closedSundays := ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000)
+		got := buildProjection(closedSundays, goals, at12(t, "2026-07-26"), clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none on a day with no history", got)
+		}
+	})
+
+	t.Run("the goal is already beaten", func(t *testing.T) {
+		beaten := GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5}
+		got := buildProjection(flat, beaten, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none once the target is met", got)
+		}
+	})
+
+	t.Run("a closed month", func(t *testing.T) {
+		got := buildProjection(flat, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none for a month with no days left", got)
+		}
+	})
 }
 
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
@@ -1321,10 +1500,12 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 			},
 		},
 		Recommendations: []Recommendation{
-			// recommendations[0] is always the weekly-pace one when a goal is
-			// being paced, and its message is the per-day ask AheadLines prints
-			// itself. The digest takes the next distinct point instead.
-			{Title: "Ritmo estável mas não é suficiente", Message: "Precisa acelerar."},
+			// recommendations[0] is the projection verdict. It used to be the
+			// weekly-pace one, whose message was the per-day ask AheadLines
+			// prints itself, so the digest skipped it — and went on skipping it
+			// after the message underneath changed into something the ask does
+			// not say. Nothing is positional now; the list is read from the top.
+			{Title: "Projeção abaixo da meta", Message: "O ritmo atual deve fechar o mês em torno de R$ 9.000,00."},
 			{Title: "Receita caiu", Message: "Aja rapidamente."},
 		},
 	}
@@ -1345,11 +1526,12 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	}
 
 	// The one thing to do about it is the other half of the message, and it
-	// leads with the per-day ask rather than with the diagnosis.
+	// leads with the per-day ask rather than with the diagnosis. The verdict
+	// follows: what the ask is worth if nothing changes.
 	ahead := analysis.AheadLines()
 	wantAhead := []string{
 		"Faltam R$ 2.000,00 para a meta: R$ 200,00/dia nos 10 dias que restam (hoje incluído).",
-		"Receita caiu: Aja rapidamente.",
+		"Projeção abaixo da meta: O ritmo atual deve fechar o mês em torno de R$ 9.000,00.",
 	}
 	if len(ahead) != len(wantAhead) {
 		t.Fatalf("ahead = %v, want %v", ahead, wantAhead)
@@ -1376,7 +1558,7 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 		},
 		Projection: Projection{Target: 3100000, Actual: 0, DaysRemaining: 31, NeededPerDay: 100000},
 		Recommendations: []Recommendation{
-			{Title: "Ritmo estável mas não é suficiente", Message: "Precisa acelerar."},
+			{Title: "Projeção muito abaixo da meta", Message: "No ritmo atual o mês deve fechar em torno de R$ 0,00."},
 			{Title: "Saldo fica negativo em breve", Message: "Reduza despesas."},
 		},
 	}
@@ -1397,9 +1579,10 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 	if len(ahead) != 2 || !strings.Contains(ahead[0], "R$ 1.000,00/dia") {
 		t.Errorf("AheadLines = %v, want the per-day ask and the recommendation", ahead)
 	}
-	// The per-day ask is printed once, not twice: the weekly-pace
-	// recommendation says the same thing and is dropped in its favour.
-	if strings.Contains(ahead[1], "acelerar") {
+	// The per-day ask is printed once, not twice. The recommendation beside it
+	// is the projection verdict, which quotes where the month lands rather than
+	// what each day has to bring.
+	if strings.Contains(ahead[1], "/dia") {
 		t.Errorf("AheadLines repeats the per-day ask: %v", ahead)
 	}
 }
