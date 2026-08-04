@@ -26,7 +26,7 @@ export default function Settings() {
             </span>
             <div className="min-w-0 leading-tight">
               <p className="truncate text-base font-semibold">{userName}</p>
-              <p className="text-[11px] text-muted-foreground">Administrador</p>
+              <p className="text-xs text-muted-foreground">Administrador</p>
             </div>
           </div>
 
@@ -38,12 +38,12 @@ export default function Settings() {
             <div>
               <p className="text-xs text-muted-foreground">E-mail</p>
               <p className="text-sm font-medium break-all">{userEmail}</p>
-              <p className="text-[11px] text-muted-foreground">Imutável — gerenciado pelo administrador</p>
+              <p className="text-xs text-muted-foreground">Imutável — gerenciado pelo administrador</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Telefone</p>
               <p className="text-sm font-medium">{userPhone}</p>
-              <p className="text-[11px] text-muted-foreground">Imutável — gerenciado pelo administrador</p>
+              <p className="text-xs text-muted-foreground">Imutável — gerenciado pelo administrador</p>
             </div>
           </div>
         </CardContent>

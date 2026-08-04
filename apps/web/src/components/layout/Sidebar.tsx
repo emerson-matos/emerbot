@@ -28,7 +28,7 @@ export default function Sidebar({
 
 				<div className="min-w-0 flex-1 leading-tight">
 					<p className="truncate text-sm font-medium">{userName}</p>
-					<p className="text-[11px] text-muted-foreground">
+					<p className="text-xs text-muted-foreground">
 						Administrador
 					</p>
 				</div>

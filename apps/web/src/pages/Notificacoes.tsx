@@ -142,7 +142,7 @@ function WhatsAppPreferences() {
         </p>
 
         <div className="space-y-2.5">
-          <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Enviar alerta quando
           </p>
           {ALERT_CHECKS.map(({ key, label }) => (

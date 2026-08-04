@@ -35,7 +35,7 @@ export default function NotificationList({ notifications, inset = false }: Props
             </span>
             <div className="min-w-0">
               <p className="text-[13px] leading-snug">{n.text}</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{n.time}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{n.time}</p>
             </div>
           </div>
         )

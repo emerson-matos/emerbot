@@ -12,7 +12,7 @@ export default function Brand() {
 					Drogaria Nova Farma
 				</p>
 
-				<p className="text-[11px] text-muted-foreground">
+				<p className="text-xs text-muted-foreground">
 					Financeiro
 				</p>
 			</div>

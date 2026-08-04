@@ -31,7 +31,7 @@ function ExpenseTotal() {
       className="min-h-26"
     >
       <KpiCardContent icon={TrendingDown} tone="negative">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Total Despesas</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Total Despesas</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.negative }}>
           {formatBRL(summary?.TotalExpense ?? 0)}
         </p>
@@ -57,7 +57,7 @@ function BalanceCard() {
       className="min-h-26"
     >
       <KpiCardContent icon={Wallet} tone={balanceTone}>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Saldo Previsto</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Saldo Previsto</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar[balanceTone] }}>
           {formatBRL(balance)}
         </p>
@@ -85,7 +85,7 @@ function RevenueTotal() {
       className="min-h-26"
     >
       <KpiCardContent icon={TrendingUp} tone="positive">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Faturamento</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Faturamento</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.positive }}>
           {formatBRL(summary?.TotalRevenue ?? 0)}
         </p>
@@ -109,7 +109,7 @@ function CashInTotal() {
       className="min-h-26"
     >
       <KpiCardContent icon={Banknote} tone="info">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Entradas de Caixa</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Entradas de Caixa</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
           {formatBRL(summary?.TotalCashIn ?? 0)}
         </p>
@@ -139,7 +139,7 @@ function Receivables() {
       className="min-h-26"
     >
       <KpiCardContent icon={Clock} tone="info">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">A Receber</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">A Receber</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
           {formatBRL(totalReceivable)}
         </p>

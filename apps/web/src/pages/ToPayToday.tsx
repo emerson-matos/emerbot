@@ -29,7 +29,7 @@ export default function ToPayToday() {
       className="min-h-39"
     >
       <KpiCardContent icon={CalendarClock} tone="warning">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">A Pagar Hoje</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">A Pagar Hoje</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.warning }}>
           {formatBRL(payableToday)}
         </p>

@@ -5,7 +5,7 @@ import {
 import KpiCard, { KpiCardContent, toneVar } from './KpiCard'
 import { formatBRL } from '@/lib/format'
 
-const labelClass = 'text-[11px] font-medium tracking-wide text-muted-foreground uppercase'
+const labelClass = 'text-xs font-medium tracking-wide text-muted-foreground uppercase'
 const valueClass = 'mt-1 text-2xl font-semibold tabular-nums'
 const subClass = 'mt-1 text-xs text-muted-foreground'
 
