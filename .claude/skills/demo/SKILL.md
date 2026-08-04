@@ -1,13 +1,13 @@
 ---
 name: demo
-description: Bring up the full local emerbot stack (podman compose) and seed demo data. Use when the user wants to run the app locally, spin up the demo, or test end-to-end against local services.
+description: Bring up the full local emerbot stack (podman compose). Use when the user wants to run the app locally, spin up the demo, or test end-to-end against local services.
 ---
 
 Start the local emerbot environment for hands-on testing.
 
 Steps:
 
-1. Run `make demo`. This runs `podman compose up`, waits on `dashboard-api` at `http://localhost:8081/health`, then seeds ~120 demo financial entries. Auth runs against `cognito-local` (a real Cognito emulator, not a fake JWT system) — `cognito-init` creates the pool/client/demo user on first boot before `dashboard-api`/`web` start.
+1. Run `make demo`. This runs `podman compose up` and waits on `dashboard-api` at `http://localhost:8081/health`. Auth runs against `cognito-local` (a real Cognito emulator, not a fake JWT system) — `cognito-init` creates the pool/client/demo user on first boot before `dashboard-api`/`web` start.
 2. Once healthy, report the service URLs and login:
    - Web dashboard: http://localhost:5173
    - Dashboard API: http://localhost:8081
