@@ -102,10 +102,6 @@ func NormalizeIncomeOrigin(s string) IncomeOrigin {
 	return OriginOutros
 }
 
-// legacyRevenueCategory is the income category that used to stand in for "not
-// a sale" before Origin existed. Only IsRevenue's migration shim reads it.
-const legacyRevenueCategory = "outros_receitas"
-
 // IsRevenue reports whether an entry counts toward faturamento: money earned
 // by selling something, as opposed to money that merely came in (a loan, a
 // partner's capital, an investment yield, a tax refund). It is what the goals,
@@ -115,20 +111,13 @@ const legacyRevenueCategory = "outros_receitas"
 // Entradas de caixa, the broader figure, is every income entry that was
 // actually received; see packages/finance.CashInTotal.
 //
-// MIGRATION SHIM: the Origin == "" branch reproduces the pre-Origin rule
-// (every income category except outros_receitas was assumed to be a sale), so
-// faturamento keeps the exact value it had before this refactor for entries
-// written before the field existed. DELETE IT once scripts/migrate-origin has
-// run in every environment — after that an empty origin can only be a bug, and
-// reading a bug as a sale is the mistake this function exists to prevent.
+// Origin alone decides. An income entry with no origin — only reachable for a
+// row written before the field existed and never migrated — is not counted as a
+// sale. The old category fallback (the migration shim) is gone now that
+// scripts/migrate-origin has run: an empty origin can only be a stray, and
+// counting a stray as a sale is exactly the mistake this function prevents.
 func IsRevenue(e FinancialEntry) bool {
-	if e.Type != EntryTypeIncome {
-		return false
-	}
-	if e.Origin == "" {
-		return e.Category != legacyRevenueCategory
-	}
-	return e.Origin == OriginVenda
+	return e.Type == EntryTypeIncome && e.Origin == OriginVenda
 }
 
 // FinancialEntry represents a single financial transaction for the pharmacy.
@@ -147,8 +136,8 @@ type FinancialEntry struct {
 	PaymentStatus   PaymentStatus
 	Source          EntrySource
 	// Origin is where the money came from, for income entries; empty on
-	// expenses. Empty on an income entry means "written before Origin
-	// existed" — see IsRevenue's migration shim.
+	// expenses. Empty on an income entry means a legacy row the backfill never
+	// reached — IsRevenue treats it as not-a-sale.
 	Origin    IncomeOrigin
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -240,11 +229,12 @@ func (e FinancialEntry) Validate() error {
 	default:
 		return errors.New("invalid entry source")
 	}
-	// An empty origin is allowed on income: entries written before the field
-	// existed have none, and rejecting them here would fail the whole
-	// ListEntries query they are read in (see packages/finance.itemToEntry).
-	// Once scripts/migrate-origin has run everywhere, tighten this to require
-	// a value and delete IsRevenue's shim in the same commit.
+	// An empty origin is still allowed on income, on purpose: itemToEntry runs
+	// Validate on every read, so requiring an origin would turn a single stray
+	// un-migrated row into a failure of the whole ListEntries query. IsRevenue
+	// already treats an empty origin as not-a-sale, so a stray costs a bit of
+	// under-counted faturamento, never a broken read. Tighten to require a value
+	// only once the ledger is provably free of origin-less rows.
 	if e.Origin != "" {
 		if e.Type != EntryTypeIncome {
 			return errors.New("expense entry cannot have an income origin")

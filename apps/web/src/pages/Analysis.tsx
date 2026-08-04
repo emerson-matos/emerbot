@@ -22,7 +22,7 @@ import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { currentMonthKey } from '@/lib/entries'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, Recommendation } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation, TodayTargetScale } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -104,7 +104,7 @@ function Section({
 function RecommendationSection({ data }: { data: Analysis['recommendations'] }) {
   return (
     <Section
-      title="Recomendações"
+      title="Insights do mês"
       icon={Lightbulb}
       empty={data.length === 0 ? 'Nada a ajustar por enquanto — o mês está seguindo o previsto.' : undefined}
     >
@@ -133,8 +133,30 @@ function trendTone(pct: number): string {
   return 'text-muted-foreground'
 }
 
+function paceTone(status: TodayTargetScale): string {
+  switch (status) {
+    case 'above':   return 'text-warning'
+    case 'below':   return 'text-success'
+    case 'on_track': return 'text-muted-foreground'
+  }
+}
+
+// Three levels, matching the severity the recommendation carries. Colouring by
+// the boolean onTrack instead put "97% da meta" in red under a green
+// "Ritmo suficiente" on the same screen.
+const PROJECTION_TONE: Record<ProjectionStatus, string> = {
+  '': 'text-muted-foreground',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+}
+
 function pluralDias(n: number): string {
   return n === 1 ? '1 dia' : `${n} dias`
+}
+
+function pluralFechados(n: number): string {
+  return n === 1 ? '1 dia fechado' : `${n} dias fechados`
 }
 
 // Keyed by the backend's weekday abbreviations (analytics.weekdayLabels).
@@ -146,6 +168,16 @@ const WEEKDAY_FULL_PT: Record<string, string> = {
   Qui: 'quinta',
   Sex: 'sexta',
   Sáb: 'sábado',
+}
+
+// segunda through sexta are -feira and so feminine; domingo and sábado are not.
+// One hardcoded "uma" in the sentence read "para uma domingo" two days a week.
+const WEEKDAY_ARTICLE_PT: Record<string, string> = { Dom: 'um', Sáb: 'um' }
+
+function weekdayWithArticle(label: string): string {
+  const name = WEEKDAY_FULL_PT[label]
+  if (!name) return label
+  return `${WEEKDAY_ARTICLE_PT[label] ?? 'uma'} ${name}`
 }
 
 // The backend compares both months over the same finished days, so a percentage
@@ -313,9 +345,9 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
 
   return (
     <Section
-      title="Média por Dia da Semana"
+      title="Média das Últimas 8 Semanas por Dia da Semana"
       icon={Calendar}
-      empty={traded ? undefined : 'Nenhuma venda de balcão registrada neste mês.'}
+      empty={traded ? undefined : 'Nenhuma venda de balcão registrada nas últimas 8 semanas.'}
     >
       {/* Weekday order, always. Today used to be sorted to the front, which on
           any day but a Sunday left a strip labelled Qua, Dom, Seg, Ter… — a
@@ -330,16 +362,19 @@ function WeekdaySection({ data }: { data: Analysis['weekdays'] }) {
             <p className="mt-1 text-sm font-semibold tabular-nums">
               {day.count > 0 ? formatBRL(day.avg) : '—'}
             </p>
-            {/* Days with a sale are counted; a bare "—" already says there
+            {/* Weeks with a sale are counted; a bare "—" already says there
                 were none, and "0x" underneath it read like a third figure. */}
             {day.count > 0 && (
               <p className="text-[10px] text-muted-foreground">
-                {day.count} {day.count === 1 ? 'dia' : 'dias'}
+                {day.count} {day.count === 1 ? 'semana' : 'semanas'}
               </p>
             )}
           </div>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">
+        Semanas mais recentes têm maior peso (Gaussiana σ=2).
+      </p>
     </Section>
   )
 }
@@ -389,9 +424,14 @@ function ProjectionSection({ projection, faturamento, period }: {
         <div className="grid grid-cols-[1fr_auto] gap-x-4">
           <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Projeção</p>
-            <p className="truncate text-lg tabular-nums">
+            <p className="truncate text-2xl font-semibold tabular-nums">
               {formatBRL(projection.projected)}
             </p>
+            {projection.target > 0 && (
+              <p className={`mt-0.5 text-xs ${PROJECTION_TONE[projection.status]}`}>
+                Equivale a {Math.round(projection.coverage * 100)}% da meta
+              </p>
+            )}
             {/* How the number was reached. The days still to come used to be
                 priced from this month's own finished days, so on the 3rd every
                 weekday the month had not reached yet counted as zero and the
@@ -415,6 +455,10 @@ function ProjectionSection({ projection, faturamento, period }: {
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Faturado até agora</span>
             <span className="text-sm tabular-nums">{formatBRL(projection.actual)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Estimativa restante</span>
+            <span className="text-sm tabular-nums">+{formatBRL(projection.remaining)}</span>
           </div>
           {period.inProgress && period.comparableThroughDay === 0 ? (
             /* Two different reasons, and the user is owed the right one. On the
@@ -467,7 +511,40 @@ function ProjectionSection({ projection, faturamento, period }: {
               <p className="text-sm text-muted-foreground">Faltam para a meta</p>
               <p className="text-base text-destructive tabular-nums">{formatBRL(projection.gap)}</p>
             </div>
-            {projection.neededPerDay > 0 ? (
+            {projection.todayTarget?.valid ? (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Meta para hoje
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Meta</span>
+                  <span className="text-sm font-medium tabular-nums">
+                    {formatBRL(projection.todayTarget.target)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Histórico ({projection.todayTarget.weekday})
+                  </span>
+                  <span className="text-sm tabular-nums">
+                    {formatBRL(projection.todayTarget.historical)}
+                  </span>
+                </div>
+                {/* Separador visual — valores acima, interpretação abaixo. A
+                    direção vem do sinal do delta: o texto era fixo em "acima do
+                    esperado" e imprimia "-R$ 500,00 acima do esperado". */}
+                <div className="pt-1">
+                  <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
+                    {projection.todayTarget.delta === 0
+                      ? 'Em linha com o esperado'
+                      : `${formatBRL(Math.abs(projection.todayTarget.delta))} ${projection.todayTarget.delta > 0 ? 'acima' : 'abaixo'} do esperado`}
+                  </p>
+                  <p className={`text-xs ${paceTone(projection.todayTarget.status)}`}>
+                    ≈ {projection.todayTarget.factor.toFixed(1)}× o esperado para {weekdayWithArticle(projection.todayTarget.weekday)}
+                  </p>
+                </div>
+              </div>
+            ) : projection.neededPerDay > 0 ? (
               <div className="flex items-center justify-between">
                 {/* Every remaining day, not just business days: the shop trades
                     on weekends too, and the label used to say "dia útil" over a
@@ -487,7 +564,7 @@ function ProjectionSection({ projection, faturamento, period }: {
   )
 }
 
-function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekComparison']; recommendation?: Recommendation }) {
+function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // The pace pair, not the running totals: both sides cover the same finished
   // days of the week, so today — still being traded — is in neither. Comparing
   // this week including today against last week's matching weekday in full read
@@ -504,36 +581,34 @@ function WeekComparisonSection({ data, recommendation }: { data: Analysis['weekC
 
   return (
     <Section title="Comportamento Semanal" icon={Clock}>
-      <>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Ritmo até ontem ({pluralDias(data.pace.days)})</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Semana passada (mesmos dias)</span>
-            <span className="text-sm tabular-nums">{formatBRL(data.pace.previous)}</span>
-          </div>
-          {data.pace.days === 0 ? (
-            <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
-          ) : pct === null ? (
-            <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
-          ) : (
-            <p className={`text-sm ${trendTone(pct)}`}>
-              {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
-            </p>
-          )}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Esta semana (até {todayPt})</span>
+          <span className="text-sm tabular-nums">{formatBRL(data.current)}</span>
         </div>
-        {recommendation && (
-          <div className="border-t pt-2">
-            <RecommendationItem recommendation={recommendation} />
-          </div>
+        {/* An accumulated total over the finished days, not a mean — the same
+            shape as the row below it, which is what makes the two comparable.
+            "Média diária" printed three days of takings as one day's average. */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            Ritmo até ontem ({pluralFechados(data.pace.days)})
+          </span>
+          <span className="text-sm tabular-nums">{formatBRL(data.pace.current)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Semana passada (mesmos dias)</span>
+          <span className="text-sm tabular-nums">{formatBRL(data.pace.previous)}</span>
+        </div>
+        {data.pace.days === 0 ? (
+          <p className="text-sm text-muted-foreground">A semana está começando — nenhum dia fechado ainda</p>
+        ) : pct === null ? (
+          <p className="text-sm text-muted-foreground">Sem vendas na semana passada para comparar</p>
+        ) : (
+          <p className={`text-sm ${trendTone(pct)}`}>
+            {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}% vs semana anterior
+          </p>
         )}
-      </>
+      </div>
     </Section>
   )
 }
@@ -679,11 +754,6 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
 }
 
 function AnalysisBody({ analysis }: { analysis: Analysis }) {
-  // recommendations[0] is the weekly one, which captions the week-comparison
-  // card (see the backend's buildRecommendations). The list below carries the
-  // rest — printing it in both places put the same sentence on screen twice.
-  const [weeklyRec, ...otherRecs] = analysis.recommendations
-
   return (
     <>
       {/* The headline numbers first: the cards below break them down, and the
@@ -695,14 +765,14 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         period={analysis.period}
       />
       <HealthSection data={analysis.health} />
-      <RecommendationSection data={otherRecs} />
+      <RecommendationSection data={analysis.recommendations} />
       <WeekdaySection data={analysis.weekdays} />
       <ProjectionSection
         projection={analysis.projection}
         faturamento={analysis.trends.faturamento}
         period={analysis.period}
       />
-      <WeekComparisonSection data={analysis.weekComparison} recommendation={weeklyRec} />
+      <WeekComparisonSection data={analysis.weekComparison} />
       <CashPositionSection data={analysis.cashPosition} />
       <CashOutSection data={analysis.cashOutDays} />
       <CompositionSection data={analysis.expenseComposition} />

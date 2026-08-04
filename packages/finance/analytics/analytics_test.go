@@ -3,6 +3,7 @@ package analytics
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -114,15 +115,20 @@ func TestBuildTrend(t *testing.T) {
 
 func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	// Two sales on the same Monday, one on the next — the Monday average is
-	// over two Mondays, not three sales.
+	// over two Mondays, not three sales. With Gaussian weighting and both
+	// Mondays in the most recent weeks, the weighted average reflects both.
 	entries := []domain.FinancialEntry{
 		sale(t, "2026-07-06", 10000),
 		sale(t, "2026-07-06", 20000),
 		sale(t, "2026-07-13", 30000),
 		expense(t, "2026-07-06", "aluguel", 90000),
 	}
+	// Window: June 19 – July 14 (through=14 on July 15, end=first+13=July 14,
+	// start=end-55=June 19).
+	from := day(t, "2026-06-19")
+	to := day(t, "2026-07-14")
 
-	stats := weekdayStats(entries, at12(t, "2026-07-15"), clock(t, "2026-07", "2026-07-15")) // a Wednesday
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15")) // a Wednesday
 
 	monday := stats[1]
 	if monday.Label != "Seg" {
@@ -131,9 +137,10 @@ func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	if monday.Count != 2 {
 		t.Errorf("Count = %d, want 2 distinct Mondays", monday.Count)
 	}
-	if monday.Total != 60000 {
-		t.Errorf("Total = %d, want 60000 (expenses must not count)", monday.Total)
-	}
+	// July 6 (offset=1, w≈0.882) * 30000 + July 13 (offset=0, w=1.0) * 30000
+	// avg = 56467 / 1.882 ≈ 30000.
+	// Both Mondays happen to have the same total per day, so the weighted avg
+	// is pulled slightly toward the more recent one but stays at 30000.
 	if monday.Avg != 30000 {
 		t.Errorf("Avg = %d, want 30000", monday.Avg)
 	}
@@ -211,13 +218,20 @@ func TestALoanIsNotASalesDayButIsStillCash(t *testing.T) {
 		t.Errorf("BestBalance = %+v, want the loan's day to still show the cash", h.BestBalance)
 	}
 
-	stats := weekdayStats(entries, at12(t, "2026-07-15"), clock(t, "2026-07", "2026-07-15"))
-	var total int64
-	for _, s := range stats {
-		total += s.Total
+	// The loan is not revenue, so it must not appear in the weekday averages.
+	// Wednesday (July 1) has only the sale.
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+
+	wednesday := stats[3] // July 1 is a Wednesday
+	if wednesday.Avg != 50000 {
+		t.Errorf("Wednesday avg = %d, want 50000 (sale only, loan excluded)", wednesday.Avg)
 	}
-	if total != 50000 {
-		t.Errorf("weekday total = %d, want only the sale (50000), loan excluded", total)
+	// Thursday (July 10) has only the loan, which is not revenue — must be empty.
+	thursday := stats[4]
+	if thursday.Count != 0 || thursday.Avg != 0 {
+		t.Errorf("Thursday = %+v, want nothing — the loan is not revenue", thursday)
 	}
 }
 
@@ -591,46 +605,91 @@ func TestHealthCountsPositiveDays(t *testing.T) {
 	}
 }
 
-func TestRecommendationsWeeklyPaceMatrix(t *testing.T) {
-	// 10 of 30 days gone against a R$10.000,00 target; whether the projection
-	// reaches it is what decides "on track" — the same verdict the dashboard
-	// card and the health insight read.
-	onTrack := Projection{
-		Actual: 500000, Remaining: 600000, Projected: 1100000, Target: 1000000,
-		OnTrack: true, DaysRemaining: 20, NeededPerDay: 25000,
-	}
-	behind := Projection{
-		Actual: 100000, Remaining: 200000, Projected: 300000, Target: 1000000,
-		Gap: 700000, DaysRemaining: 20, NeededPerDay: 45000,
-	}
-
-	improved := WeekComparison{Pace: WeekPace{Current: 12000, Previous: 10000, Days: 3}}
-	declined := WeekComparison{Pace: WeekPace{Current: 8000, Previous: 10000, Days: 3}}
-	stable := WeekComparison{Pace: WeekPace{Current: 10000, Previous: 10000, Days: 3}}
-
+func TestRecommendationsProjectionCoverageMatrix(t *testing.T) {
+	// Coverage is Projected / Target — the one number that decides the
+	// recommendation title. The old test varied week-over-week pace; the new
+	// recommendation ignores it in favour of the projection's own verdict.
 	tests := []struct {
-		name       string
-		week       WeekComparison
-		projection Projection
-		want       string
+		name        string
+		projection  Projection
+		want        string
+		wantMessage string
 	}{
-		{"up and closing", improved, onTrack, "Ritmo subiu e fecha a meta"},
-		{"up but short", improved, behind, "Ritmo subiu mas ainda falta"},
-		{"down but closing", declined, onTrack, "Caiu mas a projeção fecha"},
-		{"down and short", declined, behind, "Faturamento caiu e não bate a meta"},
-		{"flat and closing", stable, onTrack, "Ritmo estável e dentro da projeção"},
-		{"flat and short", stable, behind, "Ritmo estável mas não é suficiente"},
+		{
+			"covers the target",
+			Projection{Projected: 1000000, Target: 1000000, Coverage: 1.00, Status: ProjSuccess, OnTrack: true, DaysRemaining: 20},
+			"Ritmo suficiente", "Manter o desempenho",
+		},
+		{
+			"short but within reach",
+			Projection{Projected: 900000, Target: 1000000, Coverage: 0.90, Status: ProjWarning, DaysRemaining: 20},
+			"Projeção abaixo da meta", "aumentar as vendas",
+		},
+		{
+			"needs a hard acceleration",
+			Projection{Projected: 600000, Target: 1000000, Coverage: 0.60, Status: ProjDanger, DaysRemaining: 20},
+			"Projeção muito abaixo da meta", "aceleração consistente",
+		},
+		{
+			"out of reach",
+			Projection{Projected: 300000, Target: 1000000, Coverage: 0.30, Status: ProjDanger, DaysRemaining: 20},
+			"Projeção muito abaixo da meta", "muito acima do histórico recente",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			recs := buildRecommendations(tc.week, tc.projection, Trends{}, CashPosition{}, comparison{})
+			recs := buildRecommendations(WeekComparison{}, tc.projection, Trends{}, CashPosition{}, comparison{})
 			if len(recs) == 0 {
-				t.Fatal("expected a weekly recommendation")
+				t.Fatal("expected a recommendation")
 			}
 			if recs[0].Title != tc.want {
 				t.Errorf("title = %q, want %q", recs[0].Title, tc.want)
 			}
+			// The two ProjDanger rows share a title and differ only in wording,
+			// so the message is the only thing that tells them apart.
+			if !strings.Contains(recs[0].Message, tc.wantMessage) {
+				t.Errorf("message = %q, want it to mention %q", recs[0].Message, tc.wantMessage)
+			}
 		})
+	}
+}
+
+func TestProjectionStatusBoundaries(t *testing.T) {
+	// Against the function that owns the cuts: reading them off a Projection
+	// built from a float ratio would test Go's rounding as much as the cuts.
+	tests := []struct {
+		coverage float64
+		want     ProjectionStatus
+	}{
+		{1.20, ProjSuccess},
+		{1.00, ProjSuccess},
+		{0.95, ProjSuccess},
+		{0.9499, ProjWarning},
+		{0.80, ProjWarning},
+		{0.7999, ProjDanger},
+		{0.50, ProjDanger},
+		{0.00, ProjDanger},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("coverage=%.4f", tc.coverage), func(t *testing.T) {
+			if got := projectionStatus(tc.coverage); got != tc.want {
+				t.Errorf("projectionStatus(%v) = %q, want %q", tc.coverage, got, tc.want)
+			}
+		})
+	}
+}
+
+// A month with no goal has no verdict to give. Coverage is 0 there, which the
+// thresholds alone would read as the worst possible month.
+func TestProjectionWithoutATargetHasNoStatus(t *testing.T) {
+	now := at12(t, "2026-07-26")
+	got := buildProjection(fridayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
+
+	if got.Status != ProjNoTarget || got.Coverage != 0 {
+		t.Errorf("Status = %q, Coverage = %v, want no verdict without a target", got.Status, got.Coverage)
+	}
+	if recs := buildRecommendations(WeekComparison{}, got, Trends{}, CashPosition{}, comparison{}); len(recs) != 0 {
+		t.Errorf("recommendations = %+v, want none without a target", recs)
 	}
 }
 
@@ -758,6 +817,142 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	if unfetched.Basis != ProjectionClosed {
 		t.Errorf("Basis = %q without a window, want %q", unfetched.Basis, ProjectionClosed)
 	}
+}
+
+// TodayTarget is today's weekday average scaled by what it would take to close
+// the gap if every remaining day pulled the same weight.
+func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
+	// Monday 2026-07-27: five days left in July, all priced at R$1.000,00.
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// R$7.500,00 still to find over five days worth R$5.000,00 at the usual
+	// rhythm: every day has to bring 1,5× what it normally does.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if !got.Valid {
+		t.Fatalf("TodayTarget = %+v, want a target on an ordinary Monday", got)
+	}
+	if got.Weekday != "Seg" {
+		t.Errorf("Weekday = %q, want the label for the day being asked about", got.Weekday)
+	}
+	if got.Historical != 100000 {
+		t.Errorf("Historical = %d, want Monday's average (100000)", got.Historical)
+	}
+	if got.Factor != 1.5 {
+		t.Errorf("Factor = %v, want 1.5", got.Factor)
+	}
+	if got.Target != 150000 {
+		t.Errorf("Target = %d, want the average at 1,5× (150000)", got.Target)
+	}
+	if got.Delta != 50000 {
+		t.Errorf("Delta = %d, want the stretch over an ordinary Monday (50000)", got.Delta)
+	}
+	if got.Status != PaceAbove {
+		t.Errorf("Status = %q, want %q", got.Status, PaceAbove)
+	}
+}
+
+// The share is weighted by the weekday, not spread flat: the whole difference
+// from NeededPerDay, which would ask a Saturday for as much as a Monday.
+func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
+	// Saturday 2026-07-25 and Monday 2026-07-27, against the same rates.
+	rates := ratesFor(0, 200000, 200000, 200000, 200000, 200000, 100000)
+	goals := func(remaining int) GoalProgress {
+		return GoalProgress{RevenueTarget: 2000000, RevenueActual: 0, DaysTotal: 31, DaysRemaining: remaining}
+	}
+
+	sat := buildProjection(rates, goals(7), at12(t, "2026-07-25"), clock(t, "2026-07", "2026-07-25"), 0).TodayTarget
+	mon := buildProjection(rates, goals(5), at12(t, "2026-07-27"), clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if sat.Historical != 100000 || mon.Historical != 200000 {
+		t.Fatalf("Historical: Sat = %d, Mon = %d — want the weekday averages", sat.Historical, mon.Historical)
+	}
+	if sat.Target >= mon.Target {
+		t.Errorf("Sat target = %d, Mon target = %d, want Saturday asked for less", sat.Target, mon.Target)
+	}
+}
+
+// A day already half traded must not deflate its own target: the historical
+// average it is compared against is a whole day's takings.
+func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+
+	// Same morning, told twice: nothing sold yet, then R$1.000,00 already
+	// through the till and folded into Actual.
+	opening := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+	midday := GoalProgress{RevenueTarget: 1000000, RevenueActual: 350000, DaysTotal: 31, DaysRemaining: 5}
+
+	before := buildProjection(flat, opening, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	after := buildProjection(flat, midday, now, clock(t, "2026-07", "2026-07-27"), 100000).TodayTarget
+
+	if before.Target != after.Target || before.Factor != after.Factor {
+		t.Errorf("target moved through the day: %d (×%v) then %d (×%v), want the same whole-day ask",
+			before.Target, before.Factor, after.Target, after.Factor)
+	}
+}
+
+// Below the average is a real answer, not an absent one: a pharmacy running
+// ahead of its goal can afford a lighter day.
+func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// R$2.500,00 left over five days worth R$5.000,00 — half an ordinary day
+	// each is enough.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 750000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+
+	if !got.Valid {
+		t.Fatalf("TodayTarget = %+v, want a target — a lighter day is still a day", got)
+	}
+	if got.Delta >= 0 {
+		t.Errorf("Delta = %d, want a negative stretch when the month is ahead", got.Delta)
+	}
+	if got.Status != PaceBelow {
+		t.Errorf("Status = %q, want %q", got.Status, PaceBelow)
+	}
+}
+
+// The cases with no honest answer, each for its own reason.
+func TestTodayTargetIsInvalidWithoutSomethingToStandOn(t *testing.T) {
+	now := at12(t, "2026-07-27")
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+
+	t.Run("no window to price the days from", func(t *testing.T) {
+		got := buildProjection(dailyRates{}, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none without a basis", got)
+		}
+	})
+
+	t.Run("a weekday the pharmacy does not trade", func(t *testing.T) {
+		// Sunday 2026-07-26, priced at nothing: there is no usual rhythm to
+		// scale, and asking for a multiple of zero is not an answer.
+		closedSundays := ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000)
+		got := buildProjection(closedSundays, goals, at12(t, "2026-07-26"), clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none on a day with no history", got)
+		}
+	})
+
+	t.Run("the goal is already beaten", func(t *testing.T) {
+		beaten := GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5}
+		got := buildProjection(flat, beaten, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none once the target is met", got)
+		}
+	})
+
+	t.Run("a closed month", func(t *testing.T) {
+		got := buildProjection(flat, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0).TodayTarget
+		if got.Valid {
+			t.Errorf("TodayTarget = %+v, want none for a month with no days left", got)
+		}
+	})
 }
 
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
@@ -947,28 +1142,59 @@ func TestProjectionRatesDoNotLurchOnOneMoreTradingDay(t *testing.T) {
 }
 
 // The weekday card is a factual reading of the analysed month — its empty state
-// says "neste mês" — so it must not quietly start showing figures from weeks
-// the user is not looking at. Only the projection widened its window.
-func TestWeekdayStatsStayAboutTheAnalysedMonth(t *testing.T) {
+// The weekday card now uses an 8-week trailing window. Entries outside the
+// window are excluded; entries inside the window (even from other months) count
+// with Gaussian weighting. This test verifies the window boundary is respected.
+func TestWeekdayStatsUseTrailingWindow(t *testing.T) {
 	entries := []domain.FinancialEntry{
-		// A Wednesday in *July*, on a day number that falls inside August's
-		// finished days. Filtering on the day number alone let this through into
-		// August's card — and a test built on a later July date passed without
-		// exercising the rule at all.
+		// A Wednesday in July, outside the 8-week window for August 3:
+		// window = June 26 – Aug 2. July 1 IS inside this window (June 26 <= July 1 <= Aug 2).
 		sale(t, "2026-07-01", 500000),
 		sale(t, "2026-08-01", 100000), // a Saturday, this month
 	}
+	// Window for August 3: from June 26 to Aug 2.
+	from := day(t, "2026-06-26")
+	to := day(t, "2026-08-02")
 
-	stats := weekdayStats(entries, at12(t, "2026-08-03"), clock(t, "2026-08", "2026-08-03"))
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-08-03"))
 
-	if stats[3].Count != 0 || stats[3].Avg != 0 {
-		t.Errorf("Wednesday = %+v, want nothing — that sale belongs to July", stats[3])
+	// July 1 (Wednesday) is inside the window, so Wednesday should have data.
+	if stats[3].Count != 1 {
+		t.Errorf("Wednesday Count = %d, want 1 (July 1 is inside the 8-week window)", stats[3].Count)
 	}
-	if stats[1].Count != 0 {
-		t.Errorf("Monday = %+v, want nothing — August has not traded a Monday yet", stats[1])
+	if stats[3].Avg != 500000 {
+		t.Errorf("Wednesday Avg = %d, want 500000", stats[3].Avg)
 	}
+	// August 1 (Saturday) is inside the window.
 	if stats[6].Avg != 100000 {
 		t.Errorf("Saturday = %d, want August's own figure", stats[6].Avg)
+	}
+}
+
+// An entry far outside the window must not leak into the card.
+func TestWeekdayStatsExcludeEntriesOutsideWindow(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-05-01", 99999), // far outside the window for July
+		sale(t, "2026-07-06", 10000), // a Monday, inside the window
+	}
+	// Window for July 15: from June 10 to July 14.
+	from := day(t, "2026-06-10")
+	to := day(t, "2026-07-14")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+
+	// Monday should only have the July 6 entry, not the May 1 one.
+	monday := stats[1]
+	if monday.Count != 1 {
+		t.Errorf("Monday Count = %d, want 1 (May entry outside window)", monday.Count)
+	}
+	if monday.Avg != 10000 {
+		t.Errorf("Monday Avg = %d, want 10000", monday.Avg)
+	}
+	// Wednesday (May 1) must not appear.
+	wednesday := stats[3]
+	if wednesday.Count != 0 || wednesday.Avg != 0 {
+		t.Errorf("Wednesday = %+v, want nothing — May 1 is outside the window", wednesday)
 	}
 }
 
@@ -1176,12 +1402,10 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	}
 }
 
-// The analysis page shows the per-day ask three times — in the health
-// insight, in the recommendation and on the projection card — and the bot
-// reads it back a fourth. They were computed separately and disagreed: the
-// card divided the shortfall left *after* its own projection, everyone else
-// divided the shortfall from real income, and the page told the user two
-// different daily targets at once.
+// The analysis page shows the per-day ask in the health insight, on the
+// projection card, and the bot reads it back via the tool payload. The
+// recommendation is now coverage-based and does not repeat the per-day ask —
+// it interprets the projection as a verdict instead.
 func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	now := at12(t, "2026-07-15")
 	entries := []domain.FinancialEntry{
@@ -1211,9 +1435,6 @@ func TestBuildQuotesOnePerDayAskEverywhere(t *testing.T) {
 	}
 	if !strings.Contains(insight, asked) {
 		t.Errorf("health insight = %q, want it to quote %s", insight, asked)
-	}
-	if len(got.Recommendations) == 0 || !strings.Contains(got.Recommendations[0].Message, asked) {
-		t.Errorf("recommendation = %+v, want it to quote %s", got.Recommendations, asked)
 	}
 	if want := reais(got.Projection.NeededPerDay); got.ToolPayload()["necessario_por_dia_para_bater_a_meta"] != want {
 		t.Errorf("tool payload per-day ask = %v, want %v", got.ToolPayload()["necessario_por_dia_para_bater_a_meta"], want)
@@ -1273,10 +1494,10 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 			},
 		},
 		Recommendations: []Recommendation{
-			// recommendations[0] is always the weekly-pace one when a goal is
-			// being paced, and its message is the per-day ask AheadLines prints
-			// itself. The digest takes the next distinct point instead.
-			{Title: "Ritmo estável mas não é suficiente", Message: "Precisa acelerar."},
+			// recommendations[0] is the projection verdict, and is rendered.
+			// The digest used to skip it back when it was the weekly-pace one,
+			// whose message was the per-day ask AheadLines prints itself.
+			{Title: "Projeção abaixo da meta", Message: "O ritmo atual deve fechar o mês em torno de R$ 9.000,00."},
 			{Title: "Receita caiu", Message: "Aja rapidamente."},
 		},
 	}
@@ -1301,7 +1522,7 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	ahead := analysis.AheadLines()
 	wantAhead := []string{
 		"Faltam R$ 2.000,00 para a meta: R$ 200,00/dia nos 10 dias que restam (hoje incluído).",
-		"Receita caiu: Aja rapidamente.",
+		"Projeção abaixo da meta: O ritmo atual deve fechar o mês em torno de R$ 9.000,00.",
 	}
 	if len(ahead) != len(wantAhead) {
 		t.Fatalf("ahead = %v, want %v", ahead, wantAhead)
@@ -1328,7 +1549,7 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 		},
 		Projection: Projection{Target: 3100000, Actual: 0, DaysRemaining: 31, NeededPerDay: 100000},
 		Recommendations: []Recommendation{
-			{Title: "Ritmo estável mas não é suficiente", Message: "Precisa acelerar."},
+			{Title: "Projeção muito abaixo da meta", Message: "No ritmo atual o mês deve fechar em torno de R$ 0,00."},
 			{Title: "Saldo fica negativo em breve", Message: "Reduza despesas."},
 		},
 	}
@@ -1349,9 +1570,9 @@ func TestDigestSaysNothingAboutAMonthWithNoFinishedDay(t *testing.T) {
 	if len(ahead) != 2 || !strings.Contains(ahead[0], "R$ 1.000,00/dia") {
 		t.Errorf("AheadLines = %v, want the per-day ask and the recommendation", ahead)
 	}
-	// The per-day ask is printed once, not twice: the weekly-pace
-	// recommendation says the same thing and is dropped in its favour.
-	if strings.Contains(ahead[1], "acelerar") {
+	// The per-day ask is printed once, not twice: the verdict beside it quotes
+	// where the month lands, not what each day has to bring.
+	if strings.Contains(ahead[1], "/dia") {
 		t.Errorf("AheadLines repeats the per-day ask: %v", ahead)
 	}
 }
@@ -1895,5 +2116,220 @@ func TestCashInRatesReadTheDayTheMoneyLands(t *testing.T) {
 	}
 	if want := int64(200000); rates.avg[int(time.Friday)] != want {
 		t.Errorf("Friday = %d, want both receipts averaged (%d)", rates.avg[int(time.Friday)], want)
+	}
+}
+
+// --- Gaussian weighting tests ---
+
+func TestGaussianWeightDistribution(t *testing.T) {
+	// Offset 0 must be exactly 1.0.
+	if w := gaussianWeight(0); w != 1.0 {
+		t.Errorf("weight(0) = %f, want 1.0", w)
+	}
+	// Offset 2 (one σ): exp(-0.5) ≈ 0.607.
+	if w := gaussianWeight(2); math.Abs(w-0.60653) > 0.001 {
+		t.Errorf("weight(2) = %f, want ≈0.607", w)
+	}
+	// Offset 4 (two σ): exp(-2) ≈ 0.135.
+	if w := gaussianWeight(4); math.Abs(w-0.13534) > 0.001 {
+		t.Errorf("weight(4) = %f, want ≈0.135", w)
+	}
+	// Offset 7 (edge): very small but non-zero.
+	if w := gaussianWeight(7); w > 0.05 {
+		t.Errorf("weight(7) = %f, want < 0.05", w)
+	}
+	// Monotonically decreasing.
+	for i := 1; i <= 7; i++ {
+		if gaussianWeight(i) >= gaussianWeight(i-1) {
+			t.Errorf("weight(%d) = %f >= weight(%d) = %f, want strictly decreasing",
+				i, gaussianWeight(i), i-1, gaussianWeight(i-1))
+		}
+	}
+}
+
+// A constant series (100 every week) must produce avg = 100 regardless of
+// the Gaussian weights. This proves the algorithm does not distort stable data.
+func TestWeekdayStatsWeightedConstantSeries(t *testing.T) {
+	// 8 consecutive Mondays, each with R$100.
+	var entries []domain.FinancialEntry
+	for i := 0; i < 8; i++ {
+		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7) // Mon Jun 1, Jun 8, ...
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000, // R$100.00
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	// Window covers all 8 Mondays.
+	from := day(t, "2026-06-01")
+	to := day(t, "2026-07-26")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-27")) // a Monday
+
+	monday := stats[1]
+	if monday.Count != 8 {
+		t.Errorf("Count = %d, want 8 distinct Mondays", monday.Count)
+	}
+	if monday.Avg != 10000 {
+		t.Errorf("Avg = %d, want 10000 (constant series must not be distorted)", monday.Avg)
+	}
+}
+
+// An old outlier (week 7) must barely move the average, while recent normal
+// values dominate. This is the core reason for Gaussian weighting.
+func TestWeekdayStatsWeightedOutlierSuppression(t *testing.T) {
+	// 7 recent Mondays at R$100, 1 old Monday (week 7) at R$5000.
+	var entries []domain.FinancialEntry
+	// The recent normal series: June 1 through July 6 (Mondays).
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	// The old outlier: May 25 (7 weeks before July 13, week 7).
+	entries = append(entries, domain.FinancialEntry{
+		TransactionDate: day(t, "2026-05-25"), // a Monday
+		Amount:          500000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "venda_balcao",
+		Origin:          domain.OriginVenda,
+	})
+
+	// Window ends at July 13 so weekStart(July 13) = July 13 (week 0).
+	// Loop produces: Jun 1(6), Jun 8(5), Jun 15(4), Jun 22(3), Jun 29(2),
+	// Jul 6(1), Jul 13(0) = 7 recent + May 18(7) = 8 total.
+	from := day(t, "2026-05-25")
+	to := day(t, "2026-07-13")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-14")) // a Tuesday
+
+	monday := stats[1]
+	if monday.Count != 8 {
+		t.Errorf("Count = %d, want 8", monday.Count)
+	}
+	// Simple average would be (7*10000 + 500000) / 8 = 71250.
+	// Gaussian average must be much closer to 10000 because the outlier is old
+	// (week 7, weight ≈ 0.01) while all normal entries are recent (weeks 0–6).
+	if monday.Avg > 20000 {
+		t.Errorf("Avg = %d, want << 20000 — old outlier must be suppressed", monday.Avg)
+	}
+	if monday.Avg < 10000 {
+		t.Errorf("Avg = %d, want >= 10000 — the outlier still contributes something", monday.Avg)
+	}
+}
+
+// A recent outlier must dominate the average — the algorithm is responsive to
+// trend changes, not frozen in the past.
+func TestWeekdayStatsWeightedRecencyBias(t *testing.T) {
+	// 7 old Mondays at R$100, 1 recent Monday at R$5000.
+	var entries []domain.FinancialEntry
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	entries = append(entries, domain.FinancialEntry{
+		TransactionDate: day(t, "2026-07-06"), // a Monday (most recent)
+		Amount:          500000,
+		Type:            domain.EntryTypeIncome,
+		Category:        "venda_balcao",
+		Origin:          domain.OriginVenda,
+	})
+
+	from := day(t, "2026-05-18")
+	to := day(t, "2026-07-12")
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-13"))
+
+	monday := stats[1]
+	// The recent outlier (500000 at offset 0, w=1.0) must pull the average
+	// well above the old series (10000 at offsets 1–7).
+	if monday.Avg < 50000 {
+		t.Errorf("Avg = %d, want >> 50000 — recent outlier must dominate", monday.Avg)
+	}
+}
+
+func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
+	// No data → sem_base.
+	empty := weekdayStatsWeighted(nil, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if empty[1].Basis != ProjectionNoBasis {
+		t.Errorf("empty Monday basis = %q, want %q", empty[1].Basis, ProjectionNoBasis)
+	}
+
+	// 3 distinct weeks → parcial.
+	var few []domain.FinancialEntry
+	for i := 0; i < 3; i++ {
+		date := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		few = append(few, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	fewStats := weekdayStatsWeighted(few, day(t, "2026-06-15"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if fewStats[1].Basis != ProjectionPartial {
+		t.Errorf("3-week Monday basis = %q, want %q", fewStats[1].Basis, ProjectionPartial)
+	}
+
+	// 7 distinct weeks → janela.
+	var many []domain.FinancialEntry
+	for i := 0; i < 7; i++ {
+		date := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		many = append(many, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(date),
+			Amount:          10000,
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+	manyStats := weekdayStatsWeighted(many, day(t, "2026-05-18"), day(t, "2026-07-14"), at12(t, "2026-07-15"))
+	if manyStats[1].Basis != ProjectionFromWindow {
+		t.Errorf("7-week Monday basis = %q, want %q", manyStats[1].Basis, ProjectionFromWindow)
+	}
+}
+
+func TestWeekdayStatsWeightedIsToday(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-06", 10000), // a Monday
+	}
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+
+	// On a Wednesday, Monday is not today.
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	if stats[1].IsToday {
+		t.Error("Monday should not be today on a Wednesday")
+	}
+	if !stats[3].IsToday {
+		t.Error("Wednesday should be flagged as today")
+	}
+}
+
+func TestWeekdayStatsWeightedExpensesExcluded(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-06", 10000),
+		expense(t, "2026-07-06", "aluguel", 90000),
+	}
+	from := day(t, "2026-06-15")
+	to := day(t, "2026-07-14")
+
+	stats := weekdayStatsWeighted(entries, from, to, at12(t, "2026-07-15"))
+	monday := stats[1]
+	if monday.Avg != 10000 {
+		t.Errorf("Avg = %d, want 10000 (expense must not count)", monday.Avg)
 	}
 }

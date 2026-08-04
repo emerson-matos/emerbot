@@ -14,9 +14,10 @@ const (
 
 // buildRecommendations turns the month's state into actionable next steps.
 //
-// The first recommendation is always the weekly one when a goal exists: the
-// dashboard pulls recommendations[0] out to caption the week-comparison card,
-// and the notifier leads its digest with it.
+// Nothing here is positional: consumers render the list whole. They used to
+// drop recommendations[0], which repeated the per-day ask they had just
+// printed, and went on dropping it after the message underneath changed.
+//
 // window is the comparison the trends were measured over; its suffix is
 // repeated in every month-over-month message, because a percentage from half a
 // month presented as a whole one is how "receita caiu 100%" reached a WhatsApp.
@@ -24,7 +25,7 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 	recs := []Recommendation{}
 
 	if projection.Pacing() {
-		recs = append(recs, weeklyPaceRecommendation(week, projection))
+		recs = append(recs, projectionRecommendation(projection))
 	}
 
 	if hasBaseline(trends.Despesa) && trends.Despesa.Direction == TrendUp && trends.Despesa.Change > expenseSpikePct {
@@ -76,74 +77,42 @@ func buildRecommendations(week WeekComparison, projection Projection, trends Tre
 // alert for a pharmacy trading exactly as it had the month before.
 func hasBaseline(t MonthTrend) bool { return t.Previous > 0 }
 
-// weeklyPaceRecommendation crosses this week's pace with whether the month is
-// on track for its goal. Both halves matter on their own — a week that
-// improved but still misses the target needs a different message from one that
-// improved and closes it — so all four combinations get their own copy rather
-// than collapsing into "good" and "bad".
-func weeklyPaceRecommendation(week WeekComparison, projection Projection) Recommendation {
-	var weekPct float64
-	if week.Pace.Days > 0 && week.Pace.Previous != 0 {
-		weekPct = percentChange(week.Pace.Current, week.Pace.Previous)
-	}
-	improved := weekPct > weekPacePct
-	behind := weekPct < -weekPacePct
-
-	// The per-day ask, or an acknowledgement when the goal is already beaten
-	// (NeededPerDay is 0 once actual passes the target).
-	needed := func(ifNeeded, ifBeaten string) string {
-		if projection.NeededPerDay > 0 {
-			return fmt.Sprintf(ifNeeded, formatBRL(projection.NeededPerDay), pluralDias(projection.DaysRemaining))
-		}
-		return ifBeaten
-	}
-
-	switch {
-	case improved && projection.OnTrack:
-		return Recommendation{
-			Severity: RecSuccess,
-			Title:    "Ritmo subiu e fecha a meta",
-			Message:  "O faturamento desta semana está acima da anterior. Mantenha esse ritmo para sustentar a projeção do mês.",
-		}
-	case improved:
-		return Recommendation{
-			Severity: RecWarning,
-			Title:    "Ritmo subiu mas ainda falta",
-			Message: needed(
-				"Melhorou vs semana passada, mas precisa de %s/dia nos próximos %s para bater a meta.",
-				"Melhorou vs semana passada. Continue nesse ritmo.",
-			),
-		}
-	case behind && projection.OnTrack:
-		return Recommendation{
-			Severity: RecWarning,
-			Title:    "Caiu mas a projeção fecha",
-			Message:  "O faturamento desta semana está abaixo da anterior, mas a projeção do mês ainda está dentro da meta. Recupere o ritmo.",
-		}
-	case behind:
-		return Recommendation{
-			Severity: RecDanger,
-			Title:    "Faturamento caiu e não bate a meta",
-			Message: needed(
-				"Precisa de %s/dia nos próximos %s para atingir a meta do mês.",
-				"Faturamento caiu mas já superou a meta do mês.",
-			),
-		}
-	case projection.OnTrack:
-		return Recommendation{
-			Severity: RecSuccess,
-			Title:    "Ritmo estável e dentro da projeção",
-			Message:  "O desempenho está consistente com a semana passada. Mantenha para preservar a projeção do mês.",
-		}
+// projectionRecommendation words the Status the projection already carries, so
+// the title cannot disagree with the colour the card draws from the same field.
+func projectionRecommendation(projection Projection) Recommendation {
+	var severity RecommendationSeverity
+	var title string
+	switch projection.Status {
+	case ProjNoTarget:
+		return Recommendation{}
+	case ProjSuccess:
+		severity, title = RecSuccess, "Ritmo suficiente"
+	case ProjWarning:
+		severity, title = RecWarning, "Projeção abaixo da meta"
 	default:
-		return Recommendation{
-			Severity: RecWarning,
-			Title:    "Ritmo estável mas não é suficiente",
-			Message: needed(
-				"Precisa acelerar para %s/dia nos próximos %s para bater a meta.",
-				"Ritmo estável. Continue para preservar a projeção.",
-			),
+		severity, title = RecDanger, "Projeção muito abaixo da meta"
+	}
+
+	return Recommendation{Severity: severity, Title: title, Message: projectionMessage(projection)}
+}
+
+// projectionMessage switches on Status, not on coverage, so the sentence
+// cannot end up graded differently from the title above it. The one extra cut
+// separates a goal needing a hard acceleration from one out of reach.
+func projectionMessage(projection Projection) string {
+	switch projection.Status {
+	case ProjSuccess:
+		return "O ritmo atual deve fechar o mês muito próximo da meta. Manter o desempenho nas próximas semanas deve ser suficiente para alcançá-la."
+	case ProjWarning:
+		return fmt.Sprintf("O ritmo atual deve fechar o mês em torno de %s. Será necessário aumentar as vendas nas próximas semanas para alcançar %s.",
+			formatBRL(projection.Projected), formatBRL(projection.Target))
+	default:
+		if projection.Coverage >= coverageOutOfReach {
+			return fmt.Sprintf("No ritmo atual o mês deve fechar em torno de %s. Será preciso uma aceleração consistente para alcançar %s.",
+				formatBRL(projection.Projected), formatBRL(projection.Target))
 		}
+		return fmt.Sprintf("No ritmo atual o mês deve fechar em torno de %s. A meta de %s exige um desempenho muito acima do histórico recente.",
+			formatBRL(projection.Projected), formatBRL(projection.Target))
 	}
 }
 

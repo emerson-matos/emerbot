@@ -144,15 +144,17 @@ type Period struct {
 	InProgress bool `json:"inProgress"`
 }
 
-// WeekdayStat is the counter-sales average for one day of the week across the
-// analysed month. Day is 0=Sunday, matching JavaScript's getDay().
+// WeekdayStat is the Gaussian-weighted average faturamento for one day of the
+// week over the trailing 8-week window. Day is 0=Sunday, matching JavaScript's
+// getDay(). Count is the number of distinct weeks that saw revenue (not the
+// number of entries), and Basis qualifies how much data the average stands on.
 type WeekdayStat struct {
-	Day     int    `json:"day"`
-	Label   string `json:"label"`
-	Avg     int64  `json:"avg"`
-	Total   int64  `json:"total"`
-	Count   int    `json:"count"`
-	IsToday bool   `json:"isToday"`
+	Day     int             `json:"day"`
+	Label   string          `json:"label"`
+	Avg     int64           `json:"avg"`
+	Count   int             `json:"count"`
+	IsToday bool            `json:"isToday"`
+	Basis   ProjectionBasis `json:"basis"`
 }
 
 // DayHighlight names a single standout day. Date is "YYYY-MM-DD", or
@@ -288,6 +290,51 @@ const (
 	ProjectionClosed ProjectionBasis = "fechado"
 )
 
+// TodayTargetScale says how today's target compares to its historical weekday
+// average. The backend decides this so the frontend renders a colour without
+// deriving thresholds from the amounts.
+type TodayTargetScale string
+
+const (
+	// PaceBelow means today's target is below the historical average — the
+	// pharmacy is ahead and can afford a lighter day.
+	PaceBelow TodayTargetScale = "below"
+	// PaceOnTrack means the target is within ±5% of the historical average —
+	// neither a stretch nor a slack day.
+	PaceOnTrack TodayTargetScale = "on_track"
+	// PaceAbove means today's target exceeds the historical average — the
+	// pharmacy needs to sell more than it usually does on this weekday.
+	PaceAbove TodayTargetScale = "above"
+)
+
+// TodayTarget is the recommended revenue target for the current day.
+//
+// Rather than evenly distributing the remaining goal across the calendar,
+// it allocates today's share proportionally to the expected weekday demand.
+// This keeps Saturday targets naturally lower than Monday targets while
+// remaining consistent with the monthly projection model. A factor of 1.08
+// means the pharmacy needs to sell 8% above its usual Monday rhythm to close
+// the gap; 0.92 means it can sell 8% below and still be fine.
+//
+// Internally this is computed using Gaussian-smoothed weekday averages.
+//
+// Unlike NeededPerDay, it accounts for weekday seasonality. NeededPerDay is
+// the arithmetic average per day, useful for summaries and chatbot responses
+// where the question is "how much per day on average?" rather than "how much
+// should I sell today?".
+type TodayTarget struct {
+	// Valid is false when there is no calculable daily target — a closed month,
+	// no historical basis, or the day of the week the pharmacy does not open.
+	Valid        bool             `json:"valid"`
+	Weekday      string           `json:"weekday"`
+	Historical   int64            `json:"historical"`
+	Target       int64            `json:"target"`
+	Delta        int64            `json:"delta"`
+	DeltaPercent float64          `json:"deltaPercent"`
+	Factor       float64          `json:"factor"`
+	Status       TodayTargetScale `json:"status"`
+}
+
 // Projection is where the month lands and what it would take to close the gap
 // to the income goal. Every amount is faturamento (see isFaturamento),
 // matching how the target is set.
@@ -308,11 +355,24 @@ type Projection struct {
 	DaysRemaining int  `json:"daysRemaining"`
 	// NeededPerDay is what each day left has to bring, measured from Actual, to
 	// reach Target. 0 when the target is already met or there is nothing to
-	// pace against.
+	// pace against. It is the arithmetic average — unlike TodayTarget, it
+	// ignores weekday seasonality and is useful for summaries and chatbot
+	// responses where the question is "how much per day on average?".
 	NeededPerDay int64 `json:"neededPerDay"`
 	// Basis is how much trading the projection was built from. Consumers render
 	// it as a qualifier; they must not re-derive one from the amounts.
 	Basis ProjectionBasis `json:"basis"`
+	// Coverage is Projected over Target: 1.10 overshoots by 10%, 0.80 lands 20%
+	// short. 0 when there is no target, where Status is ProjNoTarget. Status is
+	// the verdict drawn from it. Consumers render both; like Basis, they must
+	// not re-derive one from the amounts — a percentage rounded in the browser
+	// beside a colour read off OnTrack put "97% da meta" in red under a green
+	// "Ritmo suficiente".
+	Coverage float64          `json:"coverage"`
+	Status   ProjectionStatus `json:"status"`
+	// TodayTarget scales today's historical weekday average by the factor that
+	// would close the remaining gap if applied to every remaining day uniformly.
+	TodayTarget TodayTarget `json:"todayTarget"`
 }
 
 // Pacing reports whether there is anything to pace against: a target, and days
@@ -320,6 +380,51 @@ type Projection struct {
 // per-day ask to make.
 func (p Projection) Pacing() bool {
 	return p.Target > 0 && p.DaysRemaining > 0
+}
+
+// ProjectionStatus is the qualitative verdict on whether the current pace will
+// close the gap to the income goal.
+type ProjectionStatus string
+
+const (
+	// ProjNoTarget is the zero value: there is no goal to cover, so there is no
+	// verdict to give. A month with no target is not a month falling short of
+	// one, and must not render as danger.
+	ProjNoTarget ProjectionStatus = ""
+	// ProjSuccess means the projection reaches or exceeds the target.
+	ProjSuccess ProjectionStatus = "success"
+	// ProjWarning means the projection falls short but remains within reach.
+	ProjWarning ProjectionStatus = "warning"
+	// ProjDanger means the projection falls far short of the target.
+	ProjDanger ProjectionStatus = "danger"
+)
+
+// The coverage cuts, in one place: the card's colour, the recommendation's
+// title, its wording and the digest all come off these.
+const (
+	// coverageOnTarget — the last 5% is inside the noise of an eight-week
+	// average, and calling it a shortfall asks a pharmacist to act on rounding.
+	coverageOnTarget = 0.95
+	// coverageWithinReach — above this the days left can still absorb the
+	// shortfall.
+	coverageWithinReach = 0.80
+	// coverageOutOfReach — below this no plausible acceleration closes the gap,
+	// and the copy says so instead of asking for one.
+	coverageOutOfReach = 0.50
+)
+
+// projectionStatus maps coverage to the verdict. The thresholds are
+// concentrated here so every consumer — dashboard, WhatsApp, health insights —
+// agrees on the same reading.
+func projectionStatus(coverage float64) ProjectionStatus {
+	switch {
+	case coverage >= coverageOnTarget:
+		return ProjSuccess
+	case coverage >= coverageWithinReach:
+		return ProjWarning
+	default:
+		return ProjDanger
+	}
 }
 
 // RecommendationSeverity drives the recommendation's colour.
@@ -448,6 +553,10 @@ type KPIs struct {
 // both of these directly, and this is exactly the reading it was getting wrong:
 // booking the month's rent moved kpis.despesa with nothing having left the
 // account, and the digest reported it as the month's spending having risen.
+// Also in 6: recommendations[0] is the projection verdict rather than the
+// weekly-pace one, and consumers read the list whole instead of skipping it.
+// Added projection.coverage, projection.status and projection.todayTarget, all
+// verdicts the consumers used to derive for themselves or not have at all.
 const SchemaVersion = 6
 
 // Analysis is the full picture of one month — the payload of

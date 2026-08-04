@@ -70,6 +70,8 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 	// The verdict stands on a closed month too — it either reached its target
 	// or it did not. Only the per-day ask needs days left to spread over.
 	projection.OnTrack = projection.Projected >= projection.Target
+	projection.Coverage = float64(projection.Projected) / float64(projection.Target)
+	projection.Status = projectionStatus(projection.Coverage)
 	if gap := projection.Target - projection.Projected; gap > 0 {
 		projection.Gap = gap
 	}
@@ -78,5 +80,52 @@ func buildProjection(rates dailyRates, goals GoalProgress, now time.Time, clock 
 			projection.NeededPerDay = roundToInt64(float64(missing) / float64(projection.DaysRemaining))
 		}
 	}
+
+	// TodayTarget scales today's historical weekday average by the factor
+	// computed from the ratio between the remaining revenue target and the sum
+	// of historical averages for all remaining calendar days. When the target
+	// is already met the factor is zero and Valid stays false — the card is not
+	// shown because the question "how much do I need to sell today?" no longer
+	// applies.
+	if clock.inProgress && basis != ProjectionNoBasis {
+		todayWd := int(time.Date(now.Year(), now.Month(), clock.today, 12, 0, 0, 0, now.Location()).Weekday())
+		todayAvg := rates.avg[todayWd]
+
+		var totalHistAvg int64
+		for day := clock.today; day <= clock.total; day++ {
+			d := time.Date(now.Year(), now.Month(), day, 12, 0, 0, 0, now.Location())
+			totalHistAvg += rates.avg[int(d.Weekday())]
+		}
+
+		// Measured from what the till held when the day opened: totalHistAvg
+		// prices today at a whole day's average, so a numerator net of the
+		// morning shrank the target hour by hour against a whole-day Histórico.
+		missing := projection.Target - (projection.Actual - todayRevenue)
+		if totalHistAvg > 0 && todayAvg > 0 && missing > 0 {
+			factor := float64(missing) / float64(totalHistAvg)
+			todayTarget := roundToInt64(float64(todayAvg) * factor)
+			delta := todayTarget - todayAvg
+
+			status := PaceOnTrack
+			pct := float64(delta) / float64(todayAvg)
+			if pct > 0.05 {
+				status = PaceAbove
+			} else if pct < -0.05 {
+				status = PaceBelow
+			}
+
+			projection.TodayTarget = TodayTarget{
+				Valid:        true,
+				Weekday:      weekdayLabels[todayWd],
+				Historical:   todayAvg,
+				Target:       todayTarget,
+				Delta:        delta,
+				DeltaPercent: pct,
+				Factor:       factor,
+				Status:       status,
+			}
+		}
+	}
+
 	return projection
 }

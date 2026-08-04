@@ -70,7 +70,8 @@ func (a Analysis) DigestLines() []string {
 	// whatever is actually wrong with the month comes first.
 	if a.Period.InProgress && a.Period.ComparableThroughDay == 0 {
 		lines = append(lines, fmt.Sprintf(
-			"Comparação com o mês passado a partir do dia %d — a primeira semana ainda não fechou.", daysInWeek+1))
+			"Comparação com o mês passado a partir do dia %d — a primeira semana ainda não fechou.", daysInWeek+1,
+		))
 	}
 
 	return lines
@@ -89,21 +90,17 @@ func (a Analysis) AheadLines() []string {
 	}
 
 	var lines []string
-	recs := a.Recommendations
 	if a.Projection.Pacing() && a.Projection.NeededPerDay > 0 {
 		lines = append(lines, fmt.Sprintf("Faltam %s para a meta: %s/dia nos %s que restam (hoje incluído).",
 			formatBRL(a.Projection.Target-a.Projection.Actual),
 			formatBRL(a.Projection.NeededPerDay),
 			pluralDias(a.Projection.DaysRemaining)))
-		// Pacing() means recommendations[0] is the weekly-pace one (see
-		// buildRecommendations), and its message is the same per-day ask just
-		// printed. Whatever comes after it is a different point.
-		if len(recs) > 0 {
-			recs = recs[1:]
-		}
 	}
-	if len(recs) > 0 {
-		r := recs[0]
+	// From the top. This used to skip recommendations[0] whenever a per-day ask
+	// had been printed, because the weekly-pace one repeated it word for word —
+	// and kept skipping it once the projection verdict took its place.
+	if len(a.Recommendations) > 0 {
+		r := a.Recommendations[0]
 		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
 	}
 	return lines
@@ -192,10 +189,11 @@ func (a Analysis) ToolPayload() map[string]any {
 			// the model has nothing to misread as "zero days left".
 			"dias_ate_saldo_negativo": nil,
 		},
-		"recomendacoes":    recommendationTexts(a.Recommendations),
-		"maiores_despesas": topExpenses(a.ExpenseComposition),
-		"melhor_dia":       dayText(a.Highlights.BestIncome),
-		"pior_dia":         dayText(a.Highlights.WorstIncome),
+		"recomendacoes":           recommendationTexts(a.Recommendations),
+		"maiores_despesas":        topExpenses(a.ExpenseComposition),
+		"melhor_dia":              dayText(a.Highlights.BestIncome),
+		"pior_dia":                dayText(a.Highlights.WorstIncome),
+		"media_por_dia_da_semana": weekdayToolPayload(a.Weekdays),
 	}
 
 	// Spelled out rather than left for the model to infer from
@@ -280,4 +278,21 @@ func dayText(h DayHighlight) string {
 // reais converts centavos for the model's benefit — see ToolPayload.
 func reais(centavos int64) float64 {
 	return float64(centavos) / 100
+}
+
+// weekdayToolPayload renders the per-weekday averages for the AI bot. The model
+// reads these numbers aloud, so they are in reais and carry enough context
+// (semanas, base) for the bot to qualify the figure rather than stating it as
+// an absolute truth.
+func weekdayToolPayload(days []WeekdayStat) []map[string]any {
+	out := make([]map[string]any, 0, len(days))
+	for _, d := range days {
+		out = append(out, map[string]any{
+			"dia":     weekdayFullLabels[d.Day],
+			"media":   reais(d.Avg),
+			"semanas": d.Count,
+			"base":    string(d.Basis),
+		})
+	}
+	return out
 }

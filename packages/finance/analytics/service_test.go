@@ -114,9 +114,13 @@ func TestAssembleProjectsTheStartOfAMonthFromEarlierWeeks(t *testing.T) {
 	if got.Projection.Basis != ProjectionFromWindow {
 		t.Errorf("Basis = %q, want an ordinary projection", got.Projection.Basis)
 	}
-	// The card, meanwhile, still reports August: it has not traded a Monday.
-	if got.Weekdays[1].Count != 0 {
-		t.Errorf("Weekdays[Monday] = %+v, want August's own (empty) reading", got.Weekdays[1])
+	// The card now uses the 8-week trailing window, so August's weekdays are
+	// priced from July's data. Monday has 8 weeks of data in the window.
+	if got.Weekdays[1].Count == 0 {
+		t.Errorf("Weekdays[Monday].Count = 0, want window-based data from July")
+	}
+	if got.Weekdays[1].Basis != ProjectionFromWindow {
+		t.Errorf("Weekdays[Monday].Basis = %q, want %q", got.Weekdays[1].Basis, ProjectionFromWindow)
 	}
 	if got.ToolPayload()["projecao_base"] != string(ProjectionFromWindow) {
 		t.Errorf("projecao_base = %v, want the basis spelled out for the bot", got.ToolPayload()["projecao_base"])
@@ -139,10 +143,9 @@ func (c *countingReader) ListEntries(ctx context.Context, userID string, filter 
 	return c.LedgerReader.ListEntries(ctx, userID, filter)
 }
 
-// A closed month has no day left to price, so buildProjection never reads the
-// rates — and the assembly must not pay for the window that builds them. Every
-// month but the current one is closed, which is most of what the dashboard asks
-// for when someone browses back through the year.
+// A closed month now also fetches the window, because the weekday card uses
+// an 8-week Gaussian-weighted average regardless of whether the month is in
+// progress. The window is cheap (a single DynamoDB Query on the sort key).
 func TestAssembleSkipsTheProjectionWindowForAClosedMonth(t *testing.T) {
 	ctx := context.Background()
 	store := &countingReader{LedgerReader: pkgfinance.NewInMemoryStore()}
@@ -151,23 +154,21 @@ func TestAssembleSkipsTheProjectionWindowForAClosedMonth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	// July and June, on both bases: four reads, neither window among them —
-	// the window is read twice for a month in progress, once per basis.
-	if len(store.ranges) != 4 {
-		t.Errorf("ranges = %v, want only the two months on both bases", store.ranges)
+	// July and June on both bases (4 reads) + the 8-week window on both bases
+	// (2 reads) = 6 total. The window is always fetched now.
+	if len(store.ranges) != 6 {
+		t.Errorf("ranges = %v, want the two months plus the window on both bases", store.ranges)
 	}
 	if closed.Projection.Basis != ProjectionClosed {
 		t.Errorf("Basis = %q, want %q — and not %q, which skipping the read would give if the label came off the rates",
 			closed.Projection.Basis, ProjectionClosed, ProjectionNoBasis)
 	}
 
-	// The month in progress still pays for it: that is the whole point.
+	// The month in progress also pays for it: same 6 reads.
 	store.ranges = nil
 	if _, err := Assemble(ctx, store, "u1", "2026-08", at12(t, "2026-08-03")); err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	// Six: the two months on both bases, plus the window on both — transaction
-	// prices the revenue projection, effective prices the cash runway.
 	if len(store.ranges) != 6 {
 		t.Errorf("ranges = %v, want the window read on both bases as well", store.ranges)
 	}

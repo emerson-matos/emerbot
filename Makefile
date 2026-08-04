@@ -120,11 +120,28 @@ run-lambda:
 # of the base compose files without duplicating recipes.
 COMPOSE_EXTRA ?=
 
+# build-if-stale: only rebuild a service image if source files changed since last build.
+# Usage: $(call build-if-stale,<service>,<files to hash...>)
+# Tags image with content hash so subsequent runs skip the build.
+define build-if-stale
+	@HASH=$$(echo "$(2)" | tr ' ' '\n' | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1); \
+	if podman image exists emerbot-$(1):$$HASH; then \
+		echo "$(1): up to date"; \
+	else \
+		echo "$(1): building..."; \
+		$(COMPOSE) build $(1); \
+		podman tag emerbot-$(1) emerbot-$(1):$$HASH; \
+	fi
+endef
+
 up:
 	$(COMPOSE) $(COMPOSE_EXTRA) up --build -d
 
 down:
 	$(COMPOSE) $(COMPOSE_EXTRA) down
+
+cleanup:
+	$(COMPOSE) $(COMPOSE_EXTRA) down -v
 
 up-infra:
 	$(COMPOSE) up --build dynamodb-local dynamodb-admin dynamodb-init
@@ -143,7 +160,7 @@ seed:
 	$(GO) run ./scripts/seed \
 		--endpoint http://localhost:8000 \
 		--table emerbot-local-financial-entries \
-		--months 3
+		--months 12
 
 # Imports the recorded PagBank scenarios into dynamodb-local so the Adquirentes
 # page has data. -rebase moves the (2024-dated) scenarios into the current month,
@@ -178,11 +195,14 @@ import-pagbank:
 	@test -n "$(DIR)" || { echo "usage: make import-pagbank DIR=<dir with EDI responses>"; exit 1; }
 	$(GO) run ./scripts/pagbank-import -dir "$(DIR)" -target "s3://$(IMPORT_BUCKET)"
 
-demo: up
+demo:
+	$(call build-if-stale,webhook,$(shell find apps/webhook packages -name '*.go' | sort | tr '\n' ' ') go.mod go.sum apps/webhook/Dockerfile.local)
+	$(call build-if-stale,dashboard-api,$(shell find apps/dashboard-api packages -name '*.go' | sort | tr '\n' ' ') go.mod go.sum apps/dashboard-api/Dockerfile.local)
+	$(call build-if-stale,wa-simulator,docker/wa-simulator/main.go docker/wa-simulator/go.mod docker/wa-simulator/Dockerfile)
+	$(call build-if-stale,web,apps/web/package.json apps/web/package-lock.json apps/web/Dockerfile.dev)
+	$(COMPOSE) $(COMPOSE_EXTRA) up -d
 	@echo "Waiting for dashboard-api to be healthy..."
-	@until wget -qO-  http://localhost:8081/health > /dev/null 2>&1; do sleep 2; done
-	$(MAKE) seed
-	$(MAKE) seed-payments
+	@until wget -qO- http://localhost:8081/health > /dev/null 2>&1; do sleep 2; done
 	@echo ""
 	@echo "Demo ready!"
 	@echo "   Dashboard:       http://localhost:5173"
