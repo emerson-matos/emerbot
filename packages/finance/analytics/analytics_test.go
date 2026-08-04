@@ -1001,12 +1001,70 @@ func TestProjectionRatesLearnTheWeekFromTheTrailingWindow(t *testing.T) {
 			t.Errorf("weekday %d priced at 0, want July's average — this is the start-of-month blank", day)
 		}
 	}
-	// Saturday appears in both months, so its rate is the average of the two.
-	if want := int64(110000); rates.avg[6] != want {
-		t.Errorf("Saturday = %d, want both Saturdays averaged (%d)", rates.avg[6], want)
+	// Saturday appears in both months, so its rate is the Gaussian-weighted
+	// average of the two: August's is the window's most recent week and carries
+	// full weight, July's is three weeks older and carries about a third, so the
+	// rate leans towards the recent 120000 rather than sitting flat at 110000.
+	if want := int64(115098); rates.avg[6] != want {
+		t.Errorf("Saturday = %d, want both Saturdays weighted (%d)", rates.avg[6], want)
 	}
 	if rates.basis() != ProjectionFromWindow {
 		t.Errorf("basis = %q, want an ordinary projection", rates.basis())
+	}
+}
+
+// The projection prices a day still to come at exactly what the weekday card
+// says that day of the week is worth. The card was Gaussian-weighted and the
+// projection was a flat average of the same window, so the page displayed one
+// Tuesday average and projected the month from a different one.
+func TestProjectionRatesMatchTheWeekdayCard(t *testing.T) {
+	var window []domain.FinancialEntry
+	// Eight weeks of trading, every weekday, at amounts that differ week to week
+	// so a flat average and a weighted one cannot coincide by accident.
+	for week := 0; week < 8; week++ {
+		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
+		for d := 0; d < 7; d++ {
+			date := domain.NewCalendarDate(monday.AddDate(0, 0, d))
+			window = append(window, sale(t, date.String(), int64(100000+week*7000+d*3000)))
+		}
+	}
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	rates := projectionRates(window, from, to)
+	card := weekdayStatsWeighted(window, from, to, at12(t, "2026-08-03"))
+
+	for d := 0; d < daysInWeek; d++ {
+		if rates.avg[d] != card[d].Avg {
+			t.Errorf("%s: projection prices the day at %d but the card shows %d",
+				card[d].Label, rates.avg[d], card[d].Avg)
+		}
+	}
+}
+
+// A weighted projection follows the pharmacy when its trading level actually
+// shifts. Under a flat average a doubling in the last fortnight was diluted by
+// six older weeks and the projection took the full window to catch up.
+func TestProjectionRatesFollowARecentShift(t *testing.T) {
+	var window []domain.FinancialEntry
+	for week := 0; week < 8; week++ {
+		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
+		amount := int64(100000)
+		if week >= 6 { // the last two weeks of the window
+			amount = 200000
+		}
+		window = append(window, sale(t, domain.NewCalendarDate(monday).String(), amount))
+	}
+
+	from, to := clock(t, "2026-08", "2026-08-03").projectionWindow()
+	monday := projectionRates(window, from, to).avg[1]
+
+	// The flat average of six 100000s and two 200000s is 125000. Weighted, the
+	// two recent Mondays dominate and the rate lands well above it.
+	if monday <= 125000 {
+		t.Errorf("Monday = %d, want more than the flat average (125000) — the recent weeks weigh more", monday)
+	}
+	if monday > 200000 {
+		t.Errorf("Monday = %d, want no more than the recent weeks themselves (200000)", monday)
 	}
 }
 
@@ -2114,8 +2172,11 @@ func TestCashInRatesReadTheDayTheMoneyLands(t *testing.T) {
 	if rates.avg[int(time.Monday)] != 0 {
 		t.Errorf("Monday = %d, want nothing — the sale was made then but paid later", rates.avg[int(time.Monday)])
 	}
-	if want := int64(200000); rates.avg[int(time.Friday)] != want {
-		t.Errorf("Friday = %d, want both receipts averaged (%d)", rates.avg[int(time.Friday)], want)
+	// Both receipts land on a Friday, so the rate is their Gaussian-weighted
+	// average: the 17th is two weeks nearer the end of the window than the 10th
+	// and counts for more, so the figure sits above a flat 200000.
+	if want := int64(230271); rates.avg[int(time.Friday)] != want {
+		t.Errorf("Friday = %d, want both receipts weighted (%d)", rates.avg[int(time.Friday)], want)
 	}
 }
 

@@ -12,42 +12,6 @@ import (
 // several places here, never a magic 7.
 const daysInWeek = 7
 
-// weekdayBucket accumulates faturamento for one day of the week. dates is a set
-// rather than a counter because the average divides by the number of distinct
-// *dates* that saw faturamento, not by the number of entries — three sales on
-// one Tuesday are one Tuesday, otherwise a busy day would drag the average down.
-type weekdayBucket struct {
-	total int64
-	dates map[string]struct{}
-}
-
-// weekdayBuckets buckets entries by day of the week. `pick` returns the date to
-// bucket an entry on and whether to count it at all, so the caller owns both the
-// window and the meaning: which entries are in, and which of their several dates
-// the weekly rhythm should be read off.
-//
-// It is the caller's because the three readings genuinely differ. The weekday
-// card and the revenue projection bucket faturamento by the day of the *sale*
-// (transaction basis) over different windows; the cash runway buckets every
-// inflow by the day the money *lands* (effective basis), because a runway is
-// about the account balance and a sale on credit does not pay a bill.
-func weekdayBuckets(entries []domain.FinancialEntry, pick func(domain.FinancialEntry) (domain.CalendarDate, bool)) [daysInWeek]weekdayBucket {
-	var buckets [daysInWeek]weekdayBucket
-	for i := range buckets {
-		buckets[i].dates = map[string]struct{}{}
-	}
-	for _, e := range entries {
-		date, ok := pick(e)
-		if !ok {
-			continue
-		}
-		b := &buckets[int(date.Time().Weekday())]
-		b.total += e.Amount
-		b.dates[date.String()] = struct{}{}
-	}
-	return buckets
-}
-
 // within reports whether a calendar day falls inside an inclusive range.
 // Compared as "YYYY-MM-DD" strings: the bounds and the date are calendar days
 // with no time or zone of their own, and string order is the only comparison
@@ -55,15 +19,6 @@ func weekdayBuckets(entries []domain.FinancialEntry, pick func(domain.FinancialE
 func within(d, from, to domain.CalendarDate) bool {
 	day := d.String()
 	return day >= from.String() && day <= to.String()
-}
-
-// avg is the bucket's faturamento per day it traded, 0 for a weekday that never
-// did.
-func (b weekdayBucket) avg() int64 {
-	if len(b.dates) == 0 {
-		return 0
-	}
-	return roundToInt64(float64(b.total) / float64(len(b.dates)))
 }
 
 // gaussianSigma is the standard deviation (in weeks) for the Gaussian weighting
@@ -94,6 +49,69 @@ func weekStart(d domain.CalendarDate) domain.CalendarDate {
 	return domain.NewCalendarDate(t.AddDate(0, 0, -mondayOffset))
 }
 
+// weekOffsetFrom counts whole weeks between two Mondays: 0 for the window's
+// most recent week, growing as the week gets older.
+func weekOffsetFrom(endMonday, monday domain.CalendarDate) int {
+	return int(endMonday.Time().Sub(monday.Time()).Hours() / 24 / 7)
+}
+
+// weekTotals is one total per week for a single day of the week, keyed by that
+// week's Monday. Aggregating per (weekday, week) before averaging is the key
+// invariant: two sales on one Monday count as one Monday, so a busy day does not
+// outweigh a quiet one.
+type weekTotals map[string]int64
+
+// weekdayWeekTotals buckets entries by day of the week and, inside each, by the
+// week they fall in. `pick` returns the date to bucket an entry on and whether
+// to count it at all, so the caller owns both the window and the meaning: which
+// entries are in, and which of their several dates the weekly rhythm should be
+// read off.
+//
+// It is the caller's because the readings genuinely differ. The weekday card and
+// the revenue projection bucket faturamento by the day of the *sale*
+// (transaction basis); the cash runway buckets every inflow by the day the money
+// *lands* (effective basis), because a runway is about the account balance and a
+// sale on credit does not pay a bill.
+//
+// It also returns the window's most recent Monday, which is what the Gaussian
+// weights are measured from — the two are derived together so a caller cannot
+// weight one window's totals against another's anchor.
+func weekdayWeekTotals(entries []domain.FinancialEntry, to domain.CalendarDate, pick func(domain.FinancialEntry) (domain.CalendarDate, bool)) ([daysInWeek]weekTotals, domain.CalendarDate) {
+	var weeks [daysInWeek]weekTotals
+	for i := range weeks {
+		weeks[i] = weekTotals{}
+	}
+	endMonday := weekStart(to)
+	for _, e := range entries {
+		date, ok := pick(e)
+		if !ok {
+			continue
+		}
+		monday := weekStart(date)
+		if offset := weekOffsetFrom(endMonday, monday); offset < 0 || offset >= projectionWindowWeeks {
+			continue
+		}
+		weeks[int(date.Time().Weekday())][monday.String()] += e.Amount
+	}
+	return weeks, endMonday
+}
+
+// gaussianAvg collapses one weekday's per-week totals into the single figure a
+// day of that weekday is worth, with recent weeks counting for more. A weekday
+// no week ever traded stays at 0.
+func gaussianAvg(weeks weekTotals, endMonday domain.CalendarDate) int64 {
+	var weighted, weight float64
+	for monday, total := range weeks {
+		w := gaussianWeight(weekOffsetFrom(endMonday, dayFromStr(monday)))
+		weighted += float64(total) * w
+		weight += w
+	}
+	if weight == 0 {
+		return 0
+	}
+	return roundToInt64(weighted / weight)
+}
+
 // weekdayStatsWeighted computes a Gaussian-weighted average of faturamento per
 // day of the week over the trailing 8-week window. It replaces the former
 // weekdayStats which only looked at the analysed month, because a month's own
@@ -104,78 +122,19 @@ func weekStart(d domain.CalendarDate) domain.CalendarDate {
 // older ones: a single holiday or one-off event two months ago barely moves
 // the average, while a trend shift this week shows up almost immediately.
 //
-// Entries are first aggregated per (weekday, week) pair — two sales on one
-// Monday count as one Monday for the weighted total. This prevents a busy day
-// from having outsized influence on the average. Count is the number of
-// distinct weeks that saw revenue for each weekday.
+// Count is the number of distinct weeks that saw revenue for each weekday.
 //
 // Today is left out entirely: it is a day still being traded, and folding a
 // morning's takings in as though it were a whole Tuesday drags that weekday's
-// average down all day, further the earlier the analysis runs.
+// average down all day, further the earlier the analysis runs. It falls outside
+// the window rather than being skipped here — see monthClock.projectionWindow.
 func weekdayStatsWeighted(window []domain.FinancialEntry, from, to domain.CalendarDate, now time.Time) []WeekdayStat {
 	today := int(now.Weekday())
-
-	// Per-(weekday, week) aggregation. Each distinct week that saw revenue for
-	// a weekday contributes one bucket; multiple entries on the same day collapse
-	// into a single bucket. This is the key invariant: a busy day does not get
-	// more weight than a quiet one.
-	type weekBucket struct {
-		total int64
-		week  string // Monday date string, used as map key
-	}
-	// weekdayWeeks[weekday] collects one bucket per distinct week.
-	weekdayWeeks := make([]map[string]*weekBucket, daysInWeek)
-	for i := range weekdayWeeks {
-		weekdayWeeks[i] = map[string]*weekBucket{}
-	}
-
-	endMonday := weekStart(to)
-
-	for _, e := range window {
-		if !domain.IsRevenue(e) {
-			continue
-		}
-		d := e.TransactionDate
-		if !within(d, from, to) {
-			continue
-		}
-
-		wd := int(d.Time().Weekday())
-		mKey := weekStart(d).String()
-
-		b, exists := weekdayWeeks[wd][mKey]
-		if !exists {
-			weekOffset := int(endMonday.Time().Sub(weekStart(d).Time()).Hours() / 24 / 7)
-			if weekOffset < 0 || weekOffset >= projectionWindowWeeks {
-				continue
-			}
-			b = &weekBucket{week: mKey}
-			weekdayWeeks[wd][mKey] = b
-		}
-		b.total += e.Amount
-	}
-
-	// Apply Gaussian weights to the per-week buckets and compute the weighted
-	// average for each weekday.
-	var weightedTotal [daysInWeek]float64
-	var weightSum [daysInWeek]float64
-
-	for wd := 0; wd < daysInWeek; wd++ {
-		for _, b := range weekdayWeeks[wd] {
-			weekOffset := int(endMonday.Time().Sub(weekStart(dayFromStr(b.week)).Time()).Hours() / 24 / 7)
-			if weekOffset < 0 || weekOffset >= projectionWindowWeeks {
-				continue
-			}
-			w := gaussianWeight(weekOffset)
-			weightedTotal[wd] += float64(b.total) * w
-			weightSum[wd] += w
-		}
-	}
+	weeks, endMonday := weekdayWeekTotals(window, to, revenueOn(from, to))
 
 	stats := make([]WeekdayStat, 0, daysInWeek)
 	for d := 0; d < daysInWeek; d++ {
-		count := len(weekdayWeeks[d])
-		var avg int64
+		count := len(weeks[d])
 		var basis ProjectionBasis
 		switch {
 		case count == 0:
@@ -185,13 +144,10 @@ func weekdayStatsWeighted(window []domain.FinancialEntry, from, to domain.Calend
 		default:
 			basis = ProjectionFromWindow
 		}
-		if weightSum[d] > 0 {
-			avg = roundToInt64(weightedTotal[d] / weightSum[d])
-		}
 		stats = append(stats, WeekdayStat{
 			Day:     d,
 			Label:   weekdayLabels[d],
-			Avg:     avg,
+			Avg:     gaussianAvg(weeks[d], endMonday),
 			Count:   count,
 			IsToday: d == today,
 			Basis:   basis,
@@ -215,11 +171,23 @@ type dailyRates struct {
 	avg [daysInWeek]int64
 	// sample is how many distinct dates traded inside the window — the evidence
 	// the rates stand on, and the only thing that can honestly qualify them.
+	// One (weekday, week) pair is one calendar date, so counting the pairs
+	// counts the dates.
 	sample int
 }
 
 // projectionRates averages faturamento per day of the week over the projection
-// window, inclusive at both ends.
+// window, inclusive at both ends, with the same Gaussian weighting the weekday
+// card is drawn from.
+//
+// The weighting used to stop at the card. The projection took a flat average of
+// the window instead, so the page showed one Tuesday average and projected the
+// month off a different one — and the flat figure was the worse of the two: a
+// holiday or a one-off eight weeks ago priced next Tuesday exactly as heavily as
+// last Tuesday did, and a genuine shift in trading took the full eight weeks to
+// show up in the projection. Both readings now come from the same weighted
+// averages (see weekdayStatsWeighted), so a day still to come is priced at what
+// the card says that day of the week is worth.
 //
 // The rates used to come from the analysed month alone, which meant that early
 // in a month most days of the week had never been seen and were priced at zero:
@@ -245,10 +213,15 @@ type dailyRates struct {
 // window may carry days from outside the window; the range is applied here, so
 // a caller that over-fetches cannot widen the average by accident.
 func projectionRates(window []domain.FinancialEntry, from, to domain.CalendarDate) dailyRates {
-	buckets := weekdayBuckets(window, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+	return ratesFromWeekTotals(weekdayWeekTotals(window, to, revenueOn(from, to)))
+}
+
+// revenueOn is the pick the weekday card and the revenue projection share: a
+// sale, dated by the day it was made, inside the window.
+func revenueOn(from, to domain.CalendarDate) func(domain.FinancialEntry) (domain.CalendarDate, bool) {
+	return func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
 		return e.TransactionDate, domain.IsRevenue(e) && within(e.TransactionDate, from, to)
-	})
-	return ratesFromBuckets(buckets)
+	}
 }
 
 // cashInRates is projectionRates for the cash runway: the same trailing window
@@ -265,25 +238,25 @@ func projectionRates(window []domain.FinancialEntry, from, to domain.CalendarDat
 // forecast buckets by, so the projection and the booked curve it is added to
 // agree about which day a receipt belongs to.
 func cashInRates(window []domain.FinancialEntry, from, to domain.CalendarDate) dailyRates {
-	buckets := weekdayBuckets(window, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
+	return ratesFromWeekTotals(weekdayWeekTotals(window, to, func(e domain.FinancialEntry) (domain.CalendarDate, bool) {
 		if e.Type != domain.EntryTypeIncome {
 			return domain.CalendarDate{}, false
 		}
 		d := domain.NewCalendarDate(pkgfinance.EffectiveDate(e))
 		return d, within(d, from, to)
-	})
-	return ratesFromBuckets(buckets)
+	}))
 }
 
-// ratesFromBuckets turns per-weekday buckets into the rates a day still to come
-// is priced at. It is shared by the revenue rates and the cash ones so that "a
-// weekday that never traded stays at zero, and a thin window under-projects
-// rather than over-projects" is written once and cannot drift between the two.
-func ratesFromBuckets(buckets [daysInWeek]weekdayBucket) dailyRates {
+// ratesFromWeekTotals turns per-(weekday, week) totals into the rates a day
+// still to come is priced at. It is shared by the revenue rates and the cash
+// ones so that "recent weeks count for more, a weekday that never traded stays
+// at zero, and a thin window under-projects rather than over-projects" is
+// written once and cannot drift between the two.
+func ratesFromWeekTotals(weeks [daysInWeek]weekTotals, endMonday domain.CalendarDate) dailyRates {
 	var rates dailyRates
-	for d := range buckets {
-		rates.sample += len(buckets[d].dates)
-		rates.avg[d] = buckets[d].avg()
+	for d := range weeks {
+		rates.sample += len(weeks[d])
+		rates.avg[d] = gaussianAvg(weeks[d], endMonday)
 	}
 	return rates
 }
