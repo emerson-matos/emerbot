@@ -1,7 +1,26 @@
-export function formatBRL(centavos: number): string {
+interface FormatBRLOptions {
+  /** Casas decimais. Padrão 2 — os centavos, que é como o valor chega. */
+  fractionDigits?: number;
+  /**
+   * Como resolver o que não cabe nas casas pedidas. Só tem efeito quando
+   * `fractionDigits` corta parte do valor. O padrão do Intl é `halfExpand`
+   * (arredondamento comercial); `expand` sempre sobe em módulo, que é o que se
+   * quer quando o número é uma meta ou uma média e subestimar é pior que
+   * exagerar.
+   */
+  roundingMode?: Intl.NumberFormatOptions["roundingMode"];
+}
+
+export function formatBRL(
+  centavos: number,
+  { fractionDigits = 2, roundingMode }: FormatBRLOptions = {},
+): string {
   return (centavos / 100).toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+    roundingMode,
   });
 }
 
