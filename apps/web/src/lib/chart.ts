@@ -7,6 +7,13 @@ export const chartColor = {
   income: "var(--success)",
   expense: "var(--destructive)",
   today: "var(--accent)",
+  /**
+   * What has not happened yet. Amber rather than a lighter green on purpose:
+   * a projection is a different *kind* of number from a realised one, not a
+   * weaker shade of it, and a reader scanning a chart must be able to tell
+   * where fact stops without reading a legend.
+   */
+  projected: "var(--warning)",
   grid: "var(--border)",
   axis: "var(--muted-foreground)",
 } as const;
