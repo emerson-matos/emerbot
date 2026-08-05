@@ -92,6 +92,28 @@ func (c monthClock) weekdayOf(day int) time.Weekday { return c.dayOf(day).Weekda
 // consumers that name the day they are talking about rather than counting it.
 func (c monthClock) dateOf(day int) string { return c.dayOf(day).Format("2006-01-02") }
 
+// basisFor places a day of the analysed month on the same line every other
+// reading here is placed on: finished, being traded, or still ahead. It is the
+// clock's to answer because the clock is where that line is decided once
+// (ADR-017), and a second opinion about which side of it a day falls on is
+// exactly how the analysis used to contradict itself.
+//
+// A month that is not the one Now falls in is treated as entirely finished.
+// That is true of a past month and false of a future one, and this cannot tell
+// them apart — monthClock does not carry Now. Callers that can be handed a
+// future month must reject it first; see the get_meta_do_dia tool, which
+// answers DayTargetFutureMonth without assembling anything at all.
+func (c monthClock) basisFor(day int) DayBasis {
+	switch {
+	case !c.inProgress || day < c.today:
+		return DayRealized
+	case day == c.today:
+		return DayInProgress
+	default:
+		return DayProjected
+	}
+}
+
 // projectionWindowWeeks is how far back the projection looks to learn what a
 // day of the week is worth. Whole weeks rather than a round number of days, so
 // every weekday gets exactly the same number of chances to be observed: over 60

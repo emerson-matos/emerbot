@@ -18,10 +18,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { chartColor, tooltipProps } from "@/lib/chart";
 import { formatBRL } from "@/lib/format";
 import { todayISO } from "@/lib/entries";
-import type { CashFlowPoint } from "../api/types";
+import type { DayCash } from "../api/types";
 
 interface Props {
-  data: CashFlowPoint[];
+  /**
+   * The backend's projected curve (`cashPosition.forecast`), not the booked
+   * one. Those are different lines and the difference is the whole month: the
+   * pharmacy's bills are all recorded on the 1st and its sales as they happen,
+   * so a curve of lançamentos alone dives past today every single month. This
+   * chart drew that one and labelled its tail "projeção", while the card beside
+   * it and the WhatsApp bot both quoted the credited figure — one month, two
+   * pictures. See ADR-021.
+   */
+  data: DayCash[];
 }
 
 function median(values: number[]): number {
@@ -49,8 +58,8 @@ export default function CashFlowChart({ data }: Props) {
     const today = todayISO();
 
     const formatted = data.map((point) => {
-      const balance = point.RunningBalance / 100;
-      const label = format(parseISO(point.Date), "dd/MM", {
+      const balance = point.balance / 100;
+      const label = format(parseISO(point.date), "dd/MM", {
         locale: ptBR,
       });
 
@@ -59,8 +68,10 @@ export default function CashFlowChart({ data }: Props) {
         label,
         balance,
 
-        actual: point.Date <= today ? balance : null,
-        forecast: point.Date >= today ? balance : null,
+        // Today belongs to both series so the solid line and the dashed one
+        // meet instead of leaving a gap at the join.
+        actual: point.date <= today ? balance : null,
+        forecast: point.date >= today ? balance : null,
       };
     });
 
@@ -89,7 +100,7 @@ export default function CashFlowChart({ data }: Props) {
 
     return {
       formatted,
-      todayPoint: formatted.find((p) => p.Date === today),
+      todayPoint: formatted.find((p) => p.date === today),
       medianBalance,
       offsets,
     };
@@ -190,11 +201,14 @@ export default function CashFlowChart({ data }: Props) {
               }}
             />
 
+            {/* The two series are the same balance under different regimes, so
+                the tooltip has to name which one the cursor is on — "Saldo" over
+                a day that has not happened is a claim the number cannot back. */}
             <Tooltip
               {...tooltipProps}
-              formatter={(value) => [
+              formatter={(value, name) => [
                 formatBRL(Number(value ?? 0) * 100),
-                "Saldo",
+                name === "forecast" ? "Saldo projetado" : "Saldo",
               ]}
             />
 
@@ -254,7 +268,7 @@ export default function CashFlowChart({ data }: Props) {
           </AreaChart>
         </ResponsiveContainer>
 
-        <div className="mt-2 flex justify-center gap-4 text-xs text-muted-foreground">
+        <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="size-2 rounded-full" style={{ background: chartColor.income }} />
             Acima de zero
@@ -265,7 +279,13 @@ export default function CashFlowChart({ data }: Props) {
           </span>
           <span className="flex items-center gap-1.5">
             <span className="size-2 rounded-full" style={{ background: chartColor.today }} />
-            Hoje / projeção
+            Hoje
+          </span>
+          {/* What the dashed half actually is. It used to say "projeção" over
+              the booked curve, which is the one thing it was not. */}
+          <span className="flex items-center gap-1.5">
+            <span className="h-px w-4 border-t-2 border-dashed border-muted-foreground" />
+            Projetado: recebimento médio de cada dia da semana
           </span>
         </div>
       </CardContent>

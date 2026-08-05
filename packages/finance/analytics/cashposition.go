@@ -64,12 +64,18 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 		LowestProjected:     currentBalance,
 		LowestProjectedDate: today,
 		ExpectsReceipts:     rates.sample() > 0,
+		Forecast:            make([]DayCash, 0, len(points)),
 	}
 
 	// expected accumulates the receipts the days from today on are expected to
 	// bring but have not booked, so each point's projected balance is its booked
 	// one plus everything expected up to and including that day.
+	//
+	// nextDay is an index rather than a pointer taken inside the loop: append
+	// may move the backing array, and a pointer into it would then address the
+	// old one. It is resolved once the series has stopped growing.
 	var expected int64
+	nextDay := -1
 	for _, p := range points {
 		var extra int64
 		if p.Date >= today {
@@ -78,14 +84,20 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 		}
 		balance := p.RunningBalance + expected
 
+		// The curve, kept rather than reduced to its extremes on the way past.
+		// The days before today add nothing to their booked balance — expected is
+		// still zero there — so the same series carries the realised half and the
+		// projected one, and a consumer splits it at today rather than fetching a
+		// second curve to draw the left of the chart with.
+		position.Forecast = append(position.Forecast, DayCash{
+			Date:         p.Date,
+			Balance:      balance,
+			ScheduledIn:  p.ProjectedIncome,
+			ScheduledOut: p.ProjectedExpense,
+			ExpectedIn:   extra,
+		})
 		if p.Date == tomorrow {
-			position.NextDay = &DayCash{
-				Date:         p.Date,
-				Balance:      balance,
-				ScheduledIn:  p.ProjectedIncome,
-				ScheduledOut: p.ProjectedExpense,
-				ExpectedIn:   extra,
-			}
+			nextDay = len(position.Forecast) - 1
 		}
 
 		if balance < position.LowestProjected {
@@ -99,6 +111,9 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 			position.DaysUntilNegative = &days
 		}
 		position.EndOfMonthProjection = balance
+	}
+	if nextDay >= 0 {
+		position.NextDay = &position.Forecast[nextDay]
 	}
 
 	return position
