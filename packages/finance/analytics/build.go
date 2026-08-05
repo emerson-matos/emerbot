@@ -133,7 +133,7 @@ func Build(in Input) Analysis {
 	// One projection of the month, and one per-day ask derived from it, shared
 	// by the health insight, the weekly recommendation, the dashboard card and
 	// the bot — they each used to work one out for themselves and disagreed.
-	projection := buildProjection(rates, goals, in.Now, clock, revenueOnDay(in.RevenueEntries, clock.today))
+	projection := buildProjection(rates, goals, clock, revenueOnDay(in.RevenueEntries, clock.today))
 	// One month-over-month comparison, measured over the same finished days of
 	// both months, shared by the trends and the health insights — they used to
 	// derive it separately from the full summaries and both inherited the

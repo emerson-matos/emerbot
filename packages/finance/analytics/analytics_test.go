@@ -438,6 +438,53 @@ func TestCashPosition(t *testing.T) {
 			t.Errorf("DaysUntilNegative = %v, want nil — the crossing has already happened", *got.DaysUntilNegative)
 		}
 	})
+
+	// Every other figure here is about the month. Asked what tomorrow looks
+	// like, a consumer had only the month-end balance and the month's whole
+	// bill list to answer with — see ADR-020.
+	t.Run("names tomorrow on its own", func(t *testing.T) {
+		// Saturday the 11th: R$300,00 of crediário booked to land, R$500,00 of
+		// bills due, and a Saturday that usually takes R$1.000,00.
+		rates := ratesFor(0, 0, 0, 0, 0, 0, 100000)
+		points := []pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 15000},
+			{Date: "2026-07-11", ProjectedIncome: 30000, ProjectedExpense: 50000, RunningBalance: -5000},
+			{Date: "2026-07-31", RunningBalance: -5000},
+		}
+
+		got := buildCashPosition(points, rates, now)
+
+		next := got.NextDay
+		if next == nil {
+			t.Fatal("NextDay = nil, want tomorrow's own line of the runway")
+		}
+		if next.Date != "2026-07-11" {
+			t.Errorf("Date = %q, want tomorrow", next.Date)
+		}
+		if next.ScheduledIn != 30000 || next.ScheduledOut != 50000 {
+			t.Errorf("scheduled = +%d/-%d, want what is booked for the day", next.ScheduledIn, next.ScheduledOut)
+		}
+		// A Saturday brings R$1.000,00 and R$300,00 of it is already booked, so
+		// R$700,00 is still expected on top — the day is not counted twice.
+		if next.ExpectedIn != 70000 {
+			t.Errorf("ExpectedIn = %d, want a Saturday's takings net of what it has booked (70000)", next.ExpectedIn)
+		}
+		// The booked curve dives to -5000; crediting the day turns it positive,
+		// which is the whole reason the runway is projected rather than booked.
+		if next.Balance != 65000 {
+			t.Errorf("Balance = %d, want the booked -5000 plus the 70000 expected", next.Balance)
+		}
+	})
+
+	// The forecast covers one calendar month, so the last day of it has no
+	// tomorrow inside — and neither does a month already closed. A row of
+	// zeroes there would read as a day with no money moving.
+	t.Run("no tomorrow to name at the end of the month", func(t *testing.T) {
+		points := []pkgfinance.CashFlowPoint{{Date: "2026-07-31", RunningBalance: 15000}}
+		if got := buildCashPosition(points, noRates, at12(t, "2026-07-31")); got.NextDay != nil {
+			t.Errorf("NextDay = %+v, want nil on the month's last day", got.NextDay)
+		}
+	})
 }
 
 func TestWeekComparison(t *testing.T) {
@@ -778,8 +825,7 @@ func TestProjectionStatusBoundaries(t *testing.T) {
 // A month with no goal has no verdict to give. Coverage is 0 there, which the
 // thresholds alone would read as the worst possible month.
 func TestProjectionWithoutATargetHasNoStatus(t *testing.T) {
-	now := at12(t, "2026-07-26")
-	got := buildProjection(fridayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
+	got := buildProjection(fridayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, clock(t, "2026-07", "2026-07-26"), 0)
 
 	if got.Status != ProjNoTarget || got.Coverage != 0 {
 		t.Errorf("Status = %q, Coverage = %v, want no verdict without a target", got.Status, got.Coverage)
@@ -810,7 +856,6 @@ func TestRecommendationsNeedARealBaseline(t *testing.T) {
 
 func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 	// Sunday 2026-07-26: five days left in the month (Mon–Fri the 27th–31st).
-	now := at12(t, "2026-07-26")
 	rates := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	// The 26th through the 31st is six days, today included.
 	goals := GoalProgress{
@@ -818,7 +863,7 @@ func TestProjectionIsTheOnlyPerDayAsk(t *testing.T) {
 		DaysTotal: 31, DaysRemaining: 6,
 	}
 
-	got := buildProjection(rates, goals, now, clock(t, "2026-07", "2026-07-26"), 0)
+	got := buildProjection(rates, goals, clock(t, "2026-07", "2026-07-26"), 0)
 
 	if want := int64(600000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want six days at R$1.000,00 (%d)", got.Remaining, want)
@@ -838,10 +883,9 @@ func TestProjectionCountsTodayAsADayStillToTrade(t *testing.T) {
 	// 31 July, a Friday, and the shop is open. The projection used to start at
 	// *tomorrow*, so the last day of every month reported nothing left to
 	// project and no per-day ask — the day was written off before it happened.
-	now := at12(t, "2026-07-31")
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 1}
 
-	got := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 0)
+	got := buildProjection(fridayOnly, goals, clock(t, "2026-07", "2026-07-31"), 0)
 
 	if want := int64(100000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want today's Friday average (%d)", got.Remaining, want)
@@ -854,10 +898,9 @@ func TestProjectionCountsTodayAsADayStillToTrade(t *testing.T) {
 // A day that is already half traded must not be counted twice: what has sold
 // today is in Actual, so only the rest of an ordinary day is still ahead.
 func TestProjectionDoesNotCountTodayTwice(t *testing.T) {
-	now := at12(t, "2026-07-31")
 	goals := GoalProgress{RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 1}
 
-	got := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 40000)
+	got := buildProjection(fridayOnly, goals, clock(t, "2026-07", "2026-07-31"), 40000)
 
 	if want := int64(60000); got.Remaining != want {
 		t.Errorf("Remaining = %d, want the rest of today (%d)", got.Remaining, want)
@@ -865,7 +908,7 @@ func TestProjectionDoesNotCountTodayTwice(t *testing.T) {
 
 	// And a day that has already beaten its average has nothing left to add,
 	// rather than a negative amount.
-	beaten := buildProjection(fridayOnly, goals, now, clock(t, "2026-07", "2026-07-31"), 150000)
+	beaten := buildProjection(fridayOnly, goals, clock(t, "2026-07", "2026-07-31"), 150000)
 	if beaten.Remaining != 0 {
 		t.Errorf("Remaining = %d, want 0 once today has passed its average", beaten.Remaining)
 	}
@@ -876,7 +919,7 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	// project into and no per-day ask to make of it.
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 900000, DaysTotal: 31}
 
-	got := buildProjection(fridayOnly, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
+	got := buildProjection(fridayOnly, goals, clock(t, "2026-07", "2026-08-03"), 0)
 
 	if got.Remaining != 0 {
 		t.Errorf("Remaining = %d, want nothing left to project", got.Remaining)
@@ -897,7 +940,7 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 	}
 	// It says so even when no window was fetched, so a caller that skips the
 	// read for a closed month cannot turn the label into "sem_base".
-	unfetched := buildProjection(dailyRates{}, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0)
+	unfetched := buildProjection(dailyRates{}, goals, clock(t, "2026-07", "2026-08-03"), 0)
 	if unfetched.Basis != ProjectionClosed {
 		t.Errorf("Basis = %q without a window, want %q", unfetched.Basis, ProjectionClosed)
 	}
@@ -905,15 +948,14 @@ func TestProjectionHasNothingLeftForAClosedMonth(t *testing.T) {
 
 // TodayTarget is today's weekday average scaled by what it would take to close
 // the gap if every remaining day pulled the same weight.
-func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
+func TestDayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
 	// Monday 2026-07-27: five days left in July, all priced at R$1.000,00.
-	now := at12(t, "2026-07-27")
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	// R$7.500,00 still to find over five days worth R$5.000,00 at the usual
 	// rhythm: every day has to bring 1,5× what it normally does.
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
 
-	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	got := buildProjection(flat, goals, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
 
 	if !got.Asked() {
 		t.Fatalf("TodayTarget = %+v, want a target on an ordinary Monday", got)
@@ -947,8 +989,8 @@ func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
 		return GoalProgress{RevenueTarget: 2000000, RevenueActual: 0, DaysTotal: 31, DaysRemaining: remaining}
 	}
 
-	sat := buildProjection(rates, goals(7), at12(t, "2026-07-25"), clock(t, "2026-07", "2026-07-25"), 0).TodayTarget
-	mon := buildProjection(rates, goals(5), at12(t, "2026-07-27"), clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	sat := buildProjection(rates, goals(7), clock(t, "2026-07", "2026-07-25"), 0).TodayTarget
+	mon := buildProjection(rates, goals(5), clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
 
 	if sat.Historical != 100000 || mon.Historical != 200000 {
 		t.Fatalf("Historical: Sat = %d, Mon = %d — want the weekday averages", sat.Historical, mon.Historical)
@@ -961,7 +1003,6 @@ func TestTodayTargetFollowsTheWeekdayRhythm(t *testing.T) {
 // A day already half traded must not deflate its own target: the historical
 // average it is compared against is a whole day's takings.
 func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
-	now := at12(t, "2026-07-27")
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 
 	// Same morning, told twice: nothing sold yet, then R$1.000,00 already
@@ -969,8 +1010,8 @@ func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
 	opening := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
 	midday := GoalProgress{RevenueTarget: 1000000, RevenueActual: 350000, DaysTotal: 31, DaysRemaining: 5}
 
-	before := buildProjection(flat, opening, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
-	after := buildProjection(flat, midday, now, clock(t, "2026-07", "2026-07-27"), 100000).TodayTarget
+	before := buildProjection(flat, opening, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	after := buildProjection(flat, midday, clock(t, "2026-07", "2026-07-27"), 100000).TodayTarget
 
 	if before.Target != after.Target || before.Factor != after.Factor {
 		t.Errorf("target moved through the day: %d (×%v) then %d (×%v), want the same whole-day ask",
@@ -981,13 +1022,12 @@ func TestTodayTargetHoldsStillAsTheDayIsTraded(t *testing.T) {
 // Below the average is a real answer, not an absent one: a pharmacy running
 // ahead of its goal can afford a lighter day.
 func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
-	now := at12(t, "2026-07-27")
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	// R$2.500,00 left over five days worth R$5.000,00 — half an ordinary day
 	// each is enough.
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 750000, DaysTotal: 31, DaysRemaining: 5}
 
-	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
+	got := buildProjection(flat, goals, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
 
 	if !got.Asked() {
 		t.Fatalf("TodayTarget = %+v, want a target — a lighter day is still a day", got)
@@ -1005,7 +1045,6 @@ func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
 // foi batida" — good news — reached the reader as the same blank as "não há
 // histórico", and left the bot with nothing to say but a number it invented.
 func TestTodayTargetNamesWhyThereIsNoAsk(t *testing.T) {
-
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
 
@@ -1014,40 +1053,40 @@ func TestTodayTargetNamesWhyThereIsNoAsk(t *testing.T) {
 		rates      dailyRates
 		goals      GoalProgress
 		month, now string
-		want       TodayTargetState
+		want       DayTargetState
 	}{
 		// An ordinary Monday, for contrast: this is what a real ask looks like.
-		{"an ordinary trading day", flat, goals, "2026-07", "2026-07-27", TodayTargetOK},
-		{"no window to price the days from", dailyRates{}, goals, "2026-07", "2026-07-27", TodayTargetNoHistory},
+		{"an ordinary trading day", flat, goals, "2026-07", "2026-07-27", DayTargetOK},
+		{"no window to price the days from", dailyRates{}, goals, "2026-07", "2026-07-27", DayTargetNoHistory},
 		// Sunday 2026-07-26 priced at nothing: the shop does not open, so there
 		// is no rhythm to scale and asking a multiple of zero is not an answer.
 		// It is emphatically not "sem_historico" — the other six days are known.
 		{
 			"a weekday the pharmacy does not trade",
 			ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000),
-			goals, "2026-07", "2026-07-26", TodayTargetClosedWeekday,
+			goals, "2026-07", "2026-07-26", DayTargetClosedWeekday,
 		},
 		{
 			"the goal is already beaten", flat,
 			GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5},
-			"2026-07", "2026-07-27", TodayTargetGoalMet,
+			"2026-07", "2026-07-27", DayTargetGoalMet,
 		},
 		{
 			"no goal to take a share of", flat,
 			GoalProgress{RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5},
-			"2026-07", "2026-07-27", TodayTargetNoGoal,
+			"2026-07", "2026-07-27", DayTargetNoGoal,
 		},
-		{"a closed month", flat, goals, "2026-07", "2026-08-03", TodayTargetClosedMonth},
+		{"a closed month", flat, goals, "2026-07", "2026-08-03", DayTargetClosedMonth},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildProjection(tc.rates, tc.goals, at12(t, tc.now), clock(t, tc.month, tc.now), 0).TodayTarget
+			got := buildProjection(tc.rates, tc.goals, clock(t, tc.month, tc.now), 0).TodayTarget
 
 			if got.State != tc.want {
 				t.Errorf("State = %q, want %q", got.State, tc.want)
 			}
-			if asked := got.State == TodayTargetOK; got.Asked() != asked {
+			if asked := got.State == DayTargetOK; got.Asked() != asked {
 				t.Errorf("Asked() = %t, want %t for state %q", got.Asked(), asked, got.State)
 			}
 			// Every absence leaves the amounts at zero, so a consumer that
@@ -1061,17 +1100,176 @@ func TestTodayTargetNamesWhyThereIsNoAsk(t *testing.T) {
 	// The weekday is filled in even where there is no ask: "a farmácia não abre
 	// domingo" needs to know it is Sunday it is talking about.
 	sunday := buildProjection(ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000),
-		goals, at12(t, "2026-07-26"), clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
+		goals, clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
 	if sunday.Day != time.Sunday {
 		t.Errorf("Day = %v, want Sunday named even with no ask", sunday.Day)
 	}
 }
 
+// Tomorrow is priced by the same plan as today: one factor, each day at its own
+// weekday rhythm. Before this the analysis had a share of the gap for today and
+// nothing at all for tomorrow, so a question asked after closing time was
+// answered with the weekday's plain historical average — see ADR-020.
+func TestNextDayTargetIsTomorrowsShareOfTheSamePlan(t *testing.T) {
+	// Monday 2026-07-27, five days left. A Tuesday is worth half a Monday here,
+	// which is the whole point: the two asks must differ by the rhythm and by
+	// nothing else.
+	rates := ratesFor(100000, 200000, 100000, 200000, 200000, 200000, 200000)
+	goals := GoalProgress{RevenueTarget: 2000000, RevenueActual: 500000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(rates, goals, clock(t, "2026-07", "2026-07-27"), 0)
+	today, next := got.TodayTarget, got.NextDayTarget
+
+	if !next.Asked() {
+		t.Fatalf("NextDayTarget = %+v, want an ask for an ordinary Tuesday", next)
+	}
+	if next.Day != time.Tuesday {
+		t.Errorf("Day = %v, want tomorrow's weekday", next.Day)
+	}
+	if next.Date != "2026-07-28" {
+		t.Errorf("Date = %q, want tomorrow named", next.Date)
+	}
+	if today.Date != "2026-07-27" {
+		t.Errorf("TodayTarget.Date = %q, want today named", today.Date)
+	}
+	// The same plan, not a second forecast. A different factor here would mean
+	// the payload holds two rival distributions of one gap.
+	if next.Factor != today.Factor {
+		t.Errorf("factors differ: today ×%v, tomorrow ×%v — want one plan", today.Factor, next.Factor)
+	}
+	if next.Historical != 100000 {
+		t.Errorf("Historical = %d, want Tuesday's own average", next.Historical)
+	}
+	if want := roundToInt64(float64(next.Historical) * today.Factor); next.Target != want {
+		t.Errorf("Target = %d, want Tuesday's average at the plan's factor (%d)", next.Target, want)
+	}
+	// A Tuesday worth half a Monday is asked for half of what the Monday is,
+	// to the centavo each figure was rounded to.
+	if diff := next.Target*2 - today.Target; diff > 2 || diff < -2 {
+		t.Errorf("Tuesday asked %d against Monday's %d, want the weekday rhythm carried through", next.Target, today.Target)
+	}
+}
+
+// The property that makes the plan a plan: every remaining day asked for its
+// own share adds back up to exactly what is missing. A flat daily average never
+// had it — it asked a Sunday for a Saturday's money and made up the difference
+// by asking a Saturday for less than it already brings (ADR-019).
+func TestTheRemainingAsksSumToWhatIsMissing(t *testing.T) {
+	rates := ratesFor(40000, 120000, 110000, 100000, 120000, 130000, 150000)
+	goals := GoalProgress{RevenueTarget: 4000000, RevenueActual: 900000, DaysTotal: 31, DaysRemaining: 9}
+	monthClock := clock(t, "2026-07", "2026-07-23")
+
+	projection := buildProjection(rates, goals, monthClock, 0)
+	plan := newRemainingPlan(rates, projection, rates.basis(), monthClock, 0)
+
+	var asked int64
+	for d := monthClock.today; d <= monthClock.total; d++ {
+		asked += plan.at(rates, monthClock, d).Target
+	}
+
+	missing := projection.Target - projection.Actual
+	// Rounding to the centavo, once per day.
+	if diff := asked - missing; diff > int64(monthClock.remaining) || diff < -int64(monthClock.remaining) {
+		t.Errorf("the days ask for %d against a gap of %d — the plan does not close the month", asked, missing)
+	}
+	// And today's own ask is the first slice of that sum, not a separate one.
+	if plan.at(rates, monthClock, monthClock.today) != projection.TodayTarget {
+		t.Error("TodayTarget is not the plan's own slice for today")
+	}
+}
+
+// Tomorrow's absences: the same reasons today's has, plus the one that only a
+// next day can hit.
+func TestNextDayTargetNamesWhyThereIsNoAsk(t *testing.T) {
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
+
+	tests := []struct {
+		name       string
+		rates      dailyRates
+		goals      GoalProgress
+		month, now string
+		want       DayTargetState
+	}{
+		{"an ordinary day before another", flat, goals, "2026-07", "2026-07-27", DayTargetOK},
+		// The last day of the month: tomorrow belongs to a month with its own
+		// goal and its own gap, and this analysis has seen neither. Saying
+		// "sem_meta" would be a claim about next month; this says where the
+		// question lands instead.
+		{"the month ends today", flat, goals, "2026-07", "2026-07-31", DayTargetMonthOver},
+		// Tuesday 2026-07-28 priced at nothing while the rest of the week
+		// trades: tomorrow is the closed door, today is not.
+		{
+			"tomorrow is a weekday the pharmacy does not trade",
+			ratesFor(100000, 100000, 0, 100000, 100000, 100000, 100000),
+			goals, "2026-07", "2026-07-27", DayTargetClosedWeekday,
+		},
+		{"no window to price the days from", dailyRates{}, goals, "2026-07", "2026-07-27", DayTargetNoHistory},
+		{
+			"the goal is already beaten", flat,
+			GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5},
+			"2026-07", "2026-07-27", DayTargetGoalMet,
+		},
+		{
+			"no goal to take a share of", flat,
+			GoalProgress{RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5},
+			"2026-07", "2026-07-27", DayTargetNoGoal,
+		},
+		{"a closed month", flat, goals, "2026-07", "2026-08-03", DayTargetClosedMonth},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildProjection(tc.rates, tc.goals, clock(t, tc.month, tc.now), 0).NextDayTarget
+
+			if got.State != tc.want {
+				t.Errorf("State = %q, want %q", got.State, tc.want)
+			}
+			if !got.Asked() && (got.Target != 0 || got.Historical != 0) {
+				t.Errorf("NextDayTarget = %+v, want no amounts under state %q", got, got.State)
+			}
+		})
+	}
+
+	// A day with no ask still names itself where there is a day to name, so the
+	// bot can say *which* Tuesday it does not open on. The two states with no
+	// day at all — a closed month, and a tomorrow outside it — carry no date
+	// rather than a made-up one.
+	closedTuesday := buildProjection(ratesFor(100000, 100000, 0, 100000, 100000, 100000, 100000),
+		goals, clock(t, "2026-07", "2026-07-27"), 0).NextDayTarget
+	if closedTuesday.Date != "2026-07-28" || closedTuesday.Day != time.Tuesday {
+		t.Errorf("NextDayTarget = %+v, want the day named even with no ask", closedTuesday)
+	}
+	if over := buildProjection(flat, goals, clock(t, "2026-07", "2026-07-31"), 0).NextDayTarget; over.Date != "" {
+		t.Errorf("Date = %q, want no date for a day outside the analysed month", over.Date)
+	}
+}
+
+// The ask is a whole-day figure measured from the morning, so closing the day
+// needs what the day actually took. It used to be nowhere in the analysis: the
+// only faturamento a consumer could reach was the month's, today included.
+func TestProjectionCarriesWhatTodayHasSold(t *testing.T) {
+	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// R$8.500,00 of a R$10.000,00 goal already in, R$1.200,00 of it sold today.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 850000, DaysTotal: 31, DaysRemaining: 5}
+
+	got := buildProjection(flat, goals, clock(t, "2026-07", "2026-07-27"), 120000)
+
+	if got.TodayRevenue != 120000 {
+		t.Errorf("TodayRevenue = %d, want what the day has taken", got.TodayRevenue)
+	}
+	// Comparable to the ask without any further arithmetic: both cover the whole
+	// day, and this one already clears it.
+	if got.TodayRevenue <= got.TodayTarget.Target {
+		t.Errorf("TodayRevenue %d vs Target %d — the fixture no longer tests a day that beat its ask",
+			got.TodayRevenue, got.TodayTarget.Target)
+	}
+}
+
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
-	now := at12(t, "2026-07-26")
 	mondayOnly := ratesFor(0, 100000, 0, 0, 0, 0, 0)
 
-	got := buildProjection(mondayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, now, clock(t, "2026-07", "2026-07-26"), 0)
+	got := buildProjection(mondayOnly, GoalProgress{RevenueActual: 50000, DaysRemaining: 6}, clock(t, "2026-07", "2026-07-26"), 0)
 
 	if got.Pacing() {
 		t.Error("Pacing = true, want false with no target")
@@ -1159,7 +1357,7 @@ func TestTheMonthIsProjectedAtTheRatesTheCardShows(t *testing.T) {
 		wantRemaining += card[int(date.Weekday())].Avg
 	}
 
-	got := buildProjection(rates, GoalProgress{RevenueActual: 500000, DaysRemaining: monthClock.remaining}, now, monthClock, 0)
+	got := buildProjection(rates, GoalProgress{RevenueActual: 500000, DaysRemaining: monthClock.remaining}, monthClock, 0)
 
 	if got.Remaining != wantRemaining {
 		t.Errorf("projection prices the rest of the month at %d, but the card's own rows add up to %d",
@@ -1201,7 +1399,7 @@ func TestProjectionIsAlwaysActualPlusRemaining(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildProjection(tc.rates, tc.goals, at12(t, tc.now), clock(t, tc.month, tc.now), tc.todayRevenue)
+			got := buildProjection(tc.rates, tc.goals, clock(t, tc.month, tc.now), tc.todayRevenue)
 
 			if got.Actual != tc.goals.RevenueActual {
 				t.Errorf("Actual = %d, want the faturamento already booked (%d)", got.Actual, tc.goals.RevenueActual)
@@ -1245,9 +1443,8 @@ func TestTheRestOfTheMonthIsPricedAtItsRemainingWeekdays(t *testing.T) {
 		perWeek += avg
 	}
 
-	now := at12(t, "2026-08-04")
 	goals := GoalProgress{RevenueTarget: 4000000, RevenueActual: 358837, DaysTotal: 31, DaysRemaining: monthClock.remaining}
-	got := buildProjection(rates, goals, now, monthClock, 0)
+	got := buildProjection(rates, goals, monthClock, 0)
 
 	if want := 4 * perWeek; got.Remaining != want {
 		t.Errorf("Remaining = %d, want four of every weekday average (%d)", got.Remaining, want)
@@ -1264,7 +1461,7 @@ func TestTheRestOfTheMonthIsPricedAtItsRemainingWeekdays(t *testing.T) {
 	if tuesday := rates.avg[int(time.Tuesday)]; tuesday <= soldToday {
 		t.Fatalf("Tuesday averages %d, want more than the %d sold today so the day is netted rather than clamped", tuesday, soldToday)
 	}
-	partial := buildProjection(rates, goals, now, monthClock, soldToday)
+	partial := buildProjection(rates, goals, monthClock, soldToday)
 	if want := 4*perWeek - soldToday; partial.Remaining != want {
 		t.Errorf("Remaining = %d with %d already sold today, want %d", partial.Remaining, int64(soldToday), want)
 	}
@@ -1826,8 +2023,8 @@ func TestDigestStatesTheDaysAskAgainstItsOwnWeekday(t *testing.T) {
 		Period: Period{ThroughDay: 8, DaysRemaining: 23, DaysTotal: 31, InProgress: true},
 		Health: Health{Status: HealthBoa},
 		Projection: Projection{
-			TodayTarget: TodayTarget{
-				State:        TodayTargetOK,
+			TodayTarget: DayTarget{
+				State:        DayTargetOK,
 				Day:          time.Sunday,
 				Historical:   60000,
 				Target:       66000,
@@ -1849,9 +2046,9 @@ func TestDigestStatesTheDaysAskAgainstItsOwnWeekday(t *testing.T) {
 
 	// No ask, no line — and never a line built from a state that has no
 	// amounts behind it.
-	for _, state := range []TodayTargetState{TodayTargetGoalMet, TodayTargetClosedWeekday, TodayTargetNoHistory} {
+	for _, state := range []DayTargetState{DayTargetGoalMet, DayTargetClosedWeekday, DayTargetNoHistory} {
 		quiet := analysis
-		quiet.Projection.TodayTarget = TodayTarget{State: state, Day: time.Sunday}
+		quiet.Projection.TodayTarget = DayTarget{State: state, Day: time.Sunday}
 		for _, line := range quiet.AheadLines() {
 			if strings.Contains(line, "Meta de hoje") {
 				t.Errorf("state %q produced %q, want no ask stated", state, line)
@@ -1956,7 +2153,7 @@ func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {
 	if !ok {
 		t.Fatalf("meta_de_hoje missing from the payload — the model is left to divide the gap by the days left")
 	}
-	if meta["situacao"] != string(TodayTargetOK) {
+	if meta["situacao"] != string(DayTargetOK) {
 		t.Fatalf("meta_de_hoje = %v, want a real ask on a Sunday the pharmacy trades", meta)
 	}
 	if meta["dia_da_semana"] != "domingo" {
@@ -1978,6 +2175,134 @@ func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {
 	}
 }
 
+// The question this was asked at the end of a trading day: "já registrei o
+// faturamento de hoje, como estamos para amanhã?". Everything needed to answer
+// it was in the analysis and none of it was in the payload, so the bot said
+// there was no target for tomorrow and quoted the weekday's plain historical
+// average instead. See ADR-020.
+func TestToolPayloadAnswersForTomorrow(t *testing.T) {
+	// Eight weeks where a Wednesday is the quietest weekday of all, so a
+	// Wednesday's ask cannot be mistaken for a flat share of the gap.
+	var window []domain.FinancialEntry
+	for week := range projectionWindowWeeks {
+		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
+		for d := range daysInWeek {
+			date := domain.NewCalendarDate(monday.AddDate(0, 0, d))
+			amount := int64(150000)
+			if date.Time().Weekday() == time.Wednesday {
+				amount = 100000
+			}
+			window = append(window, sale(t, date.String(), amount))
+		}
+	}
+	// August's own sales, the analysed month: Tuesday the 4th is closed, its
+	// takings already booked.
+	august := []domain.FinancialEntry{
+		sale(t, "2026-08-01", 150000),
+		sale(t, "2026-08-02", 150000),
+		sale(t, "2026-08-03", 150000),
+		sale(t, "2026-08-04", 160000),
+	}
+
+	analysis := Build(Input{
+		Month:                "2026-08",
+		Entries:              august,
+		RevenueEntries:       august,
+		WindowRevenueEntries: window,
+		Summaries:            []*pkgfinance.MonthlySummary{nil, nil, summary(600000, 0)},
+		Goals:                []*domain.Goal{nil, nil, {Month: "2026-08", RevenueTarget: 4500000}},
+		Now:                  at12(t, "2026-08-04"),
+	})
+	payload := analysis.ToolPayload()
+
+	amanha, ok := payload["meta_de_amanha"].(map[string]any)
+	if !ok {
+		t.Fatal("meta_de_amanha missing — the model is left quoting the weekday average as if it were a target")
+	}
+	if amanha["situacao"] != string(DayTargetOK) {
+		t.Fatalf("meta_de_amanha = %v, want a real ask for a Wednesday the pharmacy trades", amanha)
+	}
+	// Named, because the model resolves "amanhã" against a system prompt and
+	// not against this payload — the two must agree on which day that is.
+	if amanha["data"] != "2026-08-05" || amanha["dia_da_semana"] != "quarta" {
+		t.Errorf("meta_de_amanha = %v, want tomorrow named by date and weekday", amanha)
+	}
+	// The ask beside what a Wednesday actually brings: "R$ 1.028,29" only means
+	// something next to "uma quarta costuma dar R$ 1.000,00".
+	hist, isFloat := amanha["media_historica"].(float64)
+	if !isFloat || hist != 1000 {
+		t.Fatalf("media_historica = %v, want a Wednesday's own average", amanha["media_historica"])
+	}
+	if ask, _ := amanha["meta"].(float64); ask <= hist {
+		t.Errorf("meta = %v, want a Wednesday behind its goal asked for more than its usual %v", ask, hist)
+	}
+	// The day being closed needs what the day actually took, and the month's
+	// faturamento — which includes today — cannot answer that.
+	if payload["faturamento_de_hoje"] != 1600.0 {
+		t.Errorf("faturamento_de_hoje = %v, want today's own takings in reais", payload["faturamento_de_hoje"])
+	}
+	hoje := payload["meta_de_hoje"].(map[string]any)
+	if hoje["data"] != "2026-08-04" {
+		t.Errorf("meta_de_hoje = %v, want today named too", hoje)
+	}
+}
+
+// A cash question about tomorrow used to be answered with the month: a
+// month-end balance and R$ 20.096,97 of commitments, both true, neither about
+// the day the pharmacy is opening next.
+func TestToolPayloadCarriesTomorrowsCash(t *testing.T) {
+	due := day(t, "2026-07-11")
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-01", 500000),
+		{
+			TransactionDate: due,
+			DueDate:         &due,
+			Amount:          80000,
+			Type:            domain.EntryTypeExpense,
+			Category:        "fornecedor",
+		},
+	}
+	analysis := Build(Input{
+		Month:     "2026-07",
+		Entries:   entries,
+		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(500000, 80000)},
+		CashFlowPoints: []pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 500000},
+			{Date: "2026-07-11", ProjectedExpense: 80000, RunningBalance: 420000},
+			{Date: "2026-07-31", RunningBalance: 420000},
+		},
+		Now: at12(t, "2026-07-10"),
+	})
+
+	caixa := analysis.ToolPayload()["caixa"].(map[string]any)
+	amanha, ok := caixa["amanha"].(map[string]any)
+	if !ok {
+		t.Fatal("caixa.amanha missing — the only cash figures left are about the whole month")
+	}
+	if amanha["data"] != "2026-07-11" {
+		t.Errorf("data = %v, want tomorrow", amanha["data"])
+	}
+	if amanha["despesas_agendadas"] != 800.0 {
+		t.Errorf("despesas_agendadas = %v, want the day's own bills in reais", amanha["despesas_agendadas"])
+	}
+	if amanha["saldo_projetado"] != 4200.0 {
+		t.Errorf("saldo_projetado = %v, want the balance the day ends on", amanha["saldo_projetado"])
+	}
+
+	// On the month's last day there is no tomorrow in the forecast, and the key
+	// is absent rather than a row of zeroes a model would read aloud as a day
+	// with nothing moving.
+	closing := Build(Input{
+		Month:          "2026-07",
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(500000, 0)},
+		CashFlowPoints: []pkgfinance.CashFlowPoint{{Date: "2026-07-31", RunningBalance: 420000}},
+		Now:            at12(t, "2026-07-31"),
+	})
+	if _, has := closing.ToolPayload()["caixa"].(map[string]any)["amanha"]; has {
+		t.Error("caixa.amanha present on the month's last day, want it absent")
+	}
+}
+
 // An absence is never a bare silence: the model has to be able to say which of
 // the reasons it is, or it fills the gap with arithmetic of its own.
 func TestToolPayloadNamesWhyThereIsNoAskToday(t *testing.T) {
@@ -1991,8 +2316,8 @@ func TestToolPayloadNamesWhyThereIsNoAskToday(t *testing.T) {
 	if !ok {
 		t.Fatal("meta_de_hoje missing — an absent key reads as 'the analysis has no such thing'")
 	}
-	if meta["situacao"] != string(TodayTargetNoGoal) {
-		t.Errorf("situacao = %v, want %q for a month with no target", meta["situacao"], TodayTargetNoGoal)
+	if meta["situacao"] != string(DayTargetNoGoal) {
+		t.Errorf("situacao = %v, want %q for a month with no target", meta["situacao"], DayTargetNoGoal)
 	}
 	// No amounts under an absence: a "meta: 0" would be read aloud as a target
 	// of nothing.

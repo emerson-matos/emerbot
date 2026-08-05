@@ -37,6 +37,11 @@ import (
 // current balance entirely.
 func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now time.Time) CashPosition {
 	today := now.Format("2006-01-02")
+	// The forecast covers one calendar month, so on the last day of it — and on
+	// any day of a month already closed — no point matches and NextDay stays
+	// nil. That is the honest answer: the next day's balance is the next
+	// month's business, and this forecast has never seen it.
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
 
 	if len(points) == 0 {
 		return CashPosition{LowestProjectedDate: today}
@@ -66,10 +71,22 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 	// one plus everything expected up to and including that day.
 	var expected int64
 	for _, p := range points {
+		var extra int64
 		if p.Date >= today {
-			expected += expectedExtraIncome(p, rates)
+			extra = expectedExtraIncome(p, rates)
+			expected += extra
 		}
 		balance := p.RunningBalance + expected
+
+		if p.Date == tomorrow {
+			position.NextDay = &DayCash{
+				Date:         p.Date,
+				Balance:      balance,
+				ScheduledIn:  p.ProjectedIncome,
+				ScheduledOut: p.ProjectedExpense,
+				ExpectedIn:   extra,
+			}
+		}
 
 		if balance < position.LowestProjected {
 			position.LowestProjected = balance

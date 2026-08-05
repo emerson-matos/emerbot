@@ -389,15 +389,15 @@ export const ProjectionBasis = {
 export type ProjectionBasis =
   (typeof ProjectionBasis)[keyof typeof ProjectionBasis];
 
-export const TodayTargetScale = {
+export const DayTargetScale = {
   Below: "below",
   OnTrack: "on_track",
   Above: "above",
 } as const;
-export type TodayTargetScale =
-  (typeof TodayTargetScale)[keyof typeof TodayTargetScale];
+export type DayTargetScale =
+  (typeof DayTargetScale)[keyof typeof DayTargetScale];
 
-export const TodayTargetState = {
+export const DayTargetState = {
   /** A real ask: the amounts below are meaningful. */
   OK: "ok",
   /** The month has ended — there is no "today" inside it to sell on. */
@@ -410,11 +410,17 @@ export const TodayTargetState = {
   NoHistory: "sem_historico",
   /** A weekday that never traded: the pharmacy does not open on it. */
   ClosedWeekday: "dia_sem_movimento",
+  /**
+   * The day after the analysed month's last one. It belongs to a month with
+   * its own goal and its own gap, none of which are knowable from here. Only
+   * `nextDayTarget` can carry it.
+   */
+  MonthOver: "mes_acaba_hoje",
 } as const;
-export type TodayTargetState =
-  (typeof TodayTargetState)[keyof typeof TodayTargetState];
+export type DayTargetState =
+  (typeof DayTargetState)[keyof typeof DayTargetState];
 
-export interface TodayTarget {
+export interface DayTarget {
   /**
    * Whether there is an ask today and, when there is not, why. Only `ok`
    * leaves the amounts below meaningful — every other state zeroes them.
@@ -423,18 +429,24 @@ export interface TodayTarget {
    * batida" from "não há histórico": rendering both as the same blank made the
    * good news indistinguishable from the gap in the data.
    */
-  state: TodayTargetState;
+  state: DayTargetState;
+  /**
+   * The calendar day the ask is for, "YYYY-MM-DD". Absent when there is no day
+   * to name — a closed month has no today, and the day after the month's last
+   * one is not this month's to price.
+   */
+  date?: string;
   /** time.Weekday / getDay(): 0 = Sunday. Name it with lib/weekdays. */
   day: number;
   /** What this weekday usually brings, over a whole day. */
   historical: number;
-  /** What it has to bring today to keep the month on its goal. */
+  /** What it has to bring to keep the month on its goal. */
   target: number;
-  /** `target` minus `historical`. Negative when today can afford to be lighter. */
+  /** `target` minus `historical`. Negative when the day can afford to be lighter. */
   delta: number;
   deltaPercent: number;
   factor: number;
-  status: TodayTargetScale;
+  status: DayTargetScale;
 }
 
 export const ProjectionStatus = {
@@ -470,8 +482,20 @@ export interface Projection {
    */
   coverage: number;
   status: ProjectionStatus;
+  /**
+   * What today has already sold. `todayTarget` is a whole-day figure measured
+   * from the morning, so this is what it gets met against.
+   */
+  todayRevenue: number;
   /** Today's revenue target derived from historical weekday averages. */
-  todayTarget: TodayTarget;
+  todayTarget: DayTarget;
+  /**
+   * Tomorrow's share of the same plan, at the same `factor` — the two are one
+   * distribution of the gap over the days left, not two readings of it. It
+   * therefore assumes today lands on `todayTarget`, which is exactly what
+   * `projected` assumes about today as well.
+   */
+  nextDayTarget: DayTarget;
 }
 
 export const RecommendationSeverity = {
@@ -508,6 +532,37 @@ export interface CashPosition {
    * as a balance heading for zero.
    */
   expectsReceipts: boolean;
+  /**
+   * Tomorrow's own line of the runway. Absent when the forecast does not reach
+   * it — a closed month, or the month's last day. Everything else here
+   * describes the month; this is the one figure about a day someone is about
+   * to open the doors on.
+   */
+  nextDay?: DayCash;
+}
+
+/**
+ * One day of the runway, split into what is booked and what is expected —
+ * they are answerable in different ways. `scheduledOut` is a bill someone can
+ * call about; `expectedIn` is a rhythm nobody controls.
+ */
+export interface DayCash {
+  date: string;
+  /**
+   * The projected balance at the end of the day: everything booked up to it,
+   * plus the receipts the days from today on are expected to bring on top of
+   * what they have booked. Same basis as `endOfMonthProjection`.
+   */
+  balance: number;
+  scheduledIn: number;
+  scheduledOut: number;
+  /**
+   * What an ordinary day of that weekday still brings beyond what it has
+   * booked; 0 when the day has already booked more than its weekday usually
+   * receives, and 0 when there is no trading history at all —
+   * `expectsReceipts` is what tells those two apart.
+   */
+  expectedIn: number;
 }
 
 export interface Analysis {

@@ -2,8 +2,8 @@ import { Calendar } from 'lucide-react'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
 import { weekdayFull, weekdayShort, weekdayWithArticle } from '@/lib/weekdays'
-import { TodayTargetState } from '@/api/types'
-import type { TodayTarget, TodayTargetScale, WeekdayStat } from '@/api/types'
+import { DayTargetState } from '@/api/types'
+import type { DayTarget, DayTargetScale, WeekdayStat } from '@/api/types'
 
 // A pharmacy's week has a shape — the weekend carries it, Sunday is a trough —
 // and the seven figures used to be printed in seven identical grey boxes, where
@@ -14,7 +14,7 @@ import type { TodayTarget, TodayTargetScale, WeekdayStat } from '@/api/types'
 // of it — the dashed mark on today's column is the takings today has to reach
 // to keep the month on its goal, and gold appears nowhere else on the page.
 
-function paceTone(status: TodayTargetScale): string {
+function paceTone(status: DayTargetScale): string {
   switch (status) {
     case 'above':    return 'text-warning'
     case 'below':    return 'text-success'
@@ -22,7 +22,7 @@ function paceTone(status: TodayTargetScale): string {
   }
 }
 
-function TodayMark({ target }: { target: TodayTarget }) {
+function TodayMark({ target }: { target: DayTarget }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-3">
       <span className="text-sm font-medium">Meta para hoje</span>
@@ -50,7 +50,7 @@ function TodayMark({ target }: { target: TodayTarget }) {
 
 export default function WeekRhythm({ days, todayTarget }: {
   days: WeekdayStat[]
-  todayTarget: TodayTarget
+  todayTarget: DayTarget
 }) {
   // Weekday order, always. Today used to be sorted to the front, which on any
   // day but a Sunday left a strip labelled Qua, Dom, Seg, Ter… — a week that
@@ -77,7 +77,7 @@ export default function WeekRhythm({ days, todayTarget }: {
           message="Nenhuma venda de balcão registrada nas últimas 8 semanas."
           className="py-6"
         />
-        {todayTarget.state === TodayTargetState.OK && <TodayMark target={todayTarget} />}
+        {todayTarget.state === DayTargetState.OK && <TodayMark target={todayTarget} />}
       </>
     )
   }
@@ -92,7 +92,7 @@ export default function WeekRhythm({ days, todayTarget }: {
         <div className="grid min-w-max grid-cols-7 gap-1 sm:gap-2">
         {week.map((day) => {
           const height = day.count > 0 ? Math.max((day.avg / ceiling) * 100, 6) : 0
-          const markAt = day.isToday && todayTarget.state === TodayTargetState.OK
+          const markAt = day.isToday && todayTarget.state === DayTargetState.OK
             ? Math.min((todayTarget.target / ceiling) * 100, 98)
             : null
 
@@ -150,7 +150,7 @@ export default function WeekRhythm({ days, todayTarget }: {
         As mais recentes pesam mais (Gaussiana σ=2).
       </p>
 
-      {todayTarget.state === TodayTargetState.OK && <TodayMark target={todayTarget} />}
+      {todayTarget.state === DayTargetState.OK && <TodayMark target={todayTarget} />}
     </>
   )
 }

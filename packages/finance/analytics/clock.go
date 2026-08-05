@@ -74,6 +74,24 @@ func newMonthClock(month string, now time.Time) monthClock {
 	}
 }
 
+// dayOf places a day of the analysed month on the calendar. It is counted off
+// `first`, which is at noon, so a DST jump cannot land the day on its
+// neighbour — and off the *analysed* month rather than now's, which is what
+// lets a closed July be read in August without every date sliding a month.
+//
+// day may run one past the month's last, which is how a caller asks about
+// tomorrow on the 31st; the result is then the 1st of the next month, and it is
+// the caller's job to decide whether that is a day it can say anything about.
+func (c monthClock) dayOf(day int) time.Time { return c.first.AddDate(0, 0, day-1) }
+
+// weekdayOf is which day of the week a day of the analysed month falls on —
+// the index every per-weekday average is read at.
+func (c monthClock) weekdayOf(day int) time.Weekday { return c.dayOf(day).Weekday() }
+
+// dateOf is a day of the analysed month as a calendar date, "YYYY-MM-DD", for
+// consumers that name the day they are talking about rather than counting it.
+func (c monthClock) dateOf(day int) string { return c.dayOf(day).Format("2006-01-02") }
+
 // projectionWindowWeeks is how far back the projection looks to learn what a
 // day of the week is worth. Whole weeks rather than a round number of days, so
 // every weekday gets exactly the same number of chances to be observed: over 60

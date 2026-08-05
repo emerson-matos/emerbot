@@ -87,12 +87,27 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       // 3.370.501 / 3.600.000 — short of the goal, but not far short.
       coverage: 0.9362,
       status: "warning",
+      todayRevenue: 48200,
       todayTarget: {
         state: "ok",
+        date: "2026-07-27",
         day: 1,
         historical: 111700,
         target: 121100,
         delta: 9400,
+        deltaPercent: 0.084,
+        factor: 1.084,
+        status: "above",
+      },
+      // Tomorrow's share of the same plan, at the same factor — a Tuesday
+      // worth less than a Monday is asked for less.
+      nextDayTarget: {
+        state: "ok",
+        date: "2026-07-28",
+        day: 2,
+        historical: 108000,
+        target: 117072,
+        delta: 9072,
         deltaPercent: 0.084,
         factor: 1.084,
         status: "above",

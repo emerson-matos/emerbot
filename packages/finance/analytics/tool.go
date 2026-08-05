@@ -36,9 +36,10 @@ func analysisTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 		Name: "get_analysis",
 		Description: "Retorna a análise financeira completa de um mês: saúde financeira, " +
 			"tendências vs mês passado, comparação da semana atual com a anterior, " +
-			"progresso e meta do dia de hoje, projeção de caixa e " +
+			"progresso, meta de faturamento de hoje e de amanhã, projeção de caixa " +
+			"do mês e do dia seguinte e " +
 			"recomendações. Use para perguntas abertas como \"como estamos?\", " +
-			"\"vamos bater a meta?\" ou \"o que devo fazer?\". A resposta lista em " +
+			"\"vamos bater a meta?\", \"como estamos para amanhã?\" ou \"o que devo fazer?\". A resposta lista em " +
 			"secoes_disponiveis os detalhamentos que existem mas não vêm por " +
 			"padrão; para trazê-los, chame de novo pedindo em \"secoes\".",
 		Parameters: &genai.Schema{
