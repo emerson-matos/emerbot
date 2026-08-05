@@ -256,8 +256,13 @@ export interface Period {
 }
 
 export interface WeekdayStat {
+  /**
+   * time.Weekday / getDay(): 0 = Sunday. The only identity this carries — the
+   * Portuguese label it used to ship beside it was fed back into a lookup
+   * table here, so the backend's spelling decided what the browser printed.
+   * Name it with lib/weekdays.
+   */
   day: number;
-  label: string;
   avg: number;
   count: number;
   isToday: boolean;
@@ -317,7 +322,13 @@ export interface WeekComparison {
   pace: WeekPace;
   projectedWeekly: number;
   monthlyTarget: number;
-  labels: string[];
+  /**
+   * The week so far, one entry per day that has happened, as getDay() numbers
+   * (0 = Sunday). Name them with lib/weekdays — they used to arrive as
+   * abbreviated Portuguese from Go, which made the axis depend on the
+   * backend's spelling.
+   */
+  days: number[];
 }
 
 /**
@@ -386,14 +397,35 @@ export const TodayTargetScale = {
 export type TodayTargetScale =
   (typeof TodayTargetScale)[keyof typeof TodayTargetScale];
 
+export const TodayTargetState = {
+  /** A real ask: the amounts below are meaningful. */
+  OK: "ok",
+  /** The month has ended — there is no "today" inside it to sell on. */
+  ClosedMonth: "mes_fechado",
+  /** No revenue goal set, so no share of one to ask for today. */
+  NoGoal: "sem_meta",
+  /** The goal is already reached. The one absence that is good news. */
+  GoalMet: "meta_batida",
+  /** Nothing in the trailing window to price any remaining day from. */
+  NoHistory: "sem_historico",
+  /** A weekday that never traded: the pharmacy does not open on it. */
+  ClosedWeekday: "dia_sem_movimento",
+} as const;
+export type TodayTargetState =
+  (typeof TodayTargetState)[keyof typeof TodayTargetState];
+
 export interface TodayTarget {
   /**
-   * False when there is no calculable target for today — no historical basis,
-   * a weekday the pharmacy does not trade, a goal already met, a closed month.
-   * The other fields are zero then and must not be rendered.
+   * Whether there is an ask today and, when there is not, why. Only `ok`
+   * leaves the amounts below meaningful — every other state zeroes them.
+   *
+   * This replaced a bare `valid: boolean`, which could not tell "a meta já foi
+   * batida" from "não há histórico": rendering both as the same blank made the
+   * good news indistinguishable from the gap in the data.
    */
-  valid: boolean;
-  weekday: string;
+  state: TodayTargetState;
+  /** time.Weekday / getDay(): 0 = Sunday. Name it with lib/weekdays. */
+  day: number;
   /** What this weekday usually brings, over a whole day. */
   historical: number;
   /** What it has to bring today to keep the month on its goal. */
@@ -424,8 +456,6 @@ export interface Projection {
   gap: number;
   onTrack: boolean;
   daysRemaining: number;
-  /** What each day left must bring, measured from `actual`, to reach `target`. */
-  neededPerDay: number;
   /**
    * Render this as a qualifier; do not re-derive one from the amounts. The
    * backend is the only thing that knows how wide the window was and how much

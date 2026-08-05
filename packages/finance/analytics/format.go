@@ -8,13 +8,23 @@ import (
 	"time"
 )
 
-// weekdayLabels is indexed by time.Weekday (0=Sunday), matching the
-// WeekdayStat.Day numbering the dashboard already renders.
-var weekdayLabels = [7]string{"Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"}
+// weekdayNames is the full Portuguese name for each weekday, indexed by
+// time.Weekday (0=Sunday). It is used only where this package is already
+// writing Portuguese prose — the WhatsApp digest and the bot payload, both of
+// which are read aloud. The structured types carry the weekday as a number and
+// no label at all: a name is a rendering, and rendering happens at the edge
+// that knows which language it is speaking.
+var weekdayNames = [daysInWeek]string{"domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"}
 
-// weekdayFullLabels is the full Portuguese name for each weekday, used in the
-// chatbot payload so the model can read them aloud naturally.
-var weekdayFullLabels = [7]string{"domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"}
+// weekdayArticle is "um"/"uma" for each weekday: segunda through sexta are
+// -feira and so feminine, domingo and sábado are not. A single hardcoded "uma"
+// read "uma domingo" two days a week.
+var weekdayArticle = [daysInWeek]string{"um", "uma", "uma", "uma", "uma", "uma", "um"}
+
+// weekdayWithArticle renders "uma terça" / "um domingo".
+func weekdayWithArticle(d time.Weekday) string {
+	return weekdayArticle[int(d)] + " " + weekdayNames[int(d)]
+}
 
 // monthAbbrev mirrors what pt-BR gives for {month: 'short'} — the trailing dot
 // included, because that is what the dashboard labels used to show.
@@ -52,10 +62,9 @@ func formatBRL(centavos int64) string {
 	return b.String()
 }
 
-// There is deliberately no float variant of formatBRL. The per-day rate was
-// the only fractional amount that reached the copy, and it is rounded to a
-// whole centavo in Projection.NeededPerDay — one rounding, at the point the
-// number is derived, rather than one per consumer that prints it.
+// There is deliberately no float variant of formatBRL: every amount that
+// reaches the copy is already a whole centavo, rounded once where it was
+// derived rather than once per consumer that prints it.
 
 // dayMonthLabel renders "12 de jul." — the short day label used for
 // highlights.

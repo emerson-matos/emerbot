@@ -160,8 +160,7 @@ func (r dailyRates) weekdayStats(now time.Time) []WeekdayStat {
 	stats := make([]WeekdayStat, 0, daysInWeek)
 	for d := range r.avg {
 		stats = append(stats, WeekdayStat{
-			Day:     d,
-			Label:   weekdayLabels[d],
+			Day:     time.Weekday(d),
 			Avg:     r.avg[d],
 			Count:   r.weeks[d],
 			IsToday: d == today,

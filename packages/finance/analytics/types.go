@@ -11,6 +11,8 @@
 // Every amount is centavos (int64), matching the rest of the codebase.
 package analytics
 
+import "time"
+
 // HealthStatus is the traffic light shown at the top of the analysis.
 type HealthStatus string
 
@@ -145,12 +147,20 @@ type Period struct {
 }
 
 // WeekdayStat is the Gaussian-weighted average faturamento for one day of the
-// week over the trailing 8-week window. Day is 0=Sunday, matching JavaScript's
-// getDay(). Count is the number of distinct weeks that saw revenue (not the
-// number of entries), and Basis qualifies how much data the average stands on.
+// week over the trailing 8-week window. Count is the number of distinct weeks
+// that saw revenue (not the number of entries), and Basis qualifies how much
+// data the average stands on.
+//
+// Day is the identity of the weekday and the only one this struct carries. It
+// used to ship an abbreviated Portuguese Label beside it, which the browser then
+// used as a *map key* to recover the full name — so the language of the backend
+// decided whether a tooltip in the browser said "terça" or fell back to printing
+// "Ter", and adding a second locale meant changing a Go array and hoping every
+// lookup table downstream agreed. A weekday is 0–6; the words for it belong to
+// whatever is doing the talking.
 type WeekdayStat struct {
-	Day     int             `json:"day"`
-	Label   string          `json:"label"`
+	// Day is time.Weekday: 0=Sunday, matching JavaScript's getDay().
+	Day     time.Weekday    `json:"day"`
 	Avg     int64           `json:"avg"`
 	Count   int             `json:"count"`
 	IsToday bool            `json:"isToday"`
@@ -247,8 +257,13 @@ type WeekComparison struct {
 	// to carry a second one derived from last week's flat daily rate, which
 	// disagreed with the projection the dashboard drew from the weekday
 	// averages.
-	MonthlyTarget int64    `json:"monthlyTarget"`
-	Labels        []string `json:"labels"`
+	MonthlyTarget int64 `json:"monthlyTarget"`
+	// Days is the week so far, one entry per day that has actually happened, as
+	// time.Weekday. It used to be abbreviated Portuguese ("Dom", "Seg", …) that
+	// the browser fed back into a lookup table to recover the full name; the
+	// chart axis and the "hoje é …" sentence therefore both depended on Go's
+	// spelling, and a missing key silently printed the abbreviation.
+	Days []time.Weekday `json:"days"`
 }
 
 // WeekPace is this week against last week over the same *finished* days —
@@ -317,6 +332,41 @@ const (
 	PaceAbove TodayTargetScale = "above"
 )
 
+// TodayTargetState says whether the day has an ask, and when it does not, which
+// of the five reasons it is.
+//
+// It replaced a bare `valid bool`, which could not answer the only question a
+// reader has when the card is missing: why. Those five reasons are five
+// different sentences — "a meta do mês já foi batida" is good news, "não há
+// histórico para calcular" is a gap in the data, "a farmácia não abre domingo"
+// is a fact about the business, and rendering all of them as the same blank
+// space made the good news indistinguishable from the failure. The bot has the
+// same problem in prose: asked "quanto preciso vender hoje?", it must be able to
+// say which of these it is instead of going quiet or, worse, inventing a number.
+type TodayTargetState string
+
+const (
+	// TodayTargetOK is a real ask: the amounts on TodayTarget are meaningful.
+	TodayTargetOK TodayTargetState = "ok"
+	// TodayTargetClosedMonth is a month that has already ended — there is no
+	// "today" inside it to sell on.
+	TodayTargetClosedMonth TodayTargetState = "mes_fechado"
+	// TodayTargetNoGoal is a month with no revenue target: nothing to pace
+	// against, so no share of it to ask for today.
+	TodayTargetNoGoal TodayTargetState = "sem_meta"
+	// TodayTargetGoalMet is the target already reached. There is no ask left,
+	// and this is the one absence that is good news — consumers must say so
+	// rather than render the same blank as the cases below.
+	TodayTargetGoalMet TodayTargetState = "meta_batida"
+	// TodayTargetNoHistory is a trailing window with nothing in it to price any
+	// remaining day from.
+	TodayTargetNoHistory TodayTargetState = "sem_historico"
+	// TodayTargetClosedWeekday is a weekday that never traded across the whole
+	// window — the pharmacy does not open on it, so asking it for a share of the
+	// goal would be asking a closed door.
+	TodayTargetClosedWeekday TodayTargetState = "dia_sem_movimento"
+)
+
 // TodayTarget is the recommended revenue target for the current day.
 //
 // Rather than evenly distributing the remaining goal across the calendar,
@@ -328,15 +378,22 @@ const (
 //
 // Internally this is computed using Gaussian-smoothed weekday averages.
 //
-// Unlike NeededPerDay, it accounts for weekday seasonality. NeededPerDay is
-// the arithmetic average per day, useful for summaries and chatbot responses
-// where the question is "how much per day on average?" rather than "how much
-// should I sell today?".
+// It is deliberately the only per-day ask the analysis produces. The one it
+// replaced divided what was missing by the days left, which asks a Sunday for
+// as much as a Monday — on a pharmacy whose Sundays bring a third of a Monday
+// that is not a target, it is a number nobody can hit, printed every Sunday.
 type TodayTarget struct {
-	// Valid is false when there is no calculable daily target — a closed month,
-	// no historical basis, or the day of the week the pharmacy does not open.
-	Valid        bool             `json:"valid"`
-	Weekday      string           `json:"weekday"`
+	// State says whether there is an ask today and, when there is not, why.
+	// TodayTargetOK is the only value under which the amounts below mean
+	// anything; every other value leaves them zero.
+	State TodayTargetState `json:"state"`
+	// Day is the weekday the ask is for — time.Weekday, 0=Sunday. Like
+	// WeekdayStat.Day it travels as a number: naming it is the job of whatever
+	// speaks to the user, in whatever language it speaks.
+	Day time.Weekday `json:"day"`
+	// Historical is what this weekday usually brings, over a whole day; Target
+	// is what it has to bring today; Delta and DeltaPercent are the difference,
+	// negative when today can afford to be lighter.
 	Historical   int64            `json:"historical"`
 	Target       int64            `json:"target"`
 	Delta        int64            `json:"delta"`
@@ -344,6 +401,12 @@ type TodayTarget struct {
 	Factor       float64          `json:"factor"`
 	Status       TodayTargetScale `json:"status"`
 }
+
+// Asked reports whether there is a target to show. It reads better than
+// comparing against the state at every call site, and it is deliberately the
+// only thing collapsing the states into a boolean — consumers that render an
+// absence must say *which* absence, and for that they need State itself.
+func (t TodayTarget) Asked() bool { return t.State == TodayTargetOK }
 
 // Projection is where the month lands and what it would take to close the gap
 // to the income goal. Every amount is faturamento (see isFaturamento),
@@ -576,7 +639,15 @@ type KPIs struct {
 // weekly-pace one, and consumers read the list whole instead of skipping it.
 // Added projection.coverage, projection.status and projection.todayTarget, all
 // verdicts the consumers used to derive for themselves or not have at all.
-const SchemaVersion = 6
+//
+// 7: weekdays no longer carry a Portuguese label and weekComparison.labels
+// became weekComparison.days — every weekday travels as time.Weekday (0=Sunday)
+// and is named by whatever renders it. projection.todayTarget.valid became
+// .state, which says *why* there is no ask today instead of collapsing five
+// reasons and a success into one false. Nothing the diff reads changed meaning,
+// but the fields it would read on an old snapshot are gone, and reading a
+// missing `state` as "" would grade every stored day as an absent target.
+const SchemaVersion = 7
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

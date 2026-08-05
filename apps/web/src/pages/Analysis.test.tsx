@@ -55,7 +55,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       pace: { current: 524604, previous: 813240, days: 3, change: -35, direction: 'down' },
       projectedWeekly: 524604,
       monthlyTarget: 3600000,
-      labels: [],
+      days: [],
     },
     highlights: {
       bestIncome: { date: "—", label: "Sem dados", amount: 0 },
@@ -88,8 +88,8 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       coverage: 0.9362,
       status: "warning",
       todayTarget: {
-        valid: true,
-        weekday: "Seg",
+        state: "ok",
+        day: 1,
         historical: 111700,
         target: 121100,
         delta: 9400,
@@ -184,7 +184,7 @@ describe("Analysis page", () => {
   it("labels the per-day ask by every day left, not business days", () => {
     renderWith(analysisData());
 
-    // When todayTarget is valid, it shows "Meta para hoje" instead of "Necessário por dia"
+    // When todayTarget.state is "ok", it shows "Meta para hoje" instead of a per-day ask
     expect(screen.getByText("Meta para hoje")).toBeInTheDocument();
     expect(screen.queryByText(/dia útil/)).not.toBeInTheDocument();
   });
@@ -195,7 +195,7 @@ describe("Analysis page", () => {
       ...data.projection,
       todayTarget: {
         ...data.projection.todayTarget,
-        valid: true,
+        state: "ok",
         target: 91700,
         historical: 111700,
         delta: -20000,
@@ -215,7 +215,7 @@ describe("Analysis page", () => {
     const data = analysisData();
     data.projection = {
       ...data.projection,
-      todayTarget: { ...data.projection.todayTarget, weekday: "Dom" },
+      todayTarget: { ...data.projection.todayTarget, day: 0 },
     };
     renderWith(data);
 
@@ -286,13 +286,12 @@ describe("Analysis page", () => {
 
   it("keeps every section on the page and states its empty case", () => {
     const data = analysisData();
-    // A month with no goal has no target for today either: the backend computes
-    // one from `Target - (Actual - todayRevenue)` and leaves Valid false when
-    // that is not positive (analytics/projection.go).
+    // A month with no goal has no target for today either: the backend says so
+    // with state "sem_meta" rather than a bare absence (analytics/projection.go).
      data.projection = {
        ...data.projection,
        target: 0,
-       todayTarget: { ...data.projection.todayTarget, valid: false },
+       todayTarget: { ...data.projection.todayTarget, state: "sem_meta" },
      };
     data.recommendations = [];
     data.expenseComposition = [];
