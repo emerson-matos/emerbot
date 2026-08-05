@@ -752,7 +752,7 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         <HealthSection data={analysis.health} />
         <RecommendationSection data={analysis.recommendations} />
       </div>
-      <Section title="O caixa dos próximos dias" icon={Wallet}>
+      <Section title="Entradas e saídas previstas" icon={Wallet}>
         <CashWeek position={analysis.cashPosition} today={todayISO()} />
       </Section>
 

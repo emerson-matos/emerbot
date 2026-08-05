@@ -133,6 +133,15 @@ describe("cashWeekSeries", () => {
     expect(today["Saída"]).toBe(150);
   });
 
+  it("carries the balance at the end of each day", () => {
+    // The bars say what moves; only this says whether the account survives it.
+    const series = cashWeekSeries(cashWeekDays(forecast, "2026-08-05"));
+
+    expect(series.map((d) => d["Saldo projetado"])).toEqual([
+      5000, 5000, 5000, 5000, -400, 5000, 5000,
+    ]);
+  });
+
   it("leaves a closed day with no expected inflow at all", () => {
     // The backend credits an ordinary day's receipts only from today on, so a
     // past column is green and red and nothing else — which is what makes it

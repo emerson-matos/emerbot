@@ -106,6 +106,17 @@ export interface CashWeekBar {
   "Entrada lançada": number;
   "Entrada esperada": number;
   "Saída": number;
+  /**
+   * The balance at the end of that day — the question the bars alone cannot
+   * answer. "Entra R$ 1.200,00 e saem R$ 8.500,00 no sábado" is only alarming
+   * if there is nothing in the account to absorb it, and this is the line that
+   * says so.
+   *
+   * Projected end to end, which is why it is named that way: the days ahead
+   * are credited with an ordinary day's receipts, and even the anchor's figure
+   * counts a receivable that came due and may not have been paid.
+   */
+  "Saldo projetado": number;
 }
 
 const WEEKDAY_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -135,6 +146,7 @@ export function cashWeekSeries(days: CashWeekDay[]): CashWeekBar[] {
       "Entrada lançada": day.scheduledIn / 100,
       "Entrada esperada": day.expectedIn / 100,
       "Saída": day.scheduledOut / 100,
+      "Saldo projetado": day.balance / 100,
     };
   });
 }
