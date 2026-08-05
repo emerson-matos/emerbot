@@ -365,11 +365,51 @@ const (
 	// window — the pharmacy does not open on it, so asking it for a share of the
 	// goal would be asking a closed door.
 	DayTargetClosedWeekday DayTargetState = "dia_sem_movimento"
-	// DayTargetMonthOver is the day after the analysed month's last one. It
-	// belongs to a month with its own goal, its own gap and its own plan, and
-	// none of them are knowable from here — so the next day is named as such
-	// rather than priced off this month's arithmetic. Only NextDay can carry it.
+	// DayTargetMonthOver is a day past the analysed month's last one. It belongs
+	// to a month with its own goal, its own gap and its own plan, and none of
+	// them are knowable from here — so it is named as such rather than priced
+	// off this month's arithmetic.
 	DayTargetMonthOver DayTargetState = "mes_acaba_hoje"
+	// DayTargetFutureMonth is a date in a month that has not started. It is told
+	// apart from a closed one because monthClock cannot: a month that is not the
+	// one Now falls in reports inProgress = false either way, so September asked
+	// about in August would otherwise answer "mes_fechado" — a month that has
+	// already ended, which is the opposite of the truth.
+	DayTargetFutureMonth DayTargetState = "mes_futuro"
+	// DayTargetClosedDay is a day that has finished. There is no ask on it and
+	// there never will be again, which is not a gap in the data and not bad
+	// news — it is the day having a result instead of a target. The figures that
+	// do mean something (Realized, Historical) are filled in.
+	DayTargetClosedDay DayTargetState = "dia_fechado"
+)
+
+// DayBasis says what kind of thing a day's figures are: something that
+// happened, something happening, or something being asked for.
+//
+// The three are not interchangeable and the distinction is not cosmetic. The
+// line already runs through this package — ADR-017 drew it as "what is measured
+// ends yesterday, what is asked for starts today" — but until now it was only
+// implicit in *which* field a consumer happened to read. Once a day's ask can
+// be requested for any date, the reader has to be told which side of the line
+// the answer came from, or "R$ 1.052,00 na quarta" reads the same whether the
+// Wednesday has happened or not.
+type DayBasis string
+
+const (
+	// DayRealized is a day that has closed. Its Realized is fact and it carries
+	// no Target: reconstructing the ask a past day would have had means
+	// re-running the analysis as it stood that morning, and quoting today's plan
+	// over a day nobody can sell on any more is a target invented backwards. A
+	// closed day is reported, not asked.
+	DayRealized DayBasis = "realizado"
+	// DayInProgress is today: an ask that still stands, beside what the till has
+	// taken so far. Both cover the whole day, so they are directly comparable —
+	// which is the one comparison someone closing the day needs.
+	DayInProgress DayBasis = "em_curso"
+	// DayProjected is a day still to come. Its Target assumes every day before
+	// it lands on its own — the plan is one distribution of the gap, so a slice
+	// of it means nothing except alongside the slices ahead of it.
+	DayProjected DayBasis = "projetado"
 )
 
 // DayTarget is the recommended revenue target for one day still to be traded.
@@ -393,19 +433,36 @@ const (
 // month's plan in hand and no share of it for tomorrow, so it answered with the
 // weekday's plain historical average — what a Wednesday *usually* brings, which
 // is not what this Wednesday is being asked for. See ADR-020.
+//
+// Then it existed for today and tomorrow, one field each, which is the same
+// mistake with one more day on it: the question after "e amanhã?" is "e no
+// sábado?". The day is a parameter now, and Basis says which regime the answer
+// came back in — see ADR-021.
 type DayTarget struct {
 	// State says whether there is an ask on this day and, when there is not,
-	// why. DayTargetOK is the only value under which the amounts below mean
-	// anything; every other value leaves them zero.
+	// why. DayTargetOK is the only value under which Target below means
+	// anything; every other value leaves it zero.
+	//
+	// Realized is deliberately outside that rule: what a day sold is fact
+	// whether or not there was a goal to measure it against.
 	State DayTargetState `json:"state"`
+	// Basis is what kind of figure this is — a day that closed, the day being
+	// traded, or a day still ahead. Consumers must render it; a target and a
+	// result read identically without it.
+	Basis DayBasis `json:"basis"`
 	// Date is the calendar day the ask is for, "YYYY-MM-DD". Empty when there
-	// is no such day to name — a closed month has no today, and the day after
-	// the month's last one is not this month's to price.
+	// is no such day to name — a closed month has no today, and a date outside
+	// the analysed month is not this month's to price.
 	Date string `json:"date,omitempty"`
 	// Day is the weekday the ask is for — time.Weekday, 0=Sunday. Like
 	// WeekdayStat.Day it travels as a number: naming it is the job of whatever
 	// speaks to the user, in whatever language it speaks.
 	Day time.Weekday `json:"day"`
+	// Realized is what the day has actually sold. It is the whole point of a
+	// closed day and the missing half of an open one: Target is a whole-day
+	// figure measured from the morning, so without this there is no way to say
+	// whether the day met it. Zero for a day still ahead.
+	Realized int64 `json:"realized"`
 	// Historical is what this weekday usually brings, over a whole day; Target
 	// is what it has to bring; Delta and DeltaPercent are the difference,
 	// negative when the day can afford to be lighter.
@@ -452,27 +509,45 @@ type Projection struct {
 	// "Ritmo suficiente".
 	Coverage float64          `json:"coverage"`
 	Status   ProjectionStatus `json:"status"`
-	// TodayRevenue is what has already been sold today, on the transaction
-	// basis. It is the companion TodayTarget spent a release without: the ask
-	// is stated as a whole day's figure, measured from what the till held when
-	// the day opened, so without what the day has actually taken there is no
-	// way to say whether it was met. A consumer closing the day needs both.
-	//
-	// Zero for a closed month, which has no today to have sold anything on.
-	TodayRevenue int64 `json:"todayRevenue"`
 	// TodayTarget scales today's historical weekday average by the factor that
-	// would close the remaining gap if applied to every remaining day uniformly.
-	TodayTarget DayTarget `json:"todayTarget"`
-	// NextDayTarget is the same plan's share for tomorrow, and it is the same
-	// Factor: the two are one distribution of the gap over the days left, not
-	// two readings of it. Tomorrow's ask therefore assumes today lands on
-	// TodayTarget — which is exactly what Projected assumes about today as well,
-	// so the payload cannot say one thing in the month's projection and another
-	// in the day's.
+	// would close the remaining gap if applied to every remaining day uniformly,
+	// and carries what today has sold so far beside it.
 	//
-	// A day is not a forecast of itself: this is a share of what is missing, so
-	// it moves when the gap moves and not when tomorrow gets closer.
-	NextDayTarget DayTarget `json:"nextDayTarget"`
+	// It is the only day this struct names, and deliberately so: ADR-019 needs
+	// today's ask to arrive without being asked for, or the model derives one.
+	// Every *other* day is a parameter — see Analysis.DayTargetOn and the
+	// get_meta_do_dia tool. A field per day is not an answer to "e no sábado?".
+	TodayTarget DayTarget `json:"todayTarget"`
+	// Plan is how the gap is spread over the days the month has left, and it is
+	// published rather than kept inside the build because it is what lets any
+	// day be priced from an assembled Analysis — including one read back from a
+	// stored snapshot.
+	//
+	// It is deliberately not derived from TodayTarget. Those two answer
+	// different questions and diverge in a case that is not rare: on a Sunday a
+	// pharmacy does not open, TodayTarget is "dia_sem_movimento" with no factor
+	// at all, while the plan behind it is perfectly fine and still prices every
+	// other day of the week. Reading the plan off today would spread today's
+	// closed door across the whole month.
+	Plan Plan `json:"plan"`
+}
+
+// Plan is one distribution of what is missing over the days that can still
+// sell: every remaining day asked for its own weekday average times a shared
+// Factor. A Factor of 1.08 asks each of them for 8% above its usual rhythm, and
+// by construction the slices add back up to the gap:
+//
+//	Σ média[dia_da_semana(d)] × Factor, over d in today..end  ==  what is missing
+//
+// which is the property a flat daily average never had — see ADR-019 for the
+// R$ 1.200,00 it printed on a Sunday worth R$ 600,00.
+//
+// State is DayTargetOK when there is a distribution at all, and otherwise names
+// why there is none — no goal, goal already met, no trading history, a month
+// that has ended. Factor means nothing unless State is DayTargetOK.
+type Plan struct {
+	State  DayTargetState `json:"state"`
+	Factor float64        `json:"factor"`
 }
 
 // AccelerationPct returns how much the projected revenue needs to grow, as a
@@ -588,7 +663,27 @@ type CashPosition struct {
 	// with a month-end balance and the whole month's scheduled expenses — both
 	// true, neither about tomorrow, and the second one alarming out of context.
 	// A day the pharmacy is about to open is a day it can be told about.
+	//
+	// It is a view of Forecast, not a second reading: the same entry, named
+	// because the bot's payload has no clock to find it with.
 	NextDay *DayCash `json:"nextDay,omitempty"`
+	// Forecast is the whole curve, one entry per day of the month, and it is the
+	// series every other figure here is read off — EndOfMonthProjection is its
+	// last Balance, LowestProjected its smallest.
+	//
+	// It is published because the dashboard was drawing a different curve. The
+	// chart plotted the *booked* running balance and labelled the days ahead
+	// "projeção", which is the curve this file exists to correct: the month's
+	// bills are all booked on the 1st and its sales are recorded as they happen,
+	// so the tail dives every month. The page therefore drew a collapse while
+	// the card beside it and the bot both said the month ends in the black.
+	// Drawing it needs the series, and the browser must not rebuild it — that is
+	// how the projection ended up computed twice and differently before.
+	//
+	// It is deliberately absent from ToolPayload: thirty-one days of series
+	// costs tokens on every question a chat asks, and the bot needs a day, not a
+	// curve.
+	Forecast []DayCash `json:"forecast"`
 }
 
 // DayCash is one day of the runway, split into what is known and what is
@@ -720,7 +815,22 @@ type KPIs struct {
 // the one thing DayTargetState has no meaning for — every real value names
 // either an ask or the reason there is none. An unnamed absence is exactly what
 // the field was introduced to stop.
-const SchemaVersion = 8
+//
+// 9: projection.nextDayTarget and projection.todayRevenue are gone. A field per
+// day does not answer "e no sábado?", so the day became a parameter — see
+// Analysis.DayTargetOn and ADR-021. What today sold moved onto the day it
+// describes (dayTarget.realized) and the distribution the asks come from is
+// published as projection.plan, which is what lets any day be priced from an
+// assembled Analysis, this one or a stored one.
+//
+// Also in 9: dayTarget.basis says whether a day's figures are a result, a day
+// in progress or a bet — the same three numbers otherwise read identically
+// either side of today. And cashPosition.forecast carries the whole projected
+// curve, because the dashboard was drawing the *booked* one and captioning its
+// tail "projeção": the month's bills are booked on the 1st and its sales
+// recorded as they happen, so that line dives every month while the card beside
+// it said the month closes in the black.
+const SchemaVersion = 9
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

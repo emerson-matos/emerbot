@@ -87,11 +87,12 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       // 3.370.501 / 3.600.000 — short of the goal, but not far short.
       coverage: 0.9362,
       status: "warning",
-      todayRevenue: 48200,
       todayTarget: {
         state: "ok",
+        basis: "em_curso",
         date: "2026-07-27",
         day: 1,
+        realized: 48200,
         historical: 111700,
         target: 121100,
         delta: 9400,
@@ -99,19 +100,9 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
         factor: 1.084,
         status: "above",
       },
-      // Tomorrow's share of the same plan, at the same factor — a Tuesday
-      // worth less than a Monday is asked for less.
-      nextDayTarget: {
-        state: "ok",
-        date: "2026-07-28",
-        day: 2,
-        historical: 108000,
-        target: 117072,
-        delta: 9072,
-        deltaPercent: 0.084,
-        factor: 1.084,
-        status: "above",
-      },
+      // The distribution today's ask is one slice of. Every other day of the
+      // month is priced from it — see the backend's get_meta_do_dia.
+      plan: { state: "ok", factor: 1.084 },
     },
     history: [],
     cashPosition: {
@@ -121,6 +112,11 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       lowestProjected: 2810655,
       lowestProjectedDate: "2026-07-31",
       expectsReceipts: true,
+      forecast: [
+        { date: "2026-07-26", balance: 3050000, scheduledIn: 0, scheduledOut: 0, expectedIn: 0 },
+        { date: "2026-07-27", balance: 3031155, scheduledIn: 0, scheduledOut: 20000, expectedIn: 0 },
+        { date: "2026-07-28", balance: 2810655, scheduledIn: 0, scheduledOut: 330000, expectedIn: 109500 },
+      ],
     },
     recommendations: [
       {

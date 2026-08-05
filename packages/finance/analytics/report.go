@@ -325,21 +325,13 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	// makes them the same silence. The amounts appear only under "ok" — a
 	// "meta: 0" would be read aloud as a target of nothing.
 	payload["meta_de_hoje"] = dayTargetToolPayload(a.Projection.TodayTarget)
-	// Tomorrow's share of the same plan — the same factor, one weekday over.
-	//
-	// It exists because the question is asked at the end of the day, when the
-	// day's own ask is spent: "já registrei o faturamento de hoje, como estamos
-	// para amanhã?". All the model had was media_por_dia_da_semana, so it
-	// answered with what a Wednesday *usually* brings and said there was no
-	// target for tomorrow — while the plan that prices tomorrow was sitting in
-	// the same payload, one field away. See ADR-020.
-	payload["meta_de_amanha"] = dayTargetToolPayload(a.Projection.NextDayTarget)
-	// What today has actually sold, so the ask above has something to be met
-	// against. meta_de_hoje is a whole-day figure measured from the morning, and
-	// on its own it cannot answer "bati a meta de hoje?" — the model was reading
-	// it aloud beside a month-to-date faturamento that includes today, and there
-	// was no honest subtraction between the two.
-	payload["faturamento_de_hoje"] = reais(a.Projection.TodayRevenue)
+	// Any other day is a call away, and the payload says so rather than leaving
+	// the model to conclude that today is the only day this analysis can price.
+	// It briefly shipped a meta_de_amanha field beside the one above, which is
+	// the same mistake with one more day on it — the question after "e amanhã?"
+	// is "e no sábado?". See ADR-021.
+	payload["meta_de_outro_dia"] = fmt.Sprintf(
+		"Para a meta de qualquer outro dia (amanhã, sábado, o dia 15), chame %s com as datas.", dayTargetToolName)
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
@@ -389,6 +381,10 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 // Sunday the shop does not open, the model must be able to say so instead of
 // treating the silence as licence to divide the gap by the days left.
 //
+// `apuracao` is what tells a target from a result. The same three numbers read
+// as a plan on a Wednesday still to come and as a fact on one that has closed,
+// and a model reading them aloud has no other way to know which it is holding.
+//
 // The date travels with the ask wherever there is a day to name — including the
 // cases with no amounts, because "não abre nesse dia" is about a specific day
 // and the model resolves "amanhã" against a system prompt, not against this
@@ -398,15 +394,29 @@ func dayTargetToolPayload(t DayTarget) map[string]any {
 	if t.Date == "" {
 		return payload
 	}
+	payload["apuracao"] = string(t.Basis)
 	payload["data"] = t.Date
 	payload["dia_da_semana"] = weekdayNames[int(t.Day)]
-	if !t.Asked() {
+	// What the day sold is fact, and it is reported whether or not there was a
+	// goal to measure it against — a month with no meta still has days that
+	// traded. It is absent only for a day that has not begun, where a zero would
+	// read as a day that sold nothing.
+	if t.Basis != DayProjected {
+		payload["realizado"] = reais(t.Realized)
+	}
+	if t.Historical <= 0 {
 		return payload
 	}
-	payload["meta"] = reais(t.Target)
 	payload["media_historica"] = reais(t.Historical)
 	payload["diferenca_pct"] = roundToInt(t.DeltaPercent * 100)
 	payload["status"] = string(t.Status)
+	// A closed day carries no target: today's plan distributes what is missing
+	// now, and charging it to a day nobody can sell on any more is a goal
+	// invented backwards. diferenca_pct above is then how the day did against a
+	// usual one, which is the reading that day actually has.
+	if t.Asked() && t.Basis != DayRealized {
+		payload["meta"] = reais(t.Target)
+	}
 	return payload
 }
 

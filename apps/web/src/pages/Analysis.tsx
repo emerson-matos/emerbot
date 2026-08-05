@@ -25,7 +25,8 @@ import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { weekdayFull } from '@/lib/weekdays'
 import { currentMonthKey } from '@/lib/entries'
-import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation, TrendDirection } from '@/api/types'
+import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, Recommendation, TrendDirection } from '@/api/types'
+import { projectionBasisNote, projectionTone } from '@/lib/projection'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -184,13 +185,6 @@ function trendTone(trend: { direction: TrendDirection; previous: number }): stri
 // Three levels, matching the severity the recommendation carries. Colouring by
 // the boolean onTrack instead put "97% da meta" in red under a green
 // "Ritmo suficiente" on the same screen.
-const PROJECTION_TONE: Record<ProjectionStatus, string> = {
-  '': 'text-muted-foreground',
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-destructive',
-}
-
 function pluralDias(n: number): string {
   return n === 1 ? '1 dia' : `${n} dias`
 }
@@ -352,19 +346,6 @@ function HealthSection({ data }: { data: Analysis['health'] }) {
   )
 }
 
-// What the projection is standing on, in the user's words. The backend decides
-// which one applies (Projection.basis) — the card must not infer confidence
-// from the amounts, since only the backend knows how much of the window traded.
-//
-// A closed month has no note: nothing was estimated, the figure *is* the month's
-// faturamento, and captioning it "pela média das últimas 8 semanas" would
-// present the one number that is not a forecast as though it were one.
-const projectionBasisNote: Partial<Record<ProjectionBasis, string>> = {
-  janela: 'Pela média de cada dia da semana nas últimas 8 semanas, com peso maior para as mais recentes.',
-  parcial: 'Menos de uma semana de vendas registradas — ainda vai mudar bastante.',
-  sem_base: 'Sem vendas registradas nas últimas 8 semanas para projetar.',
-}
-
 /**
  * GoalBar draws the month against its goal on one scale: what has been billed,
  * what the projection adds to it, and where the goal sits.
@@ -458,7 +439,7 @@ function ProjectionSection({ projection, faturamento, period }: {
           <p className="text-4xl font-semibold tracking-tight tabular-nums">
             {formatBRL(projection.projected)}
           </p>
-          <p className={`mt-1 text-sm font-medium ${PROJECTION_TONE[projection.status]}`}>
+          <p className={`mt-1 text-sm font-medium ${projectionTone[projection.status]}`}>
             Equivale a {Math.round(projection.coverage * 100)}% da meta
           </p>
           {/* How the number was reached. The days still to come used to be

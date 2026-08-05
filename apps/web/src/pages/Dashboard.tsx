@@ -1,9 +1,10 @@
 import {
-  Wallet, TrendingUp, TrendingDown, Clock, Banknote,
+  Wallet, TrendingUp, TrendingDown, Clock, Banknote, Target,
 } from 'lucide-react'
 import {
-  useMonthlySummary, useCashFlow, useEntries, useMarkPaidMutation, useDeleteEntryMutation,
+  useMonthlySummary, useEntries, useMarkPaidMutation, useDeleteEntryMutation,
 } from '../api/queries'
+import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import KpiCard, { KpiCardContent, toneVar } from '../components/KpiCard'
 import GoalCard from '../components/GoalCard'
 import CashFlowChart from '../components/CashFlowChart'
@@ -16,6 +17,8 @@ import ToPayToday from './ToPayToday';
 import { formatBRL } from '@/lib/format'
 import { currentMonthKey } from '@/lib/entries'
 import { currentMonthRange } from '@/lib/period'
+import { projectionBasisNote, projectionTone } from '@/lib/projection'
+import type { YearMonth } from '@/api/types'
 
 function ExpenseTotal() {
   const currentMonth = currentMonthKey()
@@ -41,27 +44,81 @@ function ExpenseTotal() {
   )
 }
 
-function BalanceCard() {
-  const currentMonth = currentMonthKey()
-  const summaryQuery = useMonthlySummary(currentMonth)
-  const summary = summaryQuery.data ?? null
-  const balance = summary?.ExpectedBalance ?? 0
+// Where the month's balance lands, from the backend's projection — the same
+// figure the Analysis page and the WhatsApp bot quote.
+//
+// This card used to show summary.ExpectedBalance: the month's whole expected
+// inflow minus its whole expense, which on any early day of a month is every
+// bill already booked against sales nobody has made yet. That is the reading
+// ADR-017 found reporting a critical month every 1st, and the analysis stopped
+// using it — the dashboard kept it, because it read the summary directly.
+function CashProjectionCard() {
+  const currentMonth = currentMonthKey() as YearMonth
+  const analysisQuery = useMonthlyAnalysis(currentMonth)
+  const cash = analysisQuery.data?.cashPosition ?? null
+  const balance = cash?.endOfMonthProjection ?? 0
   const balanceTone = balance >= 0 ? 'positive' : 'negative'
 
   return (
     <KpiCard
       tone={balanceTone}
-      isLoading={summaryQuery.isLoading}
-      isError={summaryQuery.isError}
-      errorMessage="Erro ao carregar saldo"
+      isLoading={analysisQuery.isLoading}
+      isError={analysisQuery.isError}
+      errorMessage="Erro ao carregar projeção"
       className="min-h-26"
     >
       <KpiCardContent icon={Wallet} tone={balanceTone}>
-        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Saldo Previsto</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Projeção Fim do Mês</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar[balanceTone] }}>
           {formatBRL(balance)}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">Entradas − despesas previstas</p>
+        {/* What the projection assumes, said out loud — the days ahead are
+            credited with an ordinary day's receipts, and without any trading
+            history there is nothing to credit them with. */}
+        <p className="mt-1 text-xs text-muted-foreground">
+          {cash?.expectsReceipts === false
+            ? 'Só o que já está lançado — sem histórico para projetar'
+            : 'Contando o recebimento médio dos dias que faltam'}
+        </p>
+      </KpiCardContent>
+    </KpiCard>
+  )
+}
+
+// Where the month's faturamento lands against its goal. The Analysis page has
+// carried this since the projection moved to Go; the dashboard had the goal bar
+// (GoalCard) showing where the month *is* and nothing saying where it ends up.
+function RevenueProjectionCard() {
+  const currentMonth = currentMonthKey() as YearMonth
+  const analysisQuery = useMonthlyAnalysis(currentMonth)
+  const projection = analysisQuery.data?.projection ?? null
+
+  return (
+    <KpiCard
+      tone="info"
+      isLoading={analysisQuery.isLoading}
+      isError={analysisQuery.isError}
+      errorMessage="Erro ao carregar projeção de faturamento"
+      className="min-h-26"
+    >
+      <KpiCardContent icon={Target} tone="info">
+        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Faturamento Projetado</p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: toneVar.info }}>
+          {formatBRL(projection?.projected ?? 0)}
+        </p>
+        {/* The verdict and the percentage both come from the backend. Rounding
+            one here beside a colour decided there is how a screen once showed
+            "97% da meta" in red under a green "Ritmo suficiente". */}
+        {projection && projection.target > 0 ? (
+          <p className={`mt-1 text-xs font-medium ${projectionTone[projection.status]}`}>
+            {Math.round(projection.coverage * 100)}% da meta
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-muted-foreground">Sem meta definida para o mês</p>
+        )}
+        {projection && projectionBasisNote[projection.basis] && (
+          <p className="mt-1 text-xs text-muted-foreground">{projectionBasisNote[projection.basis]}</p>
+        )}
       </KpiCardContent>
     </KpiCard>
   )
@@ -151,12 +208,14 @@ function Receivables() {
 
 export default function Dashboard() {
   const { month: currentMonth, firstDay, lastDay } = currentMonthRange()
-  const cashflowQuery = useCashFlow(currentMonth)
+  // The chart draws the backend's projected curve, not the booked one — see
+  // CashFlowChart. GoalCard already asks for this analysis, so it costs nothing.
+  const analysisQuery = useMonthlyAnalysis(currentMonth as YearMonth)
   const entriesQuery = useEntries(firstDay, lastDay)
   const markPaid = useMarkPaidMutation()
   const deleteEntry = useDeleteEntryMutation()
 
-  const cashflow = cashflowQuery.data?.points ?? []
+  const forecast = analysisQuery.data?.cashPosition.forecast ?? []
   const entries = entriesQuery.data?.entries ?? []
 
   return (
@@ -170,7 +229,8 @@ export default function Dashboard() {
         <RevenueTotal />
         <CashInTotal />
         <ExpenseTotal />
-        <BalanceCard />
+        <CashProjectionCard />
+        <RevenueProjectionCard />
         <Receivables />
       </div>
 
@@ -180,7 +240,7 @@ export default function Dashboard() {
         <GoalCard />
       </div>
 
-      <CashFlowChart data={cashflow} />
+      <CashFlowChart data={forecast} />
       <IncomeExpenseChart />
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

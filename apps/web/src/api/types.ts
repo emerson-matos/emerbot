@@ -411,14 +411,38 @@ export const DayTargetState = {
   /** A weekday that never traded: the pharmacy does not open on it. */
   ClosedWeekday: "dia_sem_movimento",
   /**
-   * The day after the analysed month's last one. It belongs to a month with
-   * its own goal and its own gap, none of which are knowable from here. Only
-   * `nextDayTarget` can carry it.
+   * A day past the analysed month's last one. It belongs to a month with its
+   * own goal and its own gap, none of which are knowable from here.
    */
   MonthOver: "mes_acaba_hoje",
+  /**
+   * A date in a month that has not started. Told apart from a closed one
+   * because the backend's clock cannot: both report `inProgress: false`.
+   */
+  FutureMonth: "mes_futuro",
+  /**
+   * A day that has finished. Not a gap in the data and not bad news — the day
+   * has a result instead of a target, and `realized` carries it.
+   */
+  ClosedDay: "dia_fechado",
 } as const;
 export type DayTargetState =
   (typeof DayTargetState)[keyof typeof DayTargetState];
+
+/**
+ * What kind of figure a day carries: something that happened, something
+ * happening, or something being asked for. Render it — a target and a result
+ * read identically without it.
+ */
+export const DayBasis = {
+  /** A day that closed. `realized` is fact; there is no `target`. */
+  Realized: "realizado",
+  /** Today: an ask that still stands, beside what the till has taken. */
+  InProgress: "em_curso",
+  /** A day ahead. Its `target` assumes every day before it lands on its own. */
+  Projected: "projetado",
+} as const;
+export type DayBasis = (typeof DayBasis)[keyof typeof DayBasis];
 
 export interface DayTarget {
   /**
@@ -431,11 +455,22 @@ export interface DayTarget {
    */
   state: DayTargetState;
   /**
+   * Whether these figures are a result, a day in progress, or a bet. Consumers
+   * must render it; `realizado` and `projetado` are not the same claim.
+   */
+  basis: DayBasis;
+  /**
    * The calendar day the ask is for, "YYYY-MM-DD". Absent when there is no day
-   * to name — a closed month has no today, and the day after the month's last
-   * one is not this month's to price.
+   * to name — a closed month has no today, and a date outside the analysed
+   * month is not this month's to price.
    */
   date?: string;
+  /**
+   * What the day actually sold. The whole point of a closed day and the
+   * missing half of an open one: `target` is a whole-day figure measured from
+   * the morning, so without this there is no saying whether it was met.
+   */
+  realized: number;
   /** time.Weekday / getDay(): 0 = Sunday. Name it with lib/weekdays. */
   day: number;
   /** What this weekday usually brings, over a whole day. */
@@ -483,19 +518,25 @@ export interface Projection {
   coverage: number;
   status: ProjectionStatus;
   /**
-   * What today has already sold. `todayTarget` is a whole-day figure measured
-   * from the morning, so this is what it gets met against.
+   * Today's revenue target derived from historical weekday averages, with what
+   * the day has sold so far beside it. It is the only day named here: every
+   * other one is a parameter of the backend's day tool, because a field per
+   * day is not an answer to "e no sábado?".
    */
-  todayRevenue: number;
-  /** Today's revenue target derived from historical weekday averages. */
   todayTarget: DayTarget;
   /**
-   * Tomorrow's share of the same plan, at the same `factor` — the two are one
-   * distribution of the gap over the days left, not two readings of it. It
-   * therefore assumes today lands on `todayTarget`, which is exactly what
-   * `projected` assumes about today as well.
+   * How the gap is spread over the days the month has left: each of them asked
+   * for its own weekday average times `factor`. Deliberately not derived from
+   * `todayTarget` — on a Sunday the pharmacy does not open, that has no factor
+   * at all while the plan behind it still prices every other day.
    */
-  nextDayTarget: DayTarget;
+  plan: Plan;
+}
+
+export interface Plan {
+  state: DayTargetState;
+  /** Meaningless unless `state` is `ok`. */
+  factor: number;
 }
 
 export const RecommendationSeverity = {
@@ -539,6 +580,19 @@ export interface CashPosition {
    * to open the doors on.
    */
   nextDay?: DayCash;
+  /**
+   * The whole curve, one entry per day of the month — what the chart draws.
+   * `endOfMonthProjection` is its last `balance` and `lowestProjected` its
+   * smallest, so nothing here needs re-deriving in the browser.
+   *
+   * Days before today add nothing to their booked balance, so the same series
+   * carries the realised half and the projected one: split it at today rather
+   * than fetching a second curve for the left of the chart. The chart used to
+   * plot the *booked* running balance from `/summary/cashflow` and caption its
+   * tail "projeção" — the curve that dives every month because all the bills
+   * are booked on the 1st and none of the sales have happened yet.
+   */
+  forecast: DayCash[];
 }
 
 /**
