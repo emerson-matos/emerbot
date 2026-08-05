@@ -1,5 +1,5 @@
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine,
+  Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { Wallet } from 'lucide-react'
@@ -27,6 +27,13 @@ import type { CashPosition } from '@/api/types'
 // for the month's projection, meaning the same thing: this has not happened
 // yet. Yesterday therefore carries no amber at all, which is what makes it the
 // anchor: one real column to judge six estimated ones against.
+//
+// Over the bars runs the balance at the end of each day, on its own axis to the
+// right. The bars answer "what moves"; only the line answers the question
+// somebody actually opens this card with — "vou ficar sem dinheiro nesta
+// semana?". R$ 8.500,00 leaving on Saturday is a crisis or a Tuesday depending
+// entirely on what is in the account, and the zero line is where the difference
+// becomes visible.
 
 /** Bolds today, so the column you are standing on is findable at a glance. */
 function DayTick({ x, y, payload, days }: {
@@ -86,7 +93,7 @@ export default function CashWeek({ position, today }: {
   return (
     <>
       <ResponsiveContainer width="100%" height={240}>
-        <BarChart data={series} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+        <ComposedChart data={series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartColor.grid} vertical={false} />
           <XAxis
             dataKey="label"
@@ -95,7 +102,20 @@ export default function CashWeek({ position, today }: {
             tick={<DayTick days={series} />}
           />
           <YAxis
+            yAxisId="fluxo"
             tick={{ fontSize: 11, fill: chartColor.axis }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={brlAxisTick}
+          />
+          {/* A level and a movement cannot share an axis: a pharmacy holding
+              R$ 40.000,00 against days that move R$ 1.200,00 would flatten
+              every bar into the baseline. The right-hand axis is the balance's
+              own, and it is coloured to say which line it belongs to. */}
+          <YAxis
+            yAxisId="saldo"
+            orientation="right"
+            tick={{ fontSize: 11, fill: chartColor.balance }}
             tickLine={false}
             axisLine={false}
             tickFormatter={brlAxisTick}
@@ -109,26 +129,48 @@ export default function CashWeek({ position, today }: {
 
           {todayLabel && (
             <ReferenceLine
+              yAxisId="fluxo"
               x={todayLabel}
               stroke={chartColor.today}
               strokeDasharray="4 4"
             />
           )}
+          {/* Zero on the balance axis. Without it the line is a shape; with it,
+              crossing it is the answer. */}
+          <ReferenceLine yAxisId="saldo" y={0} stroke={chartColor.expense} strokeDasharray="2 3" />
 
           {/* One stack for the inflow: booked at the bottom, expected on top,
               so the uncertain money sits furthest from the axis. Outflow is a
               second bar beside it, never in the same stack. */}
-          <Bar dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={28} />
-          <Bar dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={28} />
+          <Bar yAxisId="fluxo" dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={28} />
+          <Bar yAxisId="fluxo" dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={28} />
           {/* Only what is booked: the backend never invents an unbooked bill,
               because a guessed expense would soften an alarm on evidence
               nobody has. */}
-          <Bar dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={28}>
+          <Bar yAxisId="fluxo" dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={28}>
             {series.map((d) => (
               <Cell key={d.date} fillOpacity={d.isPast ? 0.55 : 1} />
             ))}
           </Bar>
-        </BarChart>
+
+          {/* Dashed end to end, and named "projetado" for the same reason: the
+              days ahead are credited with an ordinary day's receipts, and even
+              the anchor's balance counts a receivable that came due and may
+              never have been paid. No part of this line is a bank statement. */}
+          {/* Linear, not monotone: a balance is a value at the end of a day,
+              and a smoothed curve between two of them draws amounts the
+              account never held — on this fixture it would bulge above
+              Friday's balance on the way down to Saturday's. */}
+          <Line
+            yAxisId="saldo"
+            type="linear"
+            dataKey="Saldo projetado"
+            stroke={chartColor.balance}
+            strokeWidth={2.5}
+            strokeDasharray="6 4"
+            dot={{ r: 3, fill: chartColor.balance, strokeWidth: 0 }}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
 
       <p className="text-xs text-muted-foreground">
@@ -136,7 +178,8 @@ export default function CashWeek({ position, today }: {
         daquele dia da semana, que ainda não é promessa de ninguém. A saída é só
         o que já está lançado — contas não lançadas não são estimadas. Ontem
         entra como referência e não tem âmbar: nada é estimado para um dia que
-        já passou.
+        já passou. A linha azul é o saldo no fim de cada dia — é ela que diz se
+        uma saída grande é um susto ou um problema.
       </p>
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-3">

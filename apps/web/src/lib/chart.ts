@@ -14,6 +14,12 @@ export const chartColor = {
    * where fact stops without reading a legend.
    */
   projected: "var(--warning)",
+  /**
+   * A running balance drawn over flows. Deliberately none of the three above:
+   * green, amber and red already mean money moving, and the balance is a
+   * different kind of quantity — a level, not a movement.
+   */
+  balance: "var(--primary)",
   grid: "var(--border)",
   axis: "var(--muted-foreground)",
 } as const;
