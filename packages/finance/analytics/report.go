@@ -111,7 +111,7 @@ func (a Analysis) AheadLines() []string {
 // the ask means nothing without it: "R$ 1.480,00" on a Sunday is either a
 // quiet morning or an impossible one depending on what Sundays bring, and the
 // person reading it at seven in the morning is owed which.
-func todayTargetLine(t TodayTarget) string {
+func todayTargetLine(t DayTarget) string {
 	day := weekdayNames[int(t.Day)]
 	article := weekdayWithArticle(t.Day)
 	pct := roundToInt(math.Abs(t.DeltaPercent) * 100)
@@ -301,6 +301,14 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	// means it does not — there is no trading history — and the model must not
 	// read the figures as a balance about to run out.
 	payload["caixa"].(map[string]any)["conta_recebimento_esperado"] = a.CashPosition.ExpectsReceipts
+	// Tomorrow's own line of the runway, absent when the forecast does not reach
+	// it. Every other cash figure here is about the month, and asked about a
+	// single day ahead the model answered with the month-end balance and the
+	// whole month's scheduled expenses — R$ 20.096,97 of commitments quoted at
+	// someone who had asked what tomorrow looks like.
+	if next := dayCashToolPayload(a.CashPosition.NextDay); next != nil {
+		payload["caixa"].(map[string]any)["amanha"] = next
+	}
 	if a.Projection.AccelerationPct() > 0 {
 		payload["aceleracao_necessaria_pct"] = a.Projection.AccelerationPct()
 	}
@@ -316,7 +324,22 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	// para calcular" are opposite answers to the same question and an absent key
 	// makes them the same silence. The amounts appear only under "ok" — a
 	// "meta: 0" would be read aloud as a target of nothing.
-	payload["meta_de_hoje"] = todayTargetToolPayload(a.Projection.TodayTarget)
+	payload["meta_de_hoje"] = dayTargetToolPayload(a.Projection.TodayTarget)
+	// Tomorrow's share of the same plan — the same factor, one weekday over.
+	//
+	// It exists because the question is asked at the end of the day, when the
+	// day's own ask is spent: "já registrei o faturamento de hoje, como estamos
+	// para amanhã?". All the model had was media_por_dia_da_semana, so it
+	// answered with what a Wednesday *usually* brings and said there was no
+	// target for tomorrow — while the plan that prices tomorrow was sitting in
+	// the same payload, one field away. See ADR-020.
+	payload["meta_de_amanha"] = dayTargetToolPayload(a.Projection.NextDayTarget)
+	// What today has actually sold, so the ask above has something to be met
+	// against. meta_de_hoje is a whole-day figure measured from the morning, and
+	// on its own it cannot answer "bati a meta de hoje?" — the model was reading
+	// it aloud beside a month-to-date faturamento that includes today, and there
+	// was no honest subtraction between the two.
+	payload["faturamento_de_hoje"] = reais(a.Projection.TodayRevenue)
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
@@ -361,21 +384,45 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	return payload
 }
 
-// todayTargetToolPayload renders the day's ask, or names the reason there is
+// dayTargetToolPayload renders one day's ask, or names the reason there is
 // none. The reason is the point: asked "quanto preciso vender hoje?" on a
 // Sunday the shop does not open, the model must be able to say so instead of
 // treating the silence as licence to divide the gap by the days left.
-func todayTargetToolPayload(t TodayTarget) map[string]any {
+//
+// The date travels with the ask wherever there is a day to name — including the
+// cases with no amounts, because "não abre nesse dia" is about a specific day
+// and the model resolves "amanhã" against a system prompt, not against this
+// payload.
+func dayTargetToolPayload(t DayTarget) map[string]any {
+	payload := map[string]any{"situacao": string(t.State)}
+	if t.Date == "" {
+		return payload
+	}
+	payload["data"] = t.Date
+	payload["dia_da_semana"] = weekdayNames[int(t.Day)]
 	if !t.Asked() {
-		return map[string]any{"situacao": string(t.State)}
+		return payload
+	}
+	payload["meta"] = reais(t.Target)
+	payload["media_historica"] = reais(t.Historical)
+	payload["diferenca_pct"] = roundToInt(t.DeltaPercent * 100)
+	payload["status"] = string(t.Status)
+	return payload
+}
+
+// dayCashToolPayload renders one day of the runway. Nil yields nothing at all
+// rather than a row of zeroes, which the model would read aloud as a day with
+// no money moving instead of a day the forecast does not reach.
+func dayCashToolPayload(d *DayCash) map[string]any {
+	if d == nil {
+		return nil
 	}
 	return map[string]any{
-		"situacao":        string(t.State),
-		"dia_da_semana":   weekdayNames[int(t.Day)],
-		"meta":            reais(t.Target),
-		"media_historica": reais(t.Historical),
-		"diferenca_pct":   roundToInt(t.DeltaPercent * 100),
-		"status":          string(t.Status),
+		"data":               d.Date,
+		"saldo_projetado":    reais(d.Balance),
+		"entradas_agendadas": reais(d.ScheduledIn),
+		"entradas_esperadas": reais(d.ExpectedIn),
+		"despesas_agendadas": reais(d.ScheduledOut),
 	}
 }
 

@@ -315,63 +315,68 @@ const (
 	ProjectionClosed ProjectionBasis = "fechado"
 )
 
-// TodayTargetScale says how today's target compares to its historical weekday
+// DayTargetScale says how a day's target compares to its historical weekday
 // average. The backend decides this so the frontend renders a colour without
 // deriving thresholds from the amounts.
-type TodayTargetScale string
+type DayTargetScale string
 
 const (
-	// PaceBelow means today's target is below the historical average — the
+	// PaceBelow means the day's target is below the historical average — the
 	// pharmacy is ahead and can afford a lighter day.
-	PaceBelow TodayTargetScale = "below"
+	PaceBelow DayTargetScale = "below"
 	// PaceOnTrack means the target is within ±5% of the historical average —
 	// neither a stretch nor a slack day.
-	PaceOnTrack TodayTargetScale = "on_track"
-	// PaceAbove means today's target exceeds the historical average — the
+	PaceOnTrack DayTargetScale = "on_track"
+	// PaceAbove means the day's target exceeds the historical average — the
 	// pharmacy needs to sell more than it usually does on this weekday.
-	PaceAbove TodayTargetScale = "above"
+	PaceAbove DayTargetScale = "above"
 )
 
-// TodayTargetState says whether the day has an ask, and when it does not, which
-// of the five reasons it is.
+// DayTargetState says whether the day has an ask, and when it does not, which
+// of the reasons it is.
 //
 // It replaced a bare `valid bool`, which could not answer the only question a
-// reader has when the card is missing: why. Those five reasons are five
-// different sentences — "a meta do mês já foi batida" is good news, "não há
-// histórico para calcular" is a gap in the data, "a farmácia não abre domingo"
-// is a fact about the business, and rendering all of them as the same blank
-// space made the good news indistinguishable from the failure. The bot has the
-// same problem in prose: asked "quanto preciso vender hoje?", it must be able to
-// say which of these it is instead of going quiet or, worse, inventing a number.
-type TodayTargetState string
+// reader has when the card is missing: why. Those reasons are different
+// sentences — "a meta do mês já foi batida" is good news, "não há histórico
+// para calcular" is a gap in the data, "a farmácia não abre domingo" is a fact
+// about the business, and rendering all of them as the same blank space made
+// the good news indistinguishable from the failure. The bot has the same
+// problem in prose: asked "quanto preciso vender hoje?", it must be able to say
+// which of these it is instead of going quiet or, worse, inventing a number.
+type DayTargetState string
 
 const (
-	// TodayTargetOK is a real ask: the amounts on TodayTarget are meaningful.
-	TodayTargetOK TodayTargetState = "ok"
-	// TodayTargetClosedMonth is a month that has already ended — there is no
-	// "today" inside it to sell on.
-	TodayTargetClosedMonth TodayTargetState = "mes_fechado"
-	// TodayTargetNoGoal is a month with no revenue target: nothing to pace
-	// against, so no share of it to ask for today.
-	TodayTargetNoGoal TodayTargetState = "sem_meta"
-	// TodayTargetGoalMet is the target already reached. There is no ask left,
+	// DayTargetOK is a real ask: the amounts on DayTarget are meaningful.
+	DayTargetOK DayTargetState = "ok"
+	// DayTargetClosedMonth is a month that has already ended — there is no
+	// day inside it left to sell on.
+	DayTargetClosedMonth DayTargetState = "mes_fechado"
+	// DayTargetNoGoal is a month with no revenue target: nothing to pace
+	// against, so no share of it to ask for the day.
+	DayTargetNoGoal DayTargetState = "sem_meta"
+	// DayTargetGoalMet is the target already reached. There is no ask left,
 	// and this is the one absence that is good news — consumers must say so
 	// rather than render the same blank as the cases below.
-	TodayTargetGoalMet TodayTargetState = "meta_batida"
-	// TodayTargetNoHistory is a trailing window with nothing in it to price any
+	DayTargetGoalMet DayTargetState = "meta_batida"
+	// DayTargetNoHistory is a trailing window with nothing in it to price any
 	// remaining day from.
-	TodayTargetNoHistory TodayTargetState = "sem_historico"
-	// TodayTargetClosedWeekday is a weekday that never traded across the whole
+	DayTargetNoHistory DayTargetState = "sem_historico"
+	// DayTargetClosedWeekday is a weekday that never traded across the whole
 	// window — the pharmacy does not open on it, so asking it for a share of the
 	// goal would be asking a closed door.
-	TodayTargetClosedWeekday TodayTargetState = "dia_sem_movimento"
+	DayTargetClosedWeekday DayTargetState = "dia_sem_movimento"
+	// DayTargetMonthOver is the day after the analysed month's last one. It
+	// belongs to a month with its own goal, its own gap and its own plan, and
+	// none of them are knowable from here — so the next day is named as such
+	// rather than priced off this month's arithmetic. Only NextDay can carry it.
+	DayTargetMonthOver DayTargetState = "mes_acaba_hoje"
 )
 
-// TodayTarget is the recommended revenue target for the current day.
+// DayTarget is the recommended revenue target for one day still to be traded.
 //
 // Rather than evenly distributing the remaining goal across the calendar,
-// it allocates today's share proportionally to the expected weekday demand.
-// This keeps Saturday targets naturally lower than Monday targets while
+// it allocates the day's share proportionally to the expected weekday demand.
+// This keeps Sunday targets naturally lower than Saturday targets while
 // remaining consistent with the monthly projection model. A factor of 1.08
 // means the pharmacy needs to sell 8% above its usual Monday rhythm to close
 // the gap; 0.92 means it can sell 8% below and still be fine.
@@ -382,31 +387,41 @@ const (
 // replaced divided what was missing by the days left, which asks a Sunday for
 // as much as a Monday — on a pharmacy whose Sundays bring a third of a Monday
 // that is not a target, it is a number nobody can hit, printed every Sunday.
-type TodayTarget struct {
-	// State says whether there is an ask today and, when there is not, why.
-	// TodayTargetOK is the only value under which the amounts below mean
+//
+// It used to exist only for today, which is the one day nobody needs it for
+// after closing time. Asked "como estamos para amanhã?" the bot had this
+// month's plan in hand and no share of it for tomorrow, so it answered with the
+// weekday's plain historical average — what a Wednesday *usually* brings, which
+// is not what this Wednesday is being asked for. See ADR-020.
+type DayTarget struct {
+	// State says whether there is an ask on this day and, when there is not,
+	// why. DayTargetOK is the only value under which the amounts below mean
 	// anything; every other value leaves them zero.
-	State TodayTargetState `json:"state"`
+	State DayTargetState `json:"state"`
+	// Date is the calendar day the ask is for, "YYYY-MM-DD". Empty when there
+	// is no such day to name — a closed month has no today, and the day after
+	// the month's last one is not this month's to price.
+	Date string `json:"date,omitempty"`
 	// Day is the weekday the ask is for — time.Weekday, 0=Sunday. Like
 	// WeekdayStat.Day it travels as a number: naming it is the job of whatever
 	// speaks to the user, in whatever language it speaks.
 	Day time.Weekday `json:"day"`
 	// Historical is what this weekday usually brings, over a whole day; Target
-	// is what it has to bring today; Delta and DeltaPercent are the difference,
-	// negative when today can afford to be lighter.
-	Historical   int64            `json:"historical"`
-	Target       int64            `json:"target"`
-	Delta        int64            `json:"delta"`
-	DeltaPercent float64          `json:"deltaPercent"`
-	Factor       float64          `json:"factor"`
-	Status       TodayTargetScale `json:"status"`
+	// is what it has to bring; Delta and DeltaPercent are the difference,
+	// negative when the day can afford to be lighter.
+	Historical   int64          `json:"historical"`
+	Target       int64          `json:"target"`
+	Delta        int64          `json:"delta"`
+	DeltaPercent float64        `json:"deltaPercent"`
+	Factor       float64        `json:"factor"`
+	Status       DayTargetScale `json:"status"`
 }
 
 // Asked reports whether there is a target to show. It reads better than
 // comparing against the state at every call site, and it is deliberately the
 // only thing collapsing the states into a boolean — consumers that render an
 // absence must say *which* absence, and for that they need State itself.
-func (t TodayTarget) Asked() bool { return t.State == TodayTargetOK }
+func (t DayTarget) Asked() bool { return t.State == DayTargetOK }
 
 // Projection is where the month lands and what it would take to close the gap
 // to the income goal. Every amount is faturamento (see isFaturamento),
@@ -437,9 +452,27 @@ type Projection struct {
 	// "Ritmo suficiente".
 	Coverage float64          `json:"coverage"`
 	Status   ProjectionStatus `json:"status"`
+	// TodayRevenue is what has already been sold today, on the transaction
+	// basis. It is the companion TodayTarget spent a release without: the ask
+	// is stated as a whole day's figure, measured from what the till held when
+	// the day opened, so without what the day has actually taken there is no
+	// way to say whether it was met. A consumer closing the day needs both.
+	//
+	// Zero for a closed month, which has no today to have sold anything on.
+	TodayRevenue int64 `json:"todayRevenue"`
 	// TodayTarget scales today's historical weekday average by the factor that
 	// would close the remaining gap if applied to every remaining day uniformly.
-	TodayTarget TodayTarget `json:"todayTarget"`
+	TodayTarget DayTarget `json:"todayTarget"`
+	// NextDayTarget is the same plan's share for tomorrow, and it is the same
+	// Factor: the two are one distribution of the gap over the days left, not
+	// two readings of it. Tomorrow's ask therefore assumes today lands on
+	// TodayTarget — which is exactly what Projected assumes about today as well,
+	// so the payload cannot say one thing in the month's projection and another
+	// in the day's.
+	//
+	// A day is not a forecast of itself: this is a share of what is missing, so
+	// it moves when the gap moves and not when tomorrow gets closer.
+	NextDayTarget DayTarget `json:"nextDayTarget"`
 }
 
 // AccelerationPct returns how much the projected revenue needs to grow, as a
@@ -546,6 +579,37 @@ type CashPosition struct {
 	// against nothing — true of a pharmacy that has never recorded an inflow,
 	// and consumers must not present that as a balance heading for zero.
 	ExpectsReceipts bool `json:"expectsReceipts"`
+	// NextDay is tomorrow's own line of the runway. Nil when there is no
+	// tomorrow inside the forecast — a closed month, or the month's last day.
+	//
+	// Everything else on this struct describes the month: where it ends, where
+	// it dips lowest, how long until it crosses zero. Asked "como estamos para
+	// amanhã?", the only cash figures the bot had were those, so it answered
+	// with a month-end balance and the whole month's scheduled expenses — both
+	// true, neither about tomorrow, and the second one alarming out of context.
+	// A day the pharmacy is about to open is a day it can be told about.
+	NextDay *DayCash `json:"nextDay,omitempty"`
+}
+
+// DayCash is one day of the runway, split into what is known and what is
+// expected — because they are answerable in different ways. ScheduledOut is a
+// bill someone can call about; ExpectedIn is a rhythm nobody controls.
+type DayCash struct {
+	Date string `json:"date"`
+	// Balance is the projected balance at the end of the day: everything
+	// booked up to it, plus the receipts the days from today on are expected
+	// to bring on top of what they have booked. Same basis as
+	// EndOfMonthProjection, one day out instead of at the end.
+	Balance int64 `json:"balance"`
+	// ScheduledIn and ScheduledOut are what is already booked to land and to
+	// leave on the day — a crediário instalment falling due, the rent.
+	ScheduledIn  int64 `json:"scheduledIn"`
+	ScheduledOut int64 `json:"scheduledOut"`
+	// ExpectedIn is what an ordinary day of that weekday still brings beyond
+	// what it has booked, and it is zero when the day has already booked more
+	// than its weekday usually receives. Zero also when there is no trading
+	// history at all — see ExpectsReceipts, which is what tells the two apart.
+	ExpectedIn int64 `json:"expectedIn"`
 }
 
 // KPIs are the headline numbers: the state of the month *now*, today included.
@@ -647,7 +711,16 @@ type KPIs struct {
 // reasons and a success into one false. Nothing the diff reads changed meaning,
 // but the fields it would read on an old snapshot are gone, and reading a
 // missing `state` as "" would grade every stored day as an absent target.
-const SchemaVersion = 7
+//
+// 8: added projection.nextDayTarget, projection.todayRevenue,
+// dayTarget.date and cashPosition.nextDay — the per-day ask stopped being
+// exclusive to today (ADR-020). All four are additions, which this list would
+// normally not bump for. The bump is for the same reason 7 gave: a v7 snapshot
+// read into this struct yields a nextDayTarget whose `state` is "", and "" is
+// the one thing DayTargetState has no meaning for — every real value names
+// either an ask or the reason there is none. An unnamed absence is exactly what
+// the field was introduced to stop.
+const SchemaVersion = 8
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.
