@@ -205,13 +205,12 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		// system prompt spells that out.
 		"faturamento":       reais(a.KPIs.Faturamento),
 		"entradas_de_caixa": reais(a.KPIs.EntradasCaixa),
-		// despesa is what has actually left the account so far; despesa_agendada
-		// is what is booked for the days still to come. Kept apart because the
-		// model was handed their sum and reported the month's spending as
-		// already done — on the 3rd, every bill of August.
-		"despesa":          reais(a.KPIs.Despesa),
-		"despesa_agendada": reais(a.KPIs.DespesaAgendada),
-		"resultado":        reais(a.KPIs.Resultado),
+		// despesa is what has actually left the account so far. What is merely
+		// booked for the rest of the month is not here at all: it is a
+		// commitment, and it lives under caixa beside the runway that says
+		// whether there is money for it — see compromissos_do_mes.
+		"despesa":   reais(a.KPIs.Despesa),
+		"resultado": reais(a.KPIs.Resultado),
 		// Today counts as a day still to sell on, so the model never tells
 		// someone on the last day of the month that there is nothing left to do.
 		"dias_restantes_no_mes_com_hoje": a.Period.DaysRemaining,
@@ -260,6 +259,15 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 			"despesa_pct":       a.Goals.ExpensePct,
 		},
 		"caixa": map[string]any{
+			// The month's booked bills, and whether the balance coming in covers
+			// them. They sit here rather than beside despesa because that is the
+			// only question they raise: a commitment is about liquidity, never
+			// about how the month is performing. Listed among the month's result
+			// figures, the amount read as a finding on its own — "o volume de
+			// despesas agendadas é um ponto de atenção", on a month whose runway
+			// never went near zero.
+			"compromissos_do_mes":   reais(a.KPIs.DespesaAgendada),
+			"compromissos_situacao": string(a.CashPosition.Commitments),
 			"saldo_hoje":            reais(a.CashPosition.CurrentBalance),
 			"projecao_fim_do_mes":   reais(a.CashPosition.EndOfMonthProjection),
 			"menor_saldo_projetado": reais(a.CashPosition.LowestProjected),

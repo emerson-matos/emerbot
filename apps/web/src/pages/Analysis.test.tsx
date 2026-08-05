@@ -192,6 +192,27 @@ describe("Analysis page", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows what the day has taken beside what it is being asked for", () => {
+    // The ask is a whole-day figure measured from the morning, so without the
+    // day's own takings nobody can tell whether it was met. The fixture has
+    // R$482,00 in against an ask of R$1.211,00.
+    renderWith(analysisData());
+
+    expect(screen.getByText(/R\$ 482,00 vendidos até agora/)).toBeInTheDocument();
+    expect(screen.queryByText(/Meta batida/)).not.toBeInTheDocument();
+  });
+
+  it("says the day's ask is met once the takings clear it", () => {
+    const data = analysisData();
+    data.projection = {
+      ...data.projection,
+      todayTarget: { ...data.projection.todayTarget, realized: 130000 },
+    };
+    renderWith(data);
+
+    expect(screen.getByText(/Meta batida/)).toBeInTheDocument();
+  });
+
   it("labels the per-day ask by every day left, not business days", () => {
     renderWith(analysisData());
 

@@ -44,6 +44,19 @@ function TodayMark({ target }: { target: DayTarget }) {
         ≈ {target.factor.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}× o
         esperado para {weekdayWithArticle(target.day)}
       </span>
+      {/* What the day has actually taken. The ask above is a whole-day figure
+          measured from the morning, so on its own nobody can tell whether it
+          has been met — and the two are only comparable because both cover the
+          whole day. Worded so it cannot be read as part of the ask: the same
+          confusion in the bot's payload had it reporting a target above the
+          weekday average as "estamos superando a média". */}
+      <span
+        className={`w-full text-sm ${target.realized >= target.target ? 'text-success' : 'text-muted-foreground'}`}
+      >
+        {target.realized >= target.target
+          ? `Meta batida — ${formatBRL(target.realized)} vendidos até agora`
+          : `${formatBRL(target.realized)} vendidos até agora`}
+      </span>
     </div>
   )
 }
