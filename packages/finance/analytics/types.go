@@ -654,6 +654,11 @@ type CashPosition struct {
 	// against nothing — true of a pharmacy that has never recorded an inflow,
 	// and consumers must not present that as a balance heading for zero.
 	ExpectsReceipts bool `json:"expectsReceipts"`
+	// Commitments answers the only question the month's scheduled expenses
+	// actually raise. It is derived from the curve below, not from the amount:
+	// what makes R$ 20.000,00 of bills a problem is the balance failing to
+	// cover them, and this says whether it does.
+	Commitments CommitmentCoverage `json:"commitments"`
 	// NextDay is tomorrow's own line of the runway. Nil when there is no
 	// tomorrow inside the forecast — a closed month, or the month's last day.
 	//
@@ -685,6 +690,37 @@ type CashPosition struct {
 	// curve.
 	Forecast []DayCash `json:"forecast"`
 }
+
+// CommitmentCoverage says whether the month's booked bills are paid for by the
+// balance that is coming.
+//
+// It exists because a total on its own is not a finding. Asked "como estamos?",
+// the bot reported "o volume de despesas agendadas (R$ 19.130,95) é um ponto de
+// atenção" under the health verdict — on a month whose runway never went near
+// zero, and whose health the backend had graded without counting a single
+// scheduled bill (ADR-017). Every number in that sentence was true and the
+// conclusion was invented, because the payload offered the amount with nothing
+// to weigh it against.
+//
+// A commitment is a liquidity question, never a performance one. This is the
+// answer to it, and it is derived from the projected curve rather than from the
+// amount: bills are only heavy relative to what is coming in.
+type CommitmentCoverage string
+
+const (
+	// CommitmentsCovered is a projected balance that never goes under water.
+	// The bills are real and they are paid for; there is nothing to warn about.
+	CommitmentsCovered CommitmentCoverage = "coberto"
+	// CommitmentsUncovered is a curve that dips below zero somewhere in the
+	// month. This is the case worth raising, and CashPosition.LowestProjected
+	// and DaysUntilNegative say how badly and when.
+	CommitmentsUncovered CommitmentCoverage = "descoberto"
+	// CommitmentsUnknown is a ledger with no trading history to credit the days
+	// ahead with. The curve is then bills against nothing, so it cannot answer
+	// — and a consumer must say that rather than report the bills as unpayable.
+	// It is the same guard ExpectsReceipts carries, named for this question.
+	CommitmentsUnknown CommitmentCoverage = "sem_historico"
+)
 
 // DayCash is one day of the runway, split into what is known and what is
 // expected — because they are answerable in different ways. ScheduledOut is a

@@ -487,6 +487,53 @@ func TestCashPosition(t *testing.T) {
 		}
 	})
 
+	// A total of bills is not a finding. Asked "como estamos?", the bot reported
+	// "o volume de despesas agendadas (R$ 19.130,95) é um ponto de atenção" on a
+	// month whose runway never went near zero — the amount was offered with
+	// nothing to weigh it against. See ADR-022.
+	t.Run("grades the month's commitments against the curve", func(t *testing.T) {
+		rates := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+
+		covered := buildCashPosition([]pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 500000},
+			{Date: "2026-07-11", ProjectedExpense: 200000, RunningBalance: 300000},
+		}, rates, now)
+		if covered.Commitments != CommitmentsCovered {
+			t.Errorf("Commitments = %q, want %q — the balance never goes under water",
+				covered.Commitments, CommitmentsCovered)
+		}
+
+		uncovered := buildCashPosition([]pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 50000},
+			{Date: "2026-07-11", ProjectedExpense: 900000, RunningBalance: -850000},
+		}, rates, now)
+		if uncovered.Commitments != CommitmentsUncovered {
+			t.Errorf("Commitments = %q, want %q", uncovered.Commitments, CommitmentsUncovered)
+		}
+
+		// A balance already under water today is the worst case to grade
+		// "coberto", and DaysUntilNegative alone would: it only counts crossings
+		// still ahead. The trough is what this reads.
+		alreadyNegative := buildCashPosition([]pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: -1000},
+		}, rates, now)
+		if alreadyNegative.Commitments != CommitmentsUncovered {
+			t.Errorf("Commitments = %q, want %q for a balance already negative today",
+				alreadyNegative.Commitments, CommitmentsUncovered)
+		}
+
+		// No trading history: the forward curve is bills against nothing, so it
+		// cannot answer — and must not report the bills as unpayable.
+		blind := buildCashPosition([]pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 50000},
+			{Date: "2026-07-11", ProjectedExpense: 900000, RunningBalance: -850000},
+		}, noRates, now)
+		if blind.Commitments != CommitmentsUnknown {
+			t.Errorf("Commitments = %q, want %q with no history to project from",
+				blind.Commitments, CommitmentsUnknown)
+		}
+	})
+
 	// The dashboard drew the *booked* curve and captioned its tail "projeção",
 	// which dives every month by construction — all the bills from the 1st and
 	// none of the sales. The series that answers it is the one this function
@@ -2579,6 +2626,54 @@ func TestToolPayloadCarriesTomorrowsCash(t *testing.T) {
 	})
 	if _, has := closing.ToolPayload()["caixa"].(map[string]any)["amanha"]; has {
 		t.Error("caixa.amanha present on the month's last day, want it absent")
+	}
+}
+
+// A commitment is a liquidity question, so it travels with the runway that
+// answers it — not among the figures that describe how the month performed,
+// where the amount alone read as a finding.
+func TestToolPayloadPutsCommitmentsWithTheRunway(t *testing.T) {
+	due := day(t, "2026-07-25")
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-01", 500000),
+		{
+			TransactionDate: due,
+			DueDate:         &due,
+			Amount:          80000,
+			Type:            domain.EntryTypeExpense,
+			Category:        "aluguel",
+		},
+	}
+
+	analysis := Build(Input{
+		Month:                "2026-07",
+		Entries:              entries,
+		RevenueEntries:       entries,
+		WindowRevenueEntries: entries,
+		WindowEntries:        entries,
+		Summaries:            []*pkgfinance.MonthlySummary{nil, nil, summary(500000, 80000)},
+		CashFlowPoints: []pkgfinance.CashFlowPoint{
+			{Date: "2026-07-10", RunningBalance: 500000},
+			{Date: "2026-07-25", ProjectedExpense: 80000, RunningBalance: 420000},
+		},
+		Now: at12(t, "2026-07-10"),
+	})
+	payload := analysis.ToolPayload()
+
+	// Not beside despesa/resultado, which are about how the month is going. The
+	// rent due on the 25th says nothing about that.
+	if _, has := payload["despesa_agendada"]; has {
+		t.Error("despesa_agendada is back at the top level, where a total reads as a verdict on the month")
+	}
+
+	caixa := payload["caixa"].(map[string]any)
+	if caixa["compromissos_do_mes"] != 800.0 {
+		t.Errorf("compromissos_do_mes = %v, want what is still to fall due", caixa["compromissos_do_mes"])
+	}
+	// And never the amount on its own: the question it raises is answered here.
+	if caixa["compromissos_situacao"] != string(CommitmentsCovered) {
+		t.Errorf("compromissos_situacao = %v, want %q on a runway that holds",
+			caixa["compromissos_situacao"], CommitmentsCovered)
 	}
 }
 

@@ -44,7 +44,9 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
 
 	if len(points) == 0 {
-		return CashPosition{LowestProjectedDate: today}
+		// No curve at all: nothing to grade the bills against, and "coberto"
+		// over an empty forecast would be a verdict on no evidence.
+		return CashPosition{LowestProjectedDate: today, Commitments: CommitmentsUnknown}
 	}
 
 	var currentBalance int64
@@ -115,8 +117,26 @@ func buildCashPosition(points []pkgfinance.CashFlowPoint, rates dailyRates, now 
 	if nextDay >= 0 {
 		position.NextDay = &position.Forecast[nextDay]
 	}
+	position.Commitments = commitmentCoverage(position)
 
 	return position
+}
+
+// commitmentCoverage grades the month's booked bills against the balance that
+// is coming, so a consumer has a verdict instead of a total to editorialise on.
+//
+// It reads the trough rather than DaysUntilNegative: that field only counts
+// crossings still ahead, so a balance already under water today would otherwise
+// be graded "coberto" — the one reading where saying so is worst.
+func commitmentCoverage(position CashPosition) CommitmentCoverage {
+	switch {
+	case !position.ExpectsReceipts:
+		return CommitmentsUnknown
+	case position.LowestProjected < 0:
+		return CommitmentsUncovered
+	default:
+		return CommitmentsCovered
+	}
 }
 
 // expectedExtraIncome is what a day is still expected to receive beyond what it
