@@ -807,30 +807,29 @@ type KPIs struct {
 // but the fields it would read on an old snapshot are gone, and reading a
 // missing `state` as "" would grade every stored day as an absent target.
 //
-// 8: added projection.nextDayTarget, projection.todayRevenue,
-// dayTarget.date and cashPosition.nextDay — the per-day ask stopped being
-// exclusive to today (ADR-020). All four are additions, which this list would
-// normally not bump for. The bump is for the same reason 7 gave: a v7 snapshot
-// read into this struct yields a nextDayTarget whose `state` is "", and "" is
-// the one thing DayTargetState has no meaning for — every real value names
-// either an ask or the reason there is none. An unnamed absence is exactly what
-// the field was introduced to stop.
+// 8: the per-day ask stopped being exclusive to today. Added
+// projection.plan — the distribution the asks are slices of, published so any
+// day can be priced from an assembled Analysis (Analysis.DayTargetOn), this one
+// or one read back from a snapshot. Added dayTarget.date, dayTarget.realized
+// and dayTarget.basis, which says whether a day's figures are a result, a day
+// in progress or a bet: the same three numbers otherwise read identically
+// either side of today. Added cashPosition.nextDay and cashPosition.forecast.
+// See ADR-020 and ADR-021.
 //
-// 9: projection.nextDayTarget and projection.todayRevenue are gone. A field per
-// day does not answer "e no sábado?", so the day became a parameter — see
-// Analysis.DayTargetOn and ADR-021. What today sold moved onto the day it
-// describes (dayTarget.realized) and the distribution the asks come from is
-// published as projection.plan, which is what lets any day be priced from an
-// assembled Analysis, this one or a stored one.
+// Additions alone would not normally move this number. Two things here do. A v7
+// snapshot read into this struct yields day targets whose `basis` is "", and ""
+// is the one thing DayBasis has no meaning for — every real value names a
+// regime, and an unnamed one is exactly what the field exists to prevent.
+// And cashPosition's forward figures now stand beside the curve they are read
+// off, so a stored snapshot that has the scalars and not the series is a
+// half-answer to the page that draws it.
 //
-// Also in 9: dayTarget.basis says whether a day's figures are a result, a day
-// in progress or a bet — the same three numbers otherwise read identically
-// either side of today. And cashPosition.forecast carries the whole projected
-// curve, because the dashboard was drawing the *booked* one and captioning its
-// tail "projeção": the month's bills are booked on the 1st and its sales
-// recorded as they happen, so that line dives every month while the card beside
-// it said the month closes in the black.
-const SchemaVersion = 9
+// It is one step rather than two because nothing between 7 and here was ever
+// deployed: ADR-020 announced this bump and ADR-021 reshaped what it carries
+// before any of it reached main. A version that no stored snapshot was ever
+// written under is not a version, and leaving a gap in this list would suggest
+// there are snapshots out there wearing it.
+const SchemaVersion = 8
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

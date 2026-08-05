@@ -80,9 +80,16 @@ realmente teve exigiria remontar a análise na manhã dele. Um dia fechado é
 relatado, não cobrado; é a linha do ADR-017 virando um campo.
 
 `Delta`, `DeltaPercent` e `Status` comparam contra a média histórica **o número
-que o regime carrega**: a meta num dia à frente, o realizado num dia fechado. É
-a mesma pergunta ("esse foi um dia pesado ou leve para essa quarta?") e uma só
-dupla de campos para ela.
+que o regime carrega**: a meta num dia à frente, o realizado num dia fechado.
+Isso faz a *mesma* escala significar coisas opostas dos dois lados de hoje — uma
+quarta cobrada 12% acima do normal é um mês atrasado; uma quarta que vendeu 12%
+acima do normal é um bom dia. O payload do bot, por isso, nomeia o sujeito antes
+da direção: `meta_vs_media_pct`/`esforco` num dia cobrado,
+`realizado_vs_media_pct`/`desempenho` num dia fechado. Com um `diferenca_pct`
+único, dez minutos depois da meia-noite de uma quarta sem nada vendido, o bot
+respondeu "estamos com um bom desempenho, superando a média histórica" — leu uma
+cobrança como conquista. O painel nunca teve esse problema: `paceTone` já pinta
+`above` de aviso.
 
 Dois estados novos, ambos porque `monthClock` não sabe distinguir sozinho:
 `mes_futuro` (um mês que não começou reporta `inProgress: false` igual a um
@@ -113,9 +120,15 @@ ocupado por um número que o ADR-017 tinha condenado.
 
 ## Consequências
 
-- `SchemaVersion` vai a **9**: `projection.nextDayTarget` e
-  `projection.todayRevenue` saíram, `dayTarget` ganhou `basis` e `realized`,
-  `projection` ganhou `plan`, `cashPosition` ganhou `forecast`.
+- `SchemaVersion` **não sobe de novo**. O ADR-020 anunciou o 8 e nada dele
+  chegou ao `main` antes desta mudança reformular o que ele carrega, então o
+  salto que o `main` vai receber é um só: 7 → 8, cobrindo as duas. Uma versão
+  sob a qual nenhum snapshot jamais foi escrito não é uma versão, e deixar um
+  buraco na lista sugeriria que existem snapshots por aí vestindo o número.
+  O que o 8 passa a significar: saíram `projection.nextDayTarget` e
+  `projection.todayRevenue`; entraram `projection.plan`, `dayTarget.basis`,
+  `dayTarget.realized`, `dayTarget.date`, `cashPosition.nextDay` e
+  `cashPosition.forecast`.
 - `get_meta_do_dia` aceita até 7 datas e avisa quando corta (ADR-015). Cada mês
   distinto por trás delas custa um `Assemble`, e é por isso que o limite existe.
   O `realizado` de cada dia sai de uma leitura do mês na base de transação — não

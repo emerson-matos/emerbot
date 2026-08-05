@@ -385,6 +385,15 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 // as a plan on a Wednesday still to come and as a fact on one that has closed,
 // and a model reading them aloud has no other way to know which it is holding.
 //
+// The comparison against the weekday average is keyed by its subject —
+// `meta_vs_media_pct`/`esforco` for a day being asked, `realizado_vs_media_pct`
+// /`desempenho` for one that has closed — because the direction alone means
+// opposite things on the two sides of today. A single `diferenca_pct: 12` with
+// `status: "above"` is how, ten minutes after midnight on a Wednesday with
+// nothing sold, the bot reported "estamos com um bom desempenho, superando a
+// média histórica". It was reading a demand as an achievement: the ask is above
+// a usual Wednesday precisely because the month is behind.
+//
 // The date travels with the ask wherever there is a day to name — including the
 // cases with no amounts, because "não abre nesse dia" is about a specific day
 // and the model resolves "amanhã" against a system prompt, not against this
@@ -408,14 +417,19 @@ func dayTargetToolPayload(t DayTarget) map[string]any {
 		return payload
 	}
 	payload["media_historica"] = reais(t.Historical)
-	payload["diferenca_pct"] = roundToInt(t.DeltaPercent * 100)
-	payload["status"] = string(t.Status)
+
 	// A closed day carries no target: today's plan distributes what is missing
 	// now, and charging it to a day nobody can sell on any more is a goal
-	// invented backwards. diferenca_pct above is then how the day did against a
-	// usual one, which is the reading that day actually has.
-	if t.Asked() && t.Basis != DayRealized {
+	// invented backwards. What it has instead is how it did.
+	if t.Basis == DayRealized {
+		payload["realizado_vs_media_pct"] = roundToInt(t.DeltaPercent * 100)
+		payload["desempenho"] = string(t.Status)
+		return payload
+	}
+	if t.Asked() {
 		payload["meta"] = reais(t.Target)
+		payload["meta_vs_media_pct"] = roundToInt(t.DeltaPercent * 100)
+		payload["esforco"] = string(t.Status)
 	}
 	return payload
 }
