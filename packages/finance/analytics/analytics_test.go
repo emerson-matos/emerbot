@@ -2409,6 +2409,43 @@ func TestDayTargetsAnswerForAClosedMonth(t *testing.T) {
 	}
 }
 
+// A demand is not an achievement, and the payload has to say which. At ten past
+// midnight on a Wednesday, with nothing sold, the bot read "meta R$ 1.149,68,
+// média R$ 1.028,29, status above" as "estamos com um bom desempenho, superando
+// a média histórica". The ask is above a usual Wednesday *because the month is
+// behind*; the direction alone means opposite things either side of today.
+func TestADayAskIsKeyedAsEffortAndAResultAsPerformance(t *testing.T) {
+	rates := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	// A month far enough behind that every remaining day is asked for more than
+	// a usual one.
+	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 100000, DaysTotal: 31, DaysRemaining: 5}
+	monthClock := clock(t, "2026-07", "2026-07-29")
+	plan := buildProjection(rates, goals, monthClock, 0).Plan
+
+	// Tomorrow: a day being asked to work harder than usual.
+	ask := dayTargetToolPayload(plan.at(rates, monthClock, 30, 0))
+	if ask["esforco"] != string(PaceAbove) || ask["meta_vs_media_pct"].(int) <= 0 {
+		t.Fatalf("ask = %v, want the stretch keyed to the meta", ask)
+	}
+	for _, key := range []string{"desempenho", "realizado_vs_media_pct"} {
+		if _, has := ask[key]; has {
+			t.Errorf("ask = %v, want no %q on a day that has not been traded", ask, key)
+		}
+	}
+
+	// Yesterday: a day that actually beat its usual. Same direction, opposite
+	// meaning, and a different key so the two cannot be read as one.
+	result := dayTargetToolPayload(plan.at(rates, monthClock, 28, 150000))
+	if result["desempenho"] != string(PaceAbove) || result["realizado_vs_media_pct"].(int) != 50 {
+		t.Fatalf("result = %v, want the performance keyed to what it sold", result)
+	}
+	for _, key := range []string{"esforco", "meta_vs_media_pct", "meta"} {
+		if _, has := result[key]; has {
+			t.Errorf("result = %v, want no %q on a day that has closed", result, key)
+		}
+	}
+}
+
 // A month that has not started is not a month that has ended, and monthClock
 // cannot tell them apart — both report inProgress = false. Without this, "dia 3
 // de setembro" asked in August answered "mes_fechado".

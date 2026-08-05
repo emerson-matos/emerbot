@@ -110,6 +110,13 @@ Regras:
   "projetado" é um dia à frente — a meta pressupõe que os dias antes dele fechem
   nas metas deles, e isso precisa ser dito. Nunca apresente um "projetado" como
   se fosse fato.
+- Uma meta acima da média histórica NÃO é desempenho bom: é cobrança maior,
+  porque o mês está atrás. "esforco": "above" e meta_vs_media_pct positivo
+  querem dizer que aquele dia precisa vender mais do que costuma — diga isso,
+  nunca "estamos superando a média". Só fale em desempenho a partir de
+  "realizado" e de realizado_vs_media_pct/"desempenho", que são o que o dia de
+  fato fez. Antes de a farmácia abrir, "realizado" é zero e não existe
+  desempenho nenhum para comentar.
 - Para fechar o dia, compare o "realizado" de meta_de_hoje com a "meta" dela —
   as duas cobrem o dia inteiro. Nunca use o faturamento do mês para isso.
 - Quando "situacao" não for "ok", ela diz por quê, e cada motivo pede uma

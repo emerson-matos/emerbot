@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted — a decisão vale; a **forma** foi corrigida pelo ADR-021 antes de
+qualquer parte disto chegar ao `main`. O campo `meta_de_amanha` descrito abaixo
+não existe: um campo por dia não sobrevive à pergunta seguinte ("e no sábado?"),
+e o dia virou parâmetro de `get_meta_do_dia`. O `SchemaVersion` 8 anunciado aqui
+é o mesmo salto único que o 021 entrega — não são duas versões.
 
 ## Contexto
 

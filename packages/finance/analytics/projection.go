@@ -168,7 +168,7 @@ func (p Plan) at(rates dailyRates, clock monthClock, day int, realized int64) Da
 	// stop a day that happened from having happened.
 	if target.Basis == DayRealized {
 		target.State = DayTargetClosedDay
-		target.compare(realized)
+		target.Delta, target.DeltaPercent, target.Status = compareToUsual(realized, historical)
 		return target
 	}
 
@@ -191,28 +191,35 @@ func (p Plan) at(rates dailyRates, clock monthClock, day int, realized int64) Da
 
 	target.Target = roundToInt64(float64(historical) * p.Factor)
 	target.Factor = p.Factor
-	target.compare(target.Target)
+	target.Delta, target.DeltaPercent, target.Status = compareToUsual(target.Target, historical)
 	return target
 }
 
-// compare grades a day's figure against what its weekday usually brings. Which
-// figure that is follows the basis: what the day is being asked for while it is
-// still ahead, what it actually took once it has closed. Both answer the same
-// question — is this a heavy day or a light one for this weekday — and having
-// one pair of fields for it keeps a consumer from needing to know which case it
-// is holding before it can draw a bar.
-func (t *DayTarget) compare(amount int64) {
-	if t.Historical <= 0 {
-		return
+// compareToUsual grades an amount against what its weekday usually brings.
+//
+// The amount is whichever figure the day's basis carries — what it is being
+// asked for while it is still ahead, what it actually took once it has closed —
+// and that makes the *same* scale mean opposite things on the two sides of
+// today. A Wednesday asked for 12% above its usual is a month running behind;
+// a Wednesday that took 12% above its usual is a good day. Consumers must name
+// the subject before they name the direction: see dayTargetToolPayload, which
+// keys them differently, and the bot answer that read "meta 12% acima da média"
+// as "estamos com um bom desempenho" ten minutes after midnight, with nothing
+// sold yet.
+func compareToUsual(amount, historical int64) (int64, float64, DayTargetScale) {
+	if historical <= 0 {
+		return 0, 0, ""
 	}
-	t.Delta = amount - t.Historical
-	t.DeltaPercent = float64(t.Delta) / float64(t.Historical)
+	delta := amount - historical
+	pct := float64(delta) / float64(historical)
 
-	t.Status = PaceOnTrack
-	if t.DeltaPercent > 0.05 {
-		t.Status = PaceAbove
-	} else if t.DeltaPercent < -0.05 {
-		t.Status = PaceBelow
+	switch {
+	case pct > 0.05:
+		return delta, pct, PaceAbove
+	case pct < -0.05:
+		return delta, pct, PaceBelow
+	default:
+		return delta, pct, PaceOnTrack
 	}
 }
 
