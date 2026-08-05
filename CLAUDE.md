@@ -49,3 +49,4 @@ Key decisions beyond the basics above:
 - **ADR-016** (revenue vs. cash-inflow are distinct): faturamento (`IsRevenue`, `Origin == venda`) and entradas de caixa (all income) are separate metrics. `Origin`, not category, decides.
 - **ADR-017** ("today" is not a measurable day): the daily notification and analysis tools report through yesterday; today is not yet a fact.
 - **ADR-018** (a week is the smallest comparable unit): month-over-month comparisons only activate after the first full week; before that, trends show the current month's own numbers without drawing conclusions.
+- **ADR-019** (a flat daily average does not describe a month): no consumer — Go, dashboard, or the model — may divide what is missing by the days left. The only per-day ask is `Projection.TodayTarget`, scaled by the weekday's own Gaussian average; `TodayTarget.State` names why there is no ask instead of going silent, and the agent prompt forbids the division outright.
