@@ -5,7 +5,7 @@ import {
 import { BarChart3 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatBRL } from '@/lib/format'
-import { chartColor, tooltipProps } from '@/lib/chart'
+import { brlAxisTick, chartColor, tooltipProps } from '@/lib/chart'
 import { monthBars } from '@/lib/monthBars'
 import { format } from 'date-fns';
 import { useMonthlyTrend } from '@/api/queries';
@@ -69,7 +69,7 @@ export default function IncomeExpenseChart() {
               tick={{ fontSize: 11, fill: chartColor.axis }}
               tickLine={false}
               axisLine={false}
-              tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`}
+              tickFormatter={brlAxisTick}
             />
             <Tooltip {...tooltipProps} formatter={v => formatBRL(Number(v) * 100)} />
             <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />

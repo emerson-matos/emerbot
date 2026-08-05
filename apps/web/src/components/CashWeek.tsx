@@ -1,63 +1,51 @@
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts'
 import { Wallet } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
-import { weekdayFull, weekdayShort } from '@/lib/weekdays'
-import { cashWeekDays, cashWeekPeaks, firstNegative } from '@/lib/cashWeek'
-import type { CashWeekDay } from '@/lib/cashWeek'
+import { brlAxisTick, chartColor, tooltipProps } from '@/lib/chart'
+import { cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative } from '@/lib/cashWeek'
 import type { CashPosition } from '@/api/types'
 
-// The week ahead, in money moving rather than in balance. The line chart on the
-// dashboard draws where the balance *goes*; this draws what pushes it — a day
-// with R$ 8.500,00 of bills against R$ 1.480,00 of takings is a fact you act
-// on, and a curve dipping gently through it is not.
+// The week around today, in money moving rather than in balance. The line chart
+// on the dashboard draws where the balance *goes*; this draws what pushes it —
+// a day with R$ 8.500,00 of bills against R$ 1.480,00 of takings is a fact you
+// act on, and a curve dipping gently through it is not.
 //
-// Each day is two bars side by side on one baseline: what comes in, what goes
-// out. They were stacked either side of a zero axis first, which reads as one
-// bar per day and makes the eye measure two lengths in opposite directions to
-// compare them. Side by side, the comparison is the picture.
+// Each day is two bars side by side: what comes in, what goes out. They were
+// stacked either side of a zero axis first, which reads as one bar per day and
+// makes the eye measure two lengths in opposite directions to compare them.
+// Side by side on one scale, the comparison is the picture — and one scale is
+// not optional there, since two bars sharing a baseline are read as comparable
+// whether or not they are.
 //
-// Green is money that will land because it is booked; amber is money the
-// weekday usually brings and nobody has promised — the same amber the
-// three-month chart uses for the month's projection, meaning the same thing:
-// this part has not happened yet.
+// Green is money already booked to land; amber is what the weekday usually
+// brings and nobody has promised — the same amber the three-month chart uses
+// for the month's projection, meaning the same thing: this has not happened
+// yet. Yesterday therefore carries no amber at all, which is what makes it the
+// anchor: one real column to judge six estimated ones against.
 
-/**
- * One day's pair of bars, both measured against the window's single ceiling.
- *
- * A day that moves almost nothing still gets a sliver, so an empty column is
- * unmistakably empty rather than just short.
- */
-function Bars({ day, ceiling }: { day: CashWeekDay; ceiling: number }) {
-  const pct = (amount: number) =>
-    amount > 0 && ceiling > 0 ? `${Math.max((amount / ceiling) * 100, 3)}%` : '0%'
-
+/** Bolds today, so the column you are standing on is findable at a glance. */
+function DayTick({ x, y, payload, days }: {
+  x?: number
+  y?: number
+  payload?: { value?: string; index?: number }
+  days: ReturnType<typeof cashWeekSeries>
+}) {
+  const day = days[payload?.index ?? -1]
   return (
-    <div className="flex h-32 w-full max-w-16 items-end justify-center gap-1 sm:h-40 sm:max-w-24" aria-hidden>
-      {/* Entra. justify-end stacks the expected part above the booked one: the
-          uncertain money sits at the top of the bar, furthest from the
-          baseline, where it reads as the part that might not arrive. */}
-      <div className="flex h-full w-1/2 flex-col justify-end">
-        <div
-          className="w-full rounded-t-md"
-          style={{ height: pct(day.expectedIn), background: 'var(--warning)' }}
-        />
-        <div
-          className={`w-full ${day.expectedIn > 0 ? '' : 'rounded-t-md'}`}
-          style={{ height: pct(day.scheduledIn), background: 'var(--success)' }}
-        />
-      </div>
-
-      {/* Sai. Only what is booked: the backend never invents an unbooked bill,
-          because a guessed expense would soften an alarm on evidence nobody
-          has. */}
-      <div className="flex h-full w-1/2 flex-col justify-end">
-        <div
-          className="w-full rounded-t-md"
-          style={{ height: pct(day.scheduledOut), background: 'var(--destructive)' }}
-        />
-      </div>
-    </div>
+    <text
+      x={x} y={y} dy={12}
+      textAnchor="middle"
+      fontSize={12}
+      fontWeight={day?.isToday ? 600 : 400}
+      fill={day?.isToday ? 'var(--foreground)' : chartColor.axis}
+    >
+      {payload?.value}
+    </text>
   )
 }
 
@@ -81,56 +69,76 @@ export default function CashWeek({ position, today }: {
     return (
       <EmptyState
         icon={Wallet}
-        message="Nada entra nem vence nos próximos dias."
+        message="Nada entra nem vence nesses dias."
         className="py-6"
       />
     )
   }
 
+  const series = cashWeekSeries(days)
   const last = days[days.length - 1]
   const negative = firstNegative(days)
+  // The boundary between what happened and what is estimated, drawn where the
+  // amber starts. Placed on today's own column rather than between two of them:
+  // today is where the estimating begins, since the day is only part traded.
+  const todayLabel = series.find((d) => d.isToday)?.label
 
   return (
     <>
-      {/* Same rule as the weekday strip: seven columns never fold, because two
-          rows of days is not a week. On a narrow screen it scrolls sideways. */}
-      <div className="-mx-1 overflow-x-auto px-1">
-        <div className="grid min-w-max grid-cols-7 gap-1 sm:gap-2">
-          {days.map((day) => (
-            <div
-              key={day.date}
-              className="flex min-w-18 flex-col items-center gap-1.5 sm:min-w-0"
-              // The exact figures live here rather than under every column: three
-              // rows of digits across seven days is a table nobody reads.
-              title={[
-                `${weekdayFull(parseISO(day.date).getDay())} ${format(parseISO(day.date), 'dd/MM')}`,
-                `Entra: ${formatBRL(day.totalIn)}${day.expectedIn > 0 ? ` (${formatBRL(day.scheduledIn)} lançado + ${formatBRL(day.expectedIn)} esperado)` : ''}`,
-                `Sai: ${formatBRL(day.scheduledOut)}`,
-                `Saldo no fim do dia: ${formatBRL(day.balance)}`,
-              ].join('\n')}
-            >
-              <Bars day={day} ceiling={ceiling} />
-              <p className={`text-xs ${day.isToday ? 'font-semibold' : 'font-medium text-muted-foreground'}`}>
-                {day.isToday ? 'Hoje' : weekdayShort(parseISO(day.date).getDay())}
-              </p>
-              {/* Sem centavos: a metade âmbar é uma média de oito semanas, e os
-                  dois dígitos finais dariam a ela uma precisão que não tem. */}
-              <p className="text-center text-xs tracking-tight text-success tabular-nums">
-                {day.totalIn > 0 ? formatBRL(day.totalIn, { fractionDigits: 0, roundingMode: 'expand' }) : '—'}
-              </p>
-              <p className="text-center text-xs tracking-tight text-destructive tabular-nums">
-                {day.scheduledOut > 0 ? formatBRL(day.scheduledOut, { fractionDigits: 0, roundingMode: 'expand' }) : '—'}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={series} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={chartColor.grid} vertical={false} />
+          <XAxis
+            dataKey="label"
+            tickLine={false}
+            axisLine={false}
+            tick={<DayTick days={series} />}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: chartColor.axis }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={brlAxisTick}
+          />
+          <Tooltip
+            {...tooltipProps}
+            formatter={v => formatBRL(Number(v ?? 0) * 100)}
+            labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ''}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+
+          {todayLabel && (
+            <ReferenceLine
+              x={todayLabel}
+              stroke={chartColor.today}
+              strokeDasharray="4 4"
+            />
+          )}
+
+          {/* One stack for the inflow: booked at the bottom, expected on top,
+              so the uncertain money sits furthest from the axis. Outflow is a
+              second bar beside it, never in the same stack. */}
+          <Bar dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={28} />
+          <Bar dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={28} />
+          {/* Only what is booked: the backend never invents an unbooked bill,
+              because a guessed expense would soften an alarm on evidence
+              nobody has. */}
+          <Bar dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={28}>
+            {series.map((d) => (
+              <Cell key={d.date} fillOpacity={d.isPast ? 0.55 : 1} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
 
       <p className="text-xs text-muted-foreground">
         Verde é o que já está lançado para entrar; âmbar é o recebimento médio
         daquele dia da semana, que ainda não é promessa de ninguém. A saída é só
-        o que já está lançado — contas não lançadas não são estimadas.
+        o que já está lançado — contas não lançadas não são estimadas. Ontem
+        entra como referência e não tem âmbar: nada é estimado para um dia que
+        já passou.
       </p>
+
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-3">
         <span className="text-sm font-medium">
           Saldo em {format(parseISO(last.date), 'dd/MM')}
@@ -140,9 +148,9 @@ export default function CashWeek({ position, today }: {
         >
           {formatBRL(last.balance)}
         </span>
-        {/* The week's own trough, named. cashPosition.daysUntilNegative answers
-            this for the whole month; a card about seven days has to say whether
-            the dip is inside them. */}
+        {/* The window's own dip, named. cashPosition.daysUntilNegative answers
+            this for the whole month; a card about a handful of days has to say
+            whether the dip is inside them. */}
         {negative && (
           <span className="text-sm text-destructive">
             Fica negativo em {format(parseISO(negative.date), 'dd/MM')}
