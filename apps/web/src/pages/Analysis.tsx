@@ -178,9 +178,9 @@ const TREND_ARROW = { up: '↑', down: '↓', stable: '—' } as const
 function trendTone(trend: { direction: TrendDirection; previous: number }): string {
   if (trend.previous === 0) return 'text-muted-foreground'
   switch (trend.direction) {
-    case 'up':   return 'text-success'
+    case 'up': return 'text-success'
     case 'down': return 'text-warning'
-    default:     return 'text-muted-foreground'
+    default: return 'text-muted-foreground'
   }
 }
 
@@ -514,18 +514,18 @@ function ProjectionSection({ projection, faturamento, period }: {
               value={formatBRL(projection.gap)}
               valueClassName="text-base text-destructive"
             />
-             {/* Today's own target lives on the weekday strip below, drawn against
+            {/* Today's own target lives on the weekday strip below, drawn against
                  what this weekday usually brings. When the backend cannot compute
                  one, the month's remaining days share the shortfall evenly —
                  every remaining day, not just business days: the shop trades on
                  weekends too, and the label used to say "dia útil" over a figure
                  divided by all of them. */}
-           </div>
-         )}
-       </>
-     </Section>
-   )
- }
+          </div>
+        )}
+      </>
+    </Section>
+  )
+}
 
 function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // The pace pair, not the running totals: both sides cover the same finished
@@ -748,7 +748,7 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
 
       {/* Paired, not stacked: nine cards in one column gave every block the same
           weight and made the page a scroll with no shape. */}
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <div className="grid auto-rows-fr grid-cols-1 gap-4 lg:grid-cols-2">
         <HealthSection data={analysis.health} />
         <RecommendationSection data={analysis.recommendations} />
       </div>
@@ -756,11 +756,9 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         <CashWeek position={analysis.cashPosition} today={todayISO()} />
       </Section>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <CashPositionSection data={analysis.cashPosition} />
         <WeekComparisonSection data={analysis.weekComparison} />
-      </div>
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <CashOutSection data={analysis.cashOutDays} />
         <CompositionSection data={analysis.expenseComposition} />
       </div>

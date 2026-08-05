@@ -225,16 +225,13 @@ export default function Dashboard() {
         <p className="mt-1 text-muted-foreground">Visão geral financeira do estabelecimento</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 md:grid-cols-3">
         <RevenueTotal />
         <CashInTotal />
         <ExpenseTotal />
         <CashProjectionCard />
         <RevenueProjectionCard />
         <Receivables />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <ToPayToday />
         <WorstMonth />
         <GoalCard />

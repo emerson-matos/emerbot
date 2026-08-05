@@ -125,12 +125,12 @@ COMPOSE_EXTRA ?=
 # Tags image with content hash so subsequent runs skip the build.
 define build-if-stale
 	@HASH=$$(echo "$(2)" | tr ' ' '\n' | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1); \
-	if podman image exists emerbot-$(1):$$HASH; then \
+	if podman image exists localhost/emerbot_$(1):$$HASH; then \
 		echo "$(1): up to date"; \
 	else \
 		echo "$(1): building..."; \
 		$(COMPOSE) build $(1); \
-		podman tag emerbot-$(1) emerbot-$(1):$$HASH; \
+		podman tag localhost/emerbot_$(1) emerbot-$(1):$$HASH; \
 	fi
 endef
 
