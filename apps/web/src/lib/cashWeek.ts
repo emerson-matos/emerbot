@@ -41,18 +41,26 @@ export function cashWeekDays(
 }
 
 /**
- * The tallest bar each half of the card has to draw. They are returned apart
- * because the card sizes each half by its own peak — which is what keeps a
- * single scale across both halves rather than breaking it; see axisSplit.
+ * The tallest inflow and the tallest outflow of the window, and the one both
+ * are drawn against.
  *
- * Both zero when nothing moves all week: the caller renders an empty state
+ * `ceiling` is deliberately a single number. The bars stand side by side on one
+ * baseline, and two bars sharing a baseline are read as comparable whether or
+ * not they are — so giving each its own scale would turn R$ 1.200,00 of takings
+ * and R$ 8.500,00 of bills into two bars of the same length. The cost is that a
+ * week carrying the payroll squashes the inflow column; the figures printed
+ * under each day carry the exact amounts, and "the bill dwarfs the day" is the
+ * true reading anyway.
+ *
+ * All zero when nothing moves all week: the caller renders an empty state
  * rather than dividing by it.
  */
-export function cashWeekPeaks(days: CashWeekDay[]): { maxIn: number; maxOut: number } {
-  return {
-    maxIn: Math.max(0, ...days.map((d) => d.totalIn)),
-    maxOut: Math.max(0, ...days.map((d) => d.scheduledOut)),
-  };
+export function cashWeekPeaks(
+  days: CashWeekDay[],
+): { maxIn: number; maxOut: number; ceiling: number } {
+  const maxIn = Math.max(0, ...days.map((d) => d.totalIn));
+  const maxOut = Math.max(0, ...days.map((d) => d.scheduledOut));
+  return { maxIn, maxOut, ceiling: Math.max(maxIn, maxOut) };
 }
 
 /**
