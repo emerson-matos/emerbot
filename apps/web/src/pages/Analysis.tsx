@@ -27,6 +27,8 @@ import { weekdayFull } from '@/lib/weekdays'
 import { currentMonthKey } from '@/lib/entries'
 import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, Recommendation, TrendDirection } from '@/api/types'
 import { projectionBasisNote, projectionTone } from '@/lib/projection'
+import CashWeek from '@/components/CashWeek'
+import { todayISO } from '@/lib/entries'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
 
 const HEALTH_LABEL: Record<FinancialHealthStatus, string> = {
@@ -750,6 +752,10 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         <HealthSection data={analysis.health} />
         <RecommendationSection data={analysis.recommendations} />
       </div>
+      <Section title="O caixa dos próximos dias" icon={Wallet}>
+        <CashWeek position={analysis.cashPosition} today={todayISO()} />
+      </Section>
+
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <CashPositionSection data={analysis.cashPosition} />
         <WeekComparisonSection data={analysis.weekComparison} />
