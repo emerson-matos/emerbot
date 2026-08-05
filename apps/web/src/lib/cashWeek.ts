@@ -1,35 +1,58 @@
 import type { DayCash } from "@/api/types";
 
-/** How many days ahead the card shows. A week is the unit people plan in. */
-export const CASH_WEEK_DAYS = 7;
+/**
+ * The window: one day behind, today, and five ahead — seven columns, same as
+ * the weekday strip.
+ *
+ * Yesterday earns its column by being the anchor. Every other day carries an
+ * amber estimate, and a reader has no way to judge whether those estimates look
+ * sane without one real day beside them. It is deliberately one day and not
+ * three: this card is for deciding what to do next, and the past is context,
+ * not the subject.
+ */
+export const CASH_WEEK_BACK = 1;
+export const CASH_WEEK_AHEAD = 5;
 
 export interface CashWeekDay extends DayCash {
   /** Everything landing that day: what is booked plus what the weekday brings. */
   totalIn: number;
   isToday: boolean;
+  /**
+   * A day that has already closed. Its figures carry no estimate at all — the
+   * backend credits an ordinary day's receipts only from today on — so what is
+   * drawn is what was *booked* to move that day.
+   *
+   * Booked, not banked: the curve buckets every entry by its due date whatever
+   * its payment status (finance.EffectiveDate), so a receivable that came due
+   * yesterday and was never paid still sits on yesterday. The column is an
+   * anchor, not a receipt.
+   */
+  isPast: boolean;
 }
 
 /**
- * The days still ahead, today included, capped at a week.
+ * Slices the month's forecast around today.
  *
- * Today is in because it is a day money can still move on — the same line
- * ADR-017 draws for everything forward-looking. Days already closed are out:
- * this card is for deciding what to do, and there is nothing to decide about
- * Monday on Wednesday.
+ * Anchored on today rather than filtered by a date range, so the window keeps
+ * its shape at the edges of the month: on the 1st there is no yesterday inside
+ * this forecast — it belongs to the previous month, which this series does not
+ * cover — and the card simply opens on today.
  *
- * A closed month, or the last day of one, yields an empty list rather than the
- * month's tail. "Os próximos dias" of a month that has ended are not in this
- * forecast, and showing its final days under that heading would date-shift the
- * whole card.
+ * A month with no day left yields nothing rather than its own tail. "Os
+ * próximos dias" of a month that has ended are not in this forecast, and
+ * showing its final days under that heading would date-shift the whole card.
  */
 export function cashWeekDays(
   forecast: DayCash[],
   today: string,
-  count = CASH_WEEK_DAYS,
+  back = CASH_WEEK_BACK,
+  ahead = CASH_WEEK_AHEAD,
 ): CashWeekDay[] {
+  const start = forecast.findIndex((day) => day.date >= today);
+  if (start === -1) return [];
+
   return forecast
-    .filter((day) => day.date >= today)
-    .slice(0, count)
+    .slice(Math.max(0, start - back), start + 1 + ahead)
     .map((day) => ({
       ...day,
       // Booked and expected are one bar because together they are the day's
@@ -37,23 +60,18 @@ export function cashWeekDays(
       // fact. See the amber convention in lib/chart.
       totalIn: day.scheduledIn + day.expectedIn,
       isToday: day.date === today,
+      isPast: day.date < today,
     }));
 }
 
 /**
- * The tallest inflow and the tallest outflow of the window, and the one both
- * are drawn against.
+ * The tallest inflow and the tallest outflow of the window, and the larger of
+ * the two.
  *
- * `ceiling` is deliberately a single number. The bars stand side by side on one
- * baseline, and two bars sharing a baseline are read as comparable whether or
- * not they are — so giving each its own scale would turn R$ 1.200,00 of takings
- * and R$ 8.500,00 of bills into two bars of the same length. The cost is that a
- * week carrying the payroll squashes the inflow column; the figures printed
- * under each day carry the exact amounts, and "the bill dwarfs the day" is the
- * true reading anyway.
- *
- * All zero when nothing moves all week: the caller renders an empty state
- * rather than dividing by it.
+ * Recharts sizes the axis itself, so this is not the drawing scale — it is how
+ * the card tells a week where nothing moves from one where something does, and
+ * an all-zero week renders an empty state instead of seven flat columns under
+ * an axis running to R$ 0.
  */
 export function cashWeekPeaks(
   days: CashWeekDay[],
@@ -64,11 +82,59 @@ export function cashWeekPeaks(
 }
 
 /**
- * The first day of the window whose projected balance is under water, if any.
+ * The first day still ahead whose projected balance is under water, if any.
  * A selection over figures the backend already published — never a recomputed
  * runway. `CashPosition.daysUntilNegative` answers the same question for the
  * whole month; this one is about the week on screen.
+ *
+ * Days already closed are skipped: "fica negativo" is a claim about what is
+ * coming, and a balance that dipped yesterday is not news the card can act on.
  */
 export function firstNegative(days: CashWeekDay[]): CashWeekDay | undefined {
-  return days.find((d) => d.balance < 0);
+  return days.find((d) => !d.isPast && d.balance < 0);
+}
+
+/** One column of the chart. Amounts in reais — Recharts reads these by name. */
+export interface CashWeekBar {
+  date: string;
+  /** The axis label: "Ontem", "Hoje", or the weekday. */
+  label: string;
+  /** The tooltip heading, where there is room for the full date. */
+  full: string;
+  isToday: boolean;
+  isPast: boolean;
+  "Entrada lançada": number;
+  "Entrada esperada": number;
+  "Saída": number;
+}
+
+const WEEKDAY_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const WEEKDAY_FULL = [
+  "domingo", "segunda-feira", "terça-feira", "quarta-feira",
+  "quinta-feira", "sexta-feira", "sábado",
+];
+
+/**
+ * Turns the window into chart rows. The series names are the legend, so they
+ * are the words a reader sees: a key of "in" would have to be translated
+ * somewhere else and then kept in step.
+ *
+ * The two days a reader locates themselves by are named rather than numbered —
+ * "Ontem" and "Hoje" beside five weekdays is a week you can read without
+ * counting.
+ */
+export function cashWeekSeries(days: CashWeekDay[]): CashWeekBar[] {
+  return days.map((day) => {
+    const weekday = new Date(`${day.date}T12:00:00`).getDay();
+    return {
+      date: day.date,
+      label: day.isToday ? "Hoje" : day.isPast ? "Ontem" : WEEKDAY_SHORT[weekday],
+      full: `${WEEKDAY_FULL[weekday]}, ${day.date.slice(8)}/${day.date.slice(5, 7)}`,
+      isToday: day.isToday,
+      isPast: day.isPast,
+      "Entrada lançada": day.scheduledIn / 100,
+      "Entrada esperada": day.expectedIn / 100,
+      "Saída": day.scheduledOut / 100,
+    };
+  });
 }

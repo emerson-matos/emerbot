@@ -15,7 +15,7 @@ import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { chartColor, tooltipProps } from "@/lib/chart";
+import { brlAxisTick, chartColor, tooltipProps } from "@/lib/chart";
 import { formatBRL } from "@/lib/format";
 import { todayISO } from "@/lib/entries";
 import type { DayCash } from "../api/types";
@@ -190,15 +190,7 @@ export default function CashFlowChart({ data }: Props) {
               axisLine={false}
               tickLine={false}
               tick={{ fontSize: 11, fill: chartColor.axis }}
-              tickFormatter={(v: number) => {
-                const abs = Math.abs(v);
-
-                if (abs >= 1000) {
-                  return `${v < 0 ? "-" : ""}R$${(abs / 1000).toFixed(0)}k`;
-                }
-
-                return `${v < 0 ? "-" : ""}R$${abs.toFixed(0)}`;
-              }}
+              tickFormatter={brlAxisTick}
             />
 
             {/* The two series are the same balance under different regimes, so

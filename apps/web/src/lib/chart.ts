@@ -18,6 +18,21 @@ export const chartColor = {
   axis: "var(--muted-foreground)",
 } as const;
 
+/**
+ * A money tick for a chart axis, in thousands.
+ *
+ * The fraction digit is not decoration. Recharts picks tick values off the
+ * data, and a week whose tallest bar is R$ 8.500,00 gets 0 / 2.500 / 5.000 /
+ * 7.500 / 10.000 — which, rounded to whole thousands, prints an axis reading
+ * R$0k, R$3k, R$5k, R$8k, R$10k. Two of those five labels name a number the
+ * gridline is not at.
+ */
+export function brlAxisTick(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const thousands = Math.abs(value) / 1000;
+  return `${sign}R$${thousands.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k`;
+}
+
 /** Ordered palette for categorical series (donuts, category bars). */
 export const categoricalPalette = [
   "var(--chart-4)",
