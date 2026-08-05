@@ -9,65 +9,52 @@ import type { CashPosition } from '@/api/types'
 
 // The week ahead, in money moving rather than in balance. The line chart on the
 // dashboard draws where the balance *goes*; this draws what pushes it — a day
-// with R$ 4.000 of bills and R$ 900 of takings is a fact you act on, and a
-// curve dipping gently through it is not.
+// with R$ 8.500,00 of bills against R$ 1.480,00 of takings is a fact you act
+// on, and a curve dipping gently through it is not.
 //
-// Inflow grows up from the axis, outflow down, on one shared scale so the two
-// halves are comparable at a glance. Green is money that will land because it
-// is booked; amber is money the weekday usually brings and nobody has promised
-// — the same amber the three-month chart uses for the month's projection, and
-// it means the same thing there: this part has not happened yet.
+// Each day is two bars side by side on one baseline: what comes in, what goes
+// out. They were stacked either side of a zero axis first, which reads as one
+// bar per day and makes the eye measure two lengths in opposite directions to
+// compare them. Side by side, the comparison is the picture.
+//
+// Green is money that will land because it is booked; amber is money the
+// weekday usually brings and nobody has promised — the same amber the
+// three-month chart uses for the month's projection, meaning the same thing:
+// this part has not happened yet.
 
 /**
- * Each half is drawn against its own peak, and the card says so out loud in the
- * caption underneath.
+ * One day's pair of bars, both measured against the window's single ceiling.
  *
- * One shared scale was tried first and does not survive real data. A pharmacy
- * takes on the order of R$ 1.200,00 a day and pays bills of R$ 8.500,00 — the
- * payroll, a supplier — so a shared linear scale squashes every inflow into a
- * four-pixel sliver and the green/amber split, which is half of what this card
- * is for, disappears. That ratio is the normal week here, not the outlier.
- *
- * The honest cost is that a green bar and a red bar of the same length are not
- * the same amount, so the two things that defuse it travel with the bars: every
- * column prints its own figures, and the caption names both peaks. What the
- * card still shows truthfully is the shape *within* each half — which day of
- * the week carries the takings, and which day the money leaves on.
+ * A day that moves almost nothing still gets a sliver, so an empty column is
+ * unmistakably empty rather than just short.
  */
-function Bars({ day, maxIn, maxOut }: { day: CashWeekDay; maxIn: number; maxOut: number }) {
-  // A day that moves almost nothing still gets a sliver, so an empty column is
-  // unmistakably empty rather than just short.
-  const pct = (amount: number, max: number) =>
-    amount > 0 && max > 0 ? `${Math.max((amount / max) * 100, 5)}%` : '0%'
+function Bars({ day, ceiling }: { day: CashWeekDay; ceiling: number }) {
+  const pct = (amount: number) =>
+    amount > 0 && ceiling > 0 ? `${Math.max((amount / ceiling) * 100, 3)}%` : '0%'
 
   return (
-    <div className="w-full max-w-14 sm:max-w-20" aria-hidden>
-      {/* Inflow, growing up to the axis. justify-end puts the expected part on
-          top of the booked one: the uncertain half sits furthest from the axis,
-          where it reads as the part that might not arrive. */}
-      <div className="flex h-20 flex-col justify-end sm:h-24">
+    <div className="flex h-32 w-full max-w-16 items-end justify-center gap-1 sm:h-40 sm:max-w-24" aria-hidden>
+      {/* Entra. justify-end stacks the expected part above the booked one: the
+          uncertain money sits at the top of the bar, furthest from the
+          baseline, where it reads as the part that might not arrive. */}
+      <div className="flex h-full w-1/2 flex-col justify-end">
         <div
           className="w-full rounded-t-md"
-          style={{ height: pct(day.expectedIn, maxIn), background: 'var(--warning)' }}
+          style={{ height: pct(day.expectedIn), background: 'var(--warning)' }}
         />
         <div
           className={`w-full ${day.expectedIn > 0 ? '' : 'rounded-t-md'}`}
-          style={{ height: pct(day.scheduledIn, maxIn), background: 'var(--success)' }}
+          style={{ height: pct(day.scheduledIn), background: 'var(--success)' }}
         />
       </div>
 
-      {/* The zero line, and it has to be visible: without it the green above and
-          the red below touch, and seven columns read as one stacked bar rather
-          than as money going two directions. */}
-      <div className="my-1 h-px w-full bg-muted-foreground/60" />
-
-      {/* Outflow, hanging from the axis. Only what is booked: the backend never
-          invents an unbooked bill, because a guessed expense would soften an
-          alarm on evidence nobody has. */}
-      <div className="flex h-20 flex-col sm:h-24">
+      {/* Sai. Only what is booked: the backend never invents an unbooked bill,
+          because a guessed expense would soften an alarm on evidence nobody
+          has. */}
+      <div className="flex h-full w-1/2 flex-col justify-end">
         <div
-          className="w-full rounded-b-md"
-          style={{ height: pct(day.scheduledOut, maxOut), background: 'var(--destructive)' }}
+          className="w-full rounded-t-md"
+          style={{ height: pct(day.scheduledOut), background: 'var(--destructive)' }}
         />
       </div>
     </div>
@@ -79,7 +66,7 @@ export default function CashWeek({ position, today }: {
   today: string
 }) {
   const days = cashWeekDays(position.forecast, today)
-  const { maxIn, maxOut } = cashWeekPeaks(days)
+  const { ceiling } = cashWeekPeaks(days)
 
   if (days.length === 0) {
     return (
@@ -90,7 +77,7 @@ export default function CashWeek({ position, today }: {
       />
     )
   }
-  if (maxIn + maxOut === 0) {
+  if (ceiling === 0) {
     return (
       <EmptyState
         icon={Wallet}
@@ -122,7 +109,7 @@ export default function CashWeek({ position, today }: {
                 `Saldo no fim do dia: ${formatBRL(day.balance)}`,
               ].join('\n')}
             >
-              <Bars day={day} maxIn={maxIn} maxOut={maxOut} />
+              <Bars day={day} ceiling={ceiling} />
               <p className={`text-xs ${day.isToday ? 'font-semibold' : 'font-medium text-muted-foreground'}`}>
                 {day.isToday ? 'Hoje' : weekdayShort(parseISO(day.date).getDay())}
               </p>
@@ -144,15 +131,6 @@ export default function CashWeek({ position, today }: {
         daquele dia da semana, que ainda não é promessa de ninguém. A saída é só
         o que já está lançado — contas não lançadas não são estimadas.
       </p>
-      {/* The two halves are drawn against different peaks, so the reader is
-          told what each side's tallest bar is worth. Without this, a red bar
-          the size of a green one would read as the same amount of money. */}
-      <p className="text-xs text-muted-foreground">
-        Cada metade tem escala própria: a barra cheia vale{' '}
-        {formatBRL(maxIn, { fractionDigits: 0, roundingMode: 'expand' })} em cima e{' '}
-        {formatBRL(maxOut, { fractionDigits: 0, roundingMode: 'expand' })} embaixo.
-      </p>
-
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-3">
         <span className="text-sm font-medium">
           Saldo em {format(parseISO(last.date), 'dd/MM')}

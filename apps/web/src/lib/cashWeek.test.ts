@@ -60,18 +60,31 @@ describe("cashWeekDays", () => {
 });
 
 describe("cashWeekPeaks", () => {
-  it("measures each half against its own tallest bar", () => {
-    const { maxIn, maxOut } = cashWeekPeaks(cashWeekDays(forecast, "2026-08-05"));
+  it("draws both bars against one ceiling", () => {
+    const { maxIn, maxOut, ceiling } = cashWeekPeaks(cashWeekDays(forecast, "2026-08-05"));
 
     expect(maxIn).toBe(148000);
     expect(maxOut).toBe(850000);
+    // Side by side on one baseline, two bars are read as comparable whether or
+    // not they are — so the bill and the takings share a scale, and the week's
+    // R$ 8.500,00 payroll is what both are measured against.
+    expect(ceiling).toBe(850000);
   });
 
-  it("is zero on both halves when nothing moves", () => {
+  it("takes the ceiling from the inflow when nothing big falls due", () => {
+    const quietBills = cashWeekDays(
+      [day("2026-08-05", { expectedIn: 130000 }), day("2026-08-06", { scheduledOut: 4000 })],
+      "2026-08-05",
+    );
+
+    expect(cashWeekPeaks(quietBills).ceiling).toBe(130000);
+  });
+
+  it("is zero throughout when nothing moves", () => {
     const quiet = cashWeekDays([day("2026-08-05"), day("2026-08-06")], "2026-08-05");
 
     // The card renders an empty state off this rather than dividing by it.
-    expect(cashWeekPeaks(quiet)).toEqual({ maxIn: 0, maxOut: 0 });
+    expect(cashWeekPeaks(quiet)).toEqual({ maxIn: 0, maxOut: 0, ceiling: 0 });
   });
 });
 
