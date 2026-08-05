@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,8 +133,8 @@ func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	stats := projectionRates(entries, from, to).weekdayStats(at12(t, "2026-07-15")) // a Wednesday
 
 	monday := stats[1]
-	if monday.Label != "Seg" {
-		t.Fatalf("index 1 should be Monday, got %q", monday.Label)
+	if monday.Day != time.Monday {
+		t.Fatalf("index 1 should be Monday, got %v", monday.Day)
 	}
 	if monday.Count != 2 {
 		t.Errorf("Count = %d, want 2 distinct Mondays", monday.Count)
@@ -472,8 +473,8 @@ func TestWeekComparison(t *testing.T) {
 	if got.Pace.Previous != 5000 {
 		t.Errorf("Pace.Previous = %d, want Mon–Tue last week (5000)", got.Pace.Previous)
 	}
-	if want := []string{"Seg", "Ter", "Qua"}; len(got.Labels) != len(want) {
-		t.Errorf("Labels = %v, want one per elapsed day this week (%v)", got.Labels, want)
+	if want := []time.Weekday{time.Monday, time.Tuesday, time.Wednesday}; !slices.Equal(got.Days, want) {
+		t.Errorf("Days = %v, want one per elapsed day this week (%v)", got.Days, want)
 	}
 	// 20000 so far + 4 remaining days at last week's 30000/7 per day, to the
 	// nearest centavo.
@@ -499,8 +500,8 @@ func TestWeekComparisonTreatsSundayAsTheEndOfItsWeek(t *testing.T) {
 	if got.Current != 20000 {
 		t.Errorf("Current = %d, want Monday-through-Sunday (20000)", got.Current)
 	}
-	if len(got.Labels) != 7 {
-		t.Errorf("Labels = %v, want all seven days by Sunday", got.Labels)
+	if len(got.Days) != daysInWeek {
+		t.Errorf("Days = %v, want all seven days by Sunday", got.Days)
 	}
 	// The week is over, so there is nothing left to project into it.
 	if got.ProjectedWeekly != got.Current {
@@ -914,11 +915,11 @@ func TestTodayTargetScalesTodaysOwnWeekdayAverage(t *testing.T) {
 
 	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
 
-	if !got.Valid {
+	if !got.Asked() {
 		t.Fatalf("TodayTarget = %+v, want a target on an ordinary Monday", got)
 	}
-	if got.Weekday != "Seg" {
-		t.Errorf("Weekday = %q, want the label for the day being asked about", got.Weekday)
+	if got.Day != time.Monday {
+		t.Errorf("Day = %v, want the day being asked about", got.Day)
 	}
 	if got.Historical != 100000 {
 		t.Errorf("Historical = %d, want Monday's average (100000)", got.Historical)
@@ -988,7 +989,7 @@ func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
 
 	got := buildProjection(flat, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
 
-	if !got.Valid {
+	if !got.Asked() {
 		t.Fatalf("TodayTarget = %+v, want a target — a lighter day is still a day", got)
 	}
 	if got.Delta >= 0 {
@@ -999,43 +1000,71 @@ func TestTodayTargetCanFallBelowTheAverage(t *testing.T) {
 	}
 }
 
-// The cases with no honest answer, each for its own reason.
-func TestTodayTargetIsInvalidWithoutSomethingToStandOn(t *testing.T) {
-	now := at12(t, "2026-07-27")
+// The cases with no honest answer, each named rather than collapsed into one
+// silence. They used to share a single `valid: false`, which is how "a meta já
+// foi batida" — good news — reached the reader as the same blank as "não há
+// histórico", and left the bot with nothing to say but a number it invented.
+func TestTodayTargetNamesWhyThereIsNoAsk(t *testing.T) {
+
 	flat := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
 	goals := GoalProgress{RevenueTarget: 1000000, RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5}
 
-	t.Run("no window to price the days from", func(t *testing.T) {
-		got := buildProjection(dailyRates{}, goals, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
-		if got.Valid {
-			t.Errorf("TodayTarget = %+v, want none without a basis", got)
-		}
-	})
+	tests := []struct {
+		name       string
+		rates      dailyRates
+		goals      GoalProgress
+		month, now string
+		want       TodayTargetState
+	}{
+		// An ordinary Monday, for contrast: this is what a real ask looks like.
+		{"an ordinary trading day", flat, goals, "2026-07", "2026-07-27", TodayTargetOK},
+		{"no window to price the days from", dailyRates{}, goals, "2026-07", "2026-07-27", TodayTargetNoHistory},
+		// Sunday 2026-07-26 priced at nothing: the shop does not open, so there
+		// is no rhythm to scale and asking a multiple of zero is not an answer.
+		// It is emphatically not "sem_historico" — the other six days are known.
+		{
+			"a weekday the pharmacy does not trade",
+			ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000),
+			goals, "2026-07", "2026-07-26", TodayTargetClosedWeekday,
+		},
+		{
+			"the goal is already beaten", flat,
+			GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5},
+			"2026-07", "2026-07-27", TodayTargetGoalMet,
+		},
+		{
+			"no goal to take a share of", flat,
+			GoalProgress{RevenueActual: 250000, DaysTotal: 31, DaysRemaining: 5},
+			"2026-07", "2026-07-27", TodayTargetNoGoal,
+		},
+		{"a closed month", flat, goals, "2026-07", "2026-08-03", TodayTargetClosedMonth},
+	}
 
-	t.Run("a weekday the pharmacy does not trade", func(t *testing.T) {
-		// Sunday 2026-07-26, priced at nothing: there is no usual rhythm to
-		// scale, and asking for a multiple of zero is not an answer.
-		closedSundays := ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000)
-		got := buildProjection(closedSundays, goals, at12(t, "2026-07-26"), clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
-		if got.Valid {
-			t.Errorf("TodayTarget = %+v, want none on a day with no history", got)
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildProjection(tc.rates, tc.goals, at12(t, tc.now), clock(t, tc.month, tc.now), 0).TodayTarget
 
-	t.Run("the goal is already beaten", func(t *testing.T) {
-		beaten := GoalProgress{RevenueTarget: 1000000, RevenueActual: 1200000, DaysTotal: 31, DaysRemaining: 5}
-		got := buildProjection(flat, beaten, now, clock(t, "2026-07", "2026-07-27"), 0).TodayTarget
-		if got.Valid {
-			t.Errorf("TodayTarget = %+v, want none once the target is met", got)
-		}
-	})
+			if got.State != tc.want {
+				t.Errorf("State = %q, want %q", got.State, tc.want)
+			}
+			if asked := got.State == TodayTargetOK; got.Asked() != asked {
+				t.Errorf("Asked() = %t, want %t for state %q", got.Asked(), asked, got.State)
+			}
+			// Every absence leaves the amounts at zero, so a consumer that
+			// renders one without checking the state cannot print a target.
+			if !got.Asked() && (got.Target != 0 || got.Historical != 0) {
+				t.Errorf("TodayTarget = %+v, want no amounts under state %q", got, got.State)
+			}
+		})
+	}
 
-	t.Run("a closed month", func(t *testing.T) {
-		got := buildProjection(flat, goals, at12(t, "2026-08-03"), clock(t, "2026-07", "2026-08-03"), 0).TodayTarget
-		if got.Valid {
-			t.Errorf("TodayTarget = %+v, want none for a month with no days left", got)
-		}
-	})
+	// The weekday is filled in even where there is no ask: "a farmácia não abre
+	// domingo" needs to know it is Sunday it is talking about.
+	sunday := buildProjection(ratesFor(0, 100000, 100000, 100000, 100000, 100000, 100000),
+		goals, at12(t, "2026-07-26"), clock(t, "2026-07", "2026-07-26"), 0).TodayTarget
+	if sunday.Day != time.Sunday {
+		t.Errorf("Day = %v, want Sunday named even with no ask", sunday.Day)
+	}
 }
 
 func TestProjectionWithoutAGoalHasNothingToPace(t *testing.T) {
@@ -1788,6 +1817,49 @@ func TestDigestLinesKeepOnlyWhatIsWorthSaying(t *testing.T) {
 	}
 }
 
+// The digest states the day's ask itself, against what that weekday brings.
+// It used to carry no figure at all, which left the humanizer in the notifier
+// deriving one — and the only arithmetic it had was the gap over the days left
+// (ADR-019).
+func TestDigestStatesTheDaysAskAgainstItsOwnWeekday(t *testing.T) {
+	analysis := Analysis{
+		Period: Period{ThroughDay: 8, DaysRemaining: 23, DaysTotal: 31, InProgress: true},
+		Health: Health{Status: HealthBoa},
+		Projection: Projection{
+			TodayTarget: TodayTarget{
+				State:        TodayTargetOK,
+				Day:          time.Sunday,
+				Historical:   60000,
+				Target:       66000,
+				Delta:        6000,
+				DeltaPercent: 0.1,
+				Status:       PaceAbove,
+			},
+		},
+	}
+
+	ahead := analysis.AheadLines()
+	if len(ahead) == 0 {
+		t.Fatal("AheadLines is empty — the day's ask is the actionable half of the digest")
+	}
+	want := "Meta de hoje (domingo): R$ 660,00 — 10% acima do que um domingo costuma faturar (R$ 600,00)."
+	if ahead[0] != want {
+		t.Errorf("ahead[0] = %q, want %q", ahead[0], want)
+	}
+
+	// No ask, no line — and never a line built from a state that has no
+	// amounts behind it.
+	for _, state := range []TodayTargetState{TodayTargetGoalMet, TodayTargetClosedWeekday, TodayTargetNoHistory} {
+		quiet := analysis
+		quiet.Projection.TodayTarget = TodayTarget{State: state, Day: time.Sunday}
+		for _, line := range quiet.AheadLines() {
+			if strings.Contains(line, "Meta de hoje") {
+				t.Errorf("state %q produced %q, want no ask stated", state, line)
+			}
+		}
+	}
+}
+
 // The month's first day has nothing behind it, and saying so is the whole of
 // the retrospective half. This is the message the pharmacy actually received on
 // 1 August: "saúde crítica", "fluxo negativo", "receita caiu 100%" — every one
@@ -1849,6 +1921,157 @@ func TestToolPayloadUsesReais(t *testing.T) {
 	caixa := payload["caixa"].(map[string]any)
 	if caixa["dias_ate_saldo_negativo"] != nil {
 		t.Errorf("dias_ate_saldo_negativo = %v, want nil when the balance never goes negative", caixa["dias_ate_saldo_negativo"])
+	}
+}
+
+// The whole point of ADR-019: the model is handed the weekday-scaled ask, so it
+// never has to derive a per-day figure from the gap and the days left.
+func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {
+	// Eight weeks where a Sunday is worth a third of a Saturday, which is the
+	// shape a flat daily average gets wrong.
+	var window []domain.FinancialEntry
+	for week := 0; week < projectionWindowWeeks; week++ {
+		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
+		for d := 0; d < daysInWeek; d++ {
+			date := domain.NewCalendarDate(monday.AddDate(0, 0, d))
+			amount := int64(120000)
+			if date.Time().Weekday() == time.Sunday {
+				amount = 40000
+			}
+			window = append(window, sale(t, date.String(), amount))
+		}
+	}
+
+	analysis := Build(Input{
+		Month:                "2026-08",
+		Entries:              window,
+		RevenueEntries:       window,
+		WindowRevenueEntries: window,
+		Summaries:            []*pkgfinance.MonthlySummary{nil, nil, summary(360000, 0)},
+		Goals:                []*domain.Goal{nil, nil, {Month: "2026-08", RevenueTarget: 4000000}},
+		Now:                  at12(t, "2026-08-09"), // a Sunday
+	})
+
+	meta, ok := analysis.ToolPayload()["meta_de_hoje"].(map[string]any)
+	if !ok {
+		t.Fatalf("meta_de_hoje missing from the payload — the model is left to divide the gap by the days left")
+	}
+	if meta["situacao"] != string(TodayTargetOK) {
+		t.Fatalf("meta_de_hoje = %v, want a real ask on a Sunday the pharmacy trades", meta)
+	}
+	if meta["dia_da_semana"] != "domingo" {
+		t.Errorf("dia_da_semana = %v, want the weekday named for a model that reads it aloud", meta["dia_da_semana"])
+	}
+	// The ask is quoted beside what a Sunday actually brings. Without it
+	// "R$ 500,00" is unreadable — the whole failure this replaced.
+	hist, isFloat := meta["media_historica"].(float64)
+	if !isFloat || hist <= 0 {
+		t.Fatalf("media_historica = %v, want the Sunday average beside the ask", meta["media_historica"])
+	}
+	// Sundays are a third of the other days here, so the ask has to be far under
+	// a flat share of the gap — that is the entire reason this field exists.
+	if flat := reais(analysis.Projection.Gap) / float64(analysis.Period.DaysRemaining); hist >= flat {
+		t.Errorf("Sunday average %v is not below the flat per-day share %v — the fixture no longer tests anything", hist, flat)
+	}
+	if ask := meta["meta"].(float64); ask <= 0 || ask > 4*hist {
+		t.Errorf("meta = %v, want an ask scaled to a Sunday (média %v), not to the calendar", ask, hist)
+	}
+}
+
+// An absence is never a bare silence: the model has to be able to say which of
+// the reasons it is, or it fills the gap with arithmetic of its own.
+func TestToolPayloadNamesWhyThereIsNoAskToday(t *testing.T) {
+	analysis := Build(Input{
+		Month:     "2026-07",
+		Summaries: []*pkgfinance.MonthlySummary{nil, nil, summary(0, 0)},
+		Now:       at12(t, "2026-07-15"),
+	})
+
+	meta, ok := analysis.ToolPayload()["meta_de_hoje"].(map[string]any)
+	if !ok {
+		t.Fatal("meta_de_hoje missing — an absent key reads as 'the analysis has no such thing'")
+	}
+	if meta["situacao"] != string(TodayTargetNoGoal) {
+		t.Errorf("situacao = %v, want %q for a month with no target", meta["situacao"], TodayTargetNoGoal)
+	}
+	// No amounts under an absence: a "meta: 0" would be read aloud as a target
+	// of nothing.
+	if _, has := meta["meta"]; has {
+		t.Errorf("meta_de_hoje = %v, want no amount when there is no ask", meta)
+	}
+}
+
+// Everything the dashboard renders is reachable from a chat — but not carried
+// in every answer. The base payload names what it left out, and the sections
+// arrive when asked for.
+func TestToolPayloadAdvertisesTheSectionsItLeftOut(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-01", 500000),
+		expense(t, "2026-07-02", "aluguel", 300000),
+		expense(t, "2026-07-03", "energia_agua", 100000),
+	}
+	analysis := Build(Input{
+		Month:          "2026-07",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(500000, 400000)},
+		Now:            at12(t, "2026-07-15"),
+	})
+
+	base := analysis.ToolPayload()
+	index, ok := base["secoes_disponiveis"].([]map[string]any)
+	if !ok || len(index) != len(sectionCatalog) {
+		t.Fatalf("secoes_disponiveis = %v, want one entry per section", base["secoes_disponiveis"])
+	}
+	for _, s := range sectionCatalog {
+		if _, sent := base[string(s.Name)]; sent {
+			t.Errorf("%q rides along in the base payload — every answer pays for it", s.Name)
+		}
+	}
+
+	// Asked for, it arrives, and the advertised name is the name that works.
+	with := analysis.ToolPayload(AllSections()...)
+	for _, s := range sectionCatalog {
+		if _, sent := with[string(s.Name)]; !sent {
+			t.Errorf("section %q was advertised but not served", s.Name)
+		}
+	}
+
+	// A name the tool does not serve is dropped rather than failing the call:
+	// the month is still answerable without it.
+	if got := parseSections([]string{"nao_existe", string(SectionHistory)}); len(got) != 1 || got[0] != SectionHistory {
+		t.Errorf("parseSections = %v, want the unknown name dropped and the real one kept", got)
+	}
+}
+
+// A cut ranking that does not say it was cut describes a twelve-category month
+// as a five-category one (ADR-015).
+func TestToolPayloadWarnsWhenTheExpenseRankingIsCut(t *testing.T) {
+	composition := make([]ExpenseComposition, 0, maxToolCategories+3)
+	for i := range cap(composition) {
+		composition = append(composition, ExpenseComposition{
+			CategoryName: fmt.Sprintf("categoria %d", i),
+			Amount:       int64(1000 * (cap(composition) - i)),
+		})
+	}
+
+	full := Analysis{ExpenseComposition: composition}.ToolPayload()
+	if full["maiores_despesas_truncado"] != true {
+		t.Errorf("maiores_despesas_truncado = %v, want true with %d categories", full["maiores_despesas_truncado"], len(composition))
+	}
+	warning, _ := full["maiores_despesas_warning"].(string)
+	if !strings.Contains(warning, string(SectionExpensesFull)) {
+		t.Errorf("warning = %q, want it to name the section that serves the whole list", warning)
+	}
+	if shown := full["maiores_despesas"].([]map[string]any); len(shown) != maxToolCategories {
+		t.Errorf("maiores_despesas has %d rows, want %d", len(shown), maxToolCategories)
+	}
+
+	// Nothing was cut, so nothing is warned about — a caveat that is always on
+	// is not read at all.
+	short := Analysis{ExpenseComposition: composition[:2]}.ToolPayload()
+	if _, warned := short["maiores_despesas_truncado"]; warned {
+		t.Error("a complete ranking must not carry a truncation warning")
 	}
 }
 

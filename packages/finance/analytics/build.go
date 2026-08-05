@@ -233,17 +233,17 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 		}
 	}
 
-	// One label per day of the current week that has actually happened, so the
+	// One entry per day of the current week that has actually happened, so the
 	// chart never draws a bar for a day that has not been traded yet.
-	labels := make([]string, 0, 7)
-	for i := 0; i < 7; i++ {
+	days := make([]time.Weekday, 0, daysInWeek)
+	for i := 0; i < daysInWeek; i++ {
 		d := thisMonday.AddDate(0, 0, i)
 		if d.Format("2006-01-02") > todayStr {
 			break
 		}
-		labels = append(labels, weekdayLabels[int(d.Weekday())])
+		days = append(days, d.Weekday())
 	}
-	week.Labels = labels
+	week.Days = days
 
 	// The verdict on the pace, decided here rather than by each consumer. Only
 	// finished days can carry one: on a Monday both sides are empty and a

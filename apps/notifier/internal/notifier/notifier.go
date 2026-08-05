@@ -394,6 +394,12 @@ func (n *Notifier) humanize(body string) (string, bool) {
 			// and 2nd of the one before.
 			"Se o rascunho disser que a primeira semana ainda não fechou, repita " +
 			"isso e não compare o mês com o anterior de nenhuma outra forma. " +
+			// The draft used to carry no daily figure at all, so the model
+			// filled the gap with the gap-over-days-left division — a flat ask
+			// that reads the same on a Sunday as on a Saturday (ADR-019).
+			"Nunca calcule uma meta por dia dividindo valores: se houver meta " +
+			"para hoje, ela já vem no rascunho, junto do que aquele dia da " +
+			"semana costuma faturar. Repita os dois. " +
 			"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
 			"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
 			"depois da sua resposta.",

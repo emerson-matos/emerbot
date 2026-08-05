@@ -1,7 +1,8 @@
 import { Calendar } from 'lucide-react'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
-import { WEEKDAY_FULL_PT, weekdayWithArticle } from '@/lib/weekdays'
+import { weekdayFull, weekdayShort, weekdayWithArticle } from '@/lib/weekdays'
+import { TodayTargetState } from '@/api/types'
 import type { TodayTarget, TodayTargetScale, WeekdayStat } from '@/api/types'
 
 // A pharmacy's week has a shape — the weekend carries it, Sunday is a trough —
@@ -41,7 +42,7 @@ function TodayMark({ target }: { target: TodayTarget }) {
       </span>
       <span className="text-sm text-muted-foreground">
         ≈ {target.factor.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}× o
-        esperado para {weekdayWithArticle(target.weekday)}
+        esperado para {weekdayWithArticle(target.day)}
       </span>
     </div>
   )
@@ -76,7 +77,7 @@ export default function WeekRhythm({ days, todayTarget }: {
           message="Nenhuma venda de balcão registrada nas últimas 8 semanas."
           className="py-6"
         />
-        {todayTarget.valid && <TodayMark target={todayTarget} />}
+        {todayTarget.state === TodayTargetState.OK && <TodayMark target={todayTarget} />}
       </>
     )
   }
@@ -91,7 +92,7 @@ export default function WeekRhythm({ days, todayTarget }: {
         <div className="grid min-w-max grid-cols-7 gap-1 sm:gap-2">
         {week.map((day) => {
           const height = day.count > 0 ? Math.max((day.avg / ceiling) * 100, 6) : 0
-          const markAt = day.isToday && todayTarget.valid
+          const markAt = day.isToday && todayTarget.state === TodayTargetState.OK
             ? Math.min((todayTarget.target / ceiling) * 100, 98)
             : null
 
@@ -104,8 +105,8 @@ export default function WeekRhythm({ days, todayTarget }: {
               // over eight, but printed under all seven it was a third column
               // of digits nobody was reading.
               title={day.count > 0
-                ? `${WEEKDAY_FULL_PT[day.label] ?? day.label}: ${formatBRL(day.avg)} em média (${day.count} ${day.count === 1 ? 'semana' : 'semanas'})`
-                : `${WEEKDAY_FULL_PT[day.label] ?? day.label}: sem vendas registradas`}
+                ? `${weekdayFull(day.day)}: ${formatBRL(day.avg)} em média (${day.count} ${day.count === 1 ? 'semana' : 'semanas'})`
+                : `${weekdayFull(day.day)}: sem vendas registradas`}
             >
               {/* Tall and narrow. Stretched across a desktop card the columns
                   came out 170px wide and 100px tall, and a shape that wide is
@@ -128,7 +129,7 @@ export default function WeekRhythm({ days, todayTarget }: {
                 />
               </div>
               <p className={`text-xs ${day.isToday ? 'font-semibold' : 'font-medium text-muted-foreground'}`}>
-                {day.label}
+                {weekdayShort(day.day)}
               </p>
               {/* Sem centavos: a régua é uma média de oito semanas, e os dois
                   dígitos finais dão uma precisão que o número não tem. O valor
@@ -149,7 +150,7 @@ export default function WeekRhythm({ days, todayTarget }: {
         As mais recentes pesam mais (Gaussiana σ=2).
       </p>
 
-      {todayTarget.valid && <TodayMark target={todayTarget} />}
+      {todayTarget.state === TodayTargetState.OK && <TodayMark target={todayTarget} />}
     </>
   )
 }

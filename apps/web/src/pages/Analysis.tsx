@@ -23,7 +23,7 @@ import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import WeekRhythm from '@/components/WeekRhythm'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
-import { WEEKDAY_FULL_PT } from '@/lib/weekdays'
+import { weekdayFull } from '@/lib/weekdays'
 import { currentMonthKey } from '@/lib/entries'
 import type { YearMonth, Analysis, FinancialHealthStatus, MonthTrend, Period, ProjectionBasis, ProjectionStatus, Recommendation, TrendDirection } from '@/api/types'
 import { FinancialHealthStatus as Status, RecommendationSeverity as RecSeverity } from '@/api/types'
@@ -555,11 +555,12 @@ function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // beside health insights that were treating the same week as flat.
   const hasBaseline = data.pace.days > 0 && data.pace.previous !== 0
 
-  // The backend emits one label per elapsed day of this week, so the last one
+  // The backend emits one entry per elapsed day of this week, so the last one
   // is the day it actually measured through. Reading the browser clock instead
   // captions the card with a different day than the figures cover whenever the
   // viewer's timezone has already rolled over.
-  const todayPt = WEEKDAY_FULL_PT[data.labels.at(-1) ?? ''] ?? 'hoje'
+  const lastDay = data.days.at(-1)
+  const todayPt = lastDay === undefined ? 'hoje' : weekdayFull(lastDay)
 
   return (
     <Section title="Comportamento semanal" icon={Clock}>

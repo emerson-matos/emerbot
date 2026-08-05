@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -81,15 +82,24 @@ func (a Analysis) DigestLines() []string {
 // the digest that is actionable at the hour it arrives, and the only half that
 // says anything at all on the first day of a month.
 //
-// The per-day ask comes first because it is the number to act on; a
+// The day's ask comes first because it is the number to act on; a
 // recommendation follows as the reason. A closed month has nothing ahead of it
 // and yields no lines.
+//
+// The digest carried no figure of its own for a while, which left the model
+// rewriting it to invent one — and the only arithmetic available to it was the
+// gap over the days left, a flat daily ask that reads the same on a Sunday as
+// on a Saturday. The ask is stated here, scaled by the weekday, so there is
+// nothing left for it to derive.
 func (a Analysis) AheadLines() []string {
 	if !a.Period.InProgress {
 		return nil
 	}
 
 	var lines []string
+	if t := a.Projection.TodayTarget; t.Asked() {
+		lines = append(lines, todayTargetLine(t))
+	}
 	if len(a.Recommendations) > 0 {
 		r := a.Recommendations[0]
 		lines = append(lines, fmt.Sprintf("%s: %s", r.Title, r.Message))
@@ -97,14 +107,92 @@ func (a Analysis) AheadLines() []string {
 	return lines
 }
 
+// todayTargetLine words the day's ask against the day's own history, because
+// the ask means nothing without it: "R$ 1.480,00" on a Sunday is either a
+// quiet morning or an impossible one depending on what Sundays bring, and the
+// person reading it at seven in the morning is owed which.
+func todayTargetLine(t TodayTarget) string {
+	day := weekdayNames[int(t.Day)]
+	article := weekdayWithArticle(t.Day)
+	pct := roundToInt(math.Abs(t.DeltaPercent) * 100)
+	switch t.Status {
+	case PaceAbove:
+		return fmt.Sprintf("Meta de hoje (%s): %s — %d%% acima do que %s costuma faturar (%s).",
+			day, formatBRL(t.Target), pct, article, formatBRL(t.Historical))
+	case PaceBelow:
+		return fmt.Sprintf("Meta de hoje (%s): %s — %d%% abaixo do que %s costuma faturar (%s), o mês está adiantado.",
+			day, formatBRL(t.Target), pct, article, formatBRL(t.Historical))
+	default:
+		return fmt.Sprintf("Meta de hoje (%s): %s — em linha com o que %s costuma faturar (%s).",
+			day, formatBRL(t.Target), article, formatBRL(t.Historical))
+	}
+}
+
+// Section names a block of the analysis the base payload leaves out. Everything
+// the dashboard can show, the model can reach — but not all of it in every
+// answer: "como estamos?" is asked far more often than "quais foram os dias de
+// maior saída?", and a payload carrying both costs the same tokens either way,
+// on a project with a hard monthly cost cap.
+//
+// So the base payload advertises these (secoes_disponiveis) and the tool takes
+// them as an argument. Availability without weight: the model asks for what the
+// question needs, and nothing the page renders is unreachable from a chat.
+type Section string
+
+const (
+	// SectionCashOutDays is the month's heaviest spending days, broken down by
+	// category — the "onde o dinheiro saiu" list on the page.
+	SectionCashOutDays Section = "dias_de_saida"
+	// SectionExpensesFull is the whole expense composition. The base payload
+	// carries the five largest categories and says so; this is the rest.
+	SectionExpensesFull Section = "despesas_completas"
+	// SectionHistory is the trailing three months with their targets — the bar
+	// chart at the bottom of the page.
+	SectionHistory Section = "historico"
+	// SectionHighlights is best and worst day by balance. The base payload
+	// already carries the best and worst by faturamento, which is what most
+	// questions are about.
+	SectionHighlights Section = "destaques"
+)
+
+// sectionCatalog is what the base payload advertises: the name to ask for and
+// what arrives if you do. It is written once here so the tool's schema, the
+// payload's own index and this file cannot drift into describing different sets.
+var sectionCatalog = []struct {
+	Name Section
+	What string
+}{
+	{SectionCashOutDays, "dias de maior saída de caixa, com as categorias de cada um"},
+	{SectionExpensesFull, "composição completa das despesas por categoria"},
+	{SectionHistory, "os três meses anteriores com faturamento, despesa e metas"},
+	{SectionHighlights, "melhor e pior dia por saldo (o payload já traz por faturamento)"},
+}
+
+// AllSections is every section, for a caller that genuinely wants the lot.
+func AllSections() []Section {
+	out := make([]Section, 0, len(sectionCatalog))
+	for _, s := range sectionCatalog {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
+// maxToolCategories is how many expense categories the base payload quotes.
+// Beyond it the list is cut — and says it was cut, with the section to ask for,
+// because a partial ranking presented as the whole one is exactly what ADR-015
+// exists to prevent.
+const maxToolCategories = 5
+
 // ToolPayload renders the analysis for the AI bot. Amounts are in reais rather
 // than centavos, because the model reads these numbers back to the user and
 // would otherwise have to divide by 100 in prose — which it gets wrong.
 //
-// It is deliberately narrower than the full Analysis: the chart-shaped parts
-// (per-weekday buckets, the daily balance curve, the history bars) are a lot of
-// tokens for something the model cannot say out loud anyway.
-func (a Analysis) ToolPayload() map[string]any {
+// The base payload answers the questions actually asked of a chat assistant —
+// how is the month, will it hit the goal, what should I do, how much today. The
+// heavier blocks are reachable through sections rather than always sent; see
+// Section. Nothing the dashboard renders is out of the model's reach, and
+// nothing it rarely needs is paid for on every turn.
+func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	payload := map[string]any{
 		"month": a.Month,
 		"health": map[string]any{
@@ -216,6 +304,19 @@ func (a Analysis) ToolPayload() map[string]any {
 	if a.Projection.AccelerationPct() > 0 {
 		payload["aceleracao_necessaria_pct"] = a.Projection.AccelerationPct()
 	}
+	// The day's ask, already scaled by the weekday. Without it the model had
+	// falta_para_a_meta_na_projecao and dias_restantes_no_mes_com_hoje and did
+	// the only arithmetic those two allow — divide one by the other — so a
+	// pharmacy whose Sundays bring a third of a Monday was told to sell the same
+	// R$ 1.200,00 on both. The system prompt forbids that division and points
+	// here instead; this is the number that makes the prohibition answerable.
+	//
+	// Always present, and never a bare number: `situacao` carries the reason
+	// when there is no ask, because "a meta já foi batida" and "não há histórico
+	// para calcular" are opposite answers to the same question and an absent key
+	// makes them the same silence. The amounts appear only under "ok" — a
+	// "meta: 0" would be read aloud as a target of nothing.
+	payload["meta_de_hoje"] = todayTargetToolPayload(a.Projection.TodayTarget)
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
@@ -223,7 +324,113 @@ func (a Analysis) ToolPayload() map[string]any {
 		payload["caixa"].(map[string]any)["dias_ate_saldo_negativo"] = *d
 	}
 
+	// The five biggest categories are a ranking, and a ranking that was cut must
+	// say so — otherwise "as maiores despesas foram estas" describes a month
+	// with twelve categories as though it had five (ADR-015).
+	if len(a.ExpenseComposition) > maxToolCategories {
+		payload["maiores_despesas_truncado"] = true
+		payload["maiores_despesas_warning"] = fmt.Sprintf(
+			"Mostrando as %d maiores de %d categorias. Peça a seção %q para a lista completa.",
+			maxToolCategories, len(a.ExpenseComposition), SectionExpensesFull)
+	}
+
+	// What else exists, named so the model can ask for it by name rather than
+	// concluding the analysis does not have it.
+	index := make([]map[string]any, 0, len(sectionCatalog))
+	for _, s := range sectionCatalog {
+		index = append(index, map[string]any{"secao": string(s.Name), "traz": s.What})
+	}
+	payload["secoes_disponiveis"] = index
+
+	for _, s := range sections {
+		switch s {
+		case SectionCashOutDays:
+			payload[string(s)] = cashOutToolPayload(a.CashOutDays)
+		case SectionExpensesFull:
+			payload[string(s)] = expenseToolPayload(a.ExpenseComposition)
+		case SectionHistory:
+			payload[string(s)] = historyToolPayload(a.History)
+		case SectionHighlights:
+			payload[string(s)] = map[string]any{
+				"melhor_saldo": dayText(a.Highlights.BestBalance),
+				"pior_saldo":   dayText(a.Highlights.WorstBalance),
+			}
+		}
+	}
+
 	return payload
+}
+
+// todayTargetToolPayload renders the day's ask, or names the reason there is
+// none. The reason is the point: asked "quanto preciso vender hoje?" on a
+// Sunday the shop does not open, the model must be able to say so instead of
+// treating the silence as licence to divide the gap by the days left.
+func todayTargetToolPayload(t TodayTarget) map[string]any {
+	if !t.Asked() {
+		return map[string]any{"situacao": string(t.State)}
+	}
+	return map[string]any{
+		"situacao":        string(t.State),
+		"dia_da_semana":   weekdayNames[int(t.Day)],
+		"meta":            reais(t.Target),
+		"media_historica": reais(t.Historical),
+		"diferenca_pct":   roundToInt(t.DeltaPercent * 100),
+		"status":          string(t.Status),
+	}
+}
+
+func cashOutToolPayload(days []CashOutDay) []map[string]any {
+	out := make([]map[string]any, 0, len(days))
+	for _, d := range days {
+		items := make([]map[string]any, 0, len(d.Items))
+		for _, i := range d.Items {
+			items = append(items, map[string]any{
+				"categoria":   i.Category,
+				"valor":       reais(i.Amount),
+				"lancamentos": i.Count,
+			})
+		}
+		out = append(out, map[string]any{
+			"data":       d.Date,
+			"total":      reais(d.Total),
+			"categorias": items,
+		})
+	}
+	return out
+}
+
+func expenseToolPayload(composition []ExpenseComposition) []map[string]any {
+	out := make([]map[string]any, 0, len(composition))
+	for _, c := range composition {
+		out = append(out, map[string]any{
+			"categoria": c.CategoryName,
+			"valor":     reais(c.Amount),
+			"pct":       c.Percentage,
+		})
+	}
+	return out
+}
+
+// historyToolPayload renders the trailing months. A month with no goal set
+// carries no target at all rather than a zero, which the model would otherwise
+// read aloud as "a meta era R$ 0,00".
+func historyToolPayload(months []MonthlySnapshot) []map[string]any {
+	out := make([]map[string]any, 0, len(months))
+	for _, m := range months {
+		row := map[string]any{
+			"mes":         m.Month,
+			"faturamento": reais(m.Revenue),
+			"despesa":     reais(m.Expense),
+		}
+		if m.RevenueTarget != nil {
+			row["meta_faturamento"] = reais(*m.RevenueTarget)
+		}
+		if m.ExpenseTarget != nil {
+			row["teto_despesa"] = reais(*m.ExpenseTarget)
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func insightMessages(insights []Insight) []string {
@@ -242,21 +449,13 @@ func recommendationTexts(recs []Recommendation) []string {
 	return out
 }
 
-// topExpenses keeps the composition short enough to be quoted in a reply.
+// topExpenses keeps the composition short enough to be quoted in a reply. The
+// caller warns when it cut — see ToolPayload.
 func topExpenses(composition []ExpenseComposition) []map[string]any {
-	const maxCategories = 5
-	if len(composition) > maxCategories {
-		composition = composition[:maxCategories]
+	if len(composition) > maxToolCategories {
+		composition = composition[:maxToolCategories]
 	}
-	out := make([]map[string]any, 0, len(composition))
-	for _, c := range composition {
-		out = append(out, map[string]any{
-			"categoria": c.CategoryName,
-			"valor":     reais(c.Amount),
-			"pct":       c.Percentage,
-		})
-	}
-	return out
+	return expenseToolPayload(composition)
 }
 
 func dayText(h DayHighlight) string {
@@ -279,7 +478,7 @@ func weekdayToolPayload(days []WeekdayStat) []map[string]any {
 	out := make([]map[string]any, 0, len(days))
 	for _, d := range days {
 		out = append(out, map[string]any{
-			"dia":     weekdayFullLabels[d.Day],
+			"dia":     weekdayNames[int(d.Day)],
 			"media":   reais(d.Avg),
 			"semanas": d.Count,
 			"base":    string(d.Basis),
