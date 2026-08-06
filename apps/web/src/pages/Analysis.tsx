@@ -747,8 +747,12 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
       />
 
       {/* Paired, not stacked: nine cards in one column gave every block the same
-          weight and made the page a scroll with no shape. */}
-      <div className="grid auto-rows-fr grid-cols-1 gap-4 lg:grid-cols-2">
+          weight and made the page a scroll with no shape. The pair matches
+          heights by the grid's own stretch, not by `auto-rows-fr`: with one
+          column — every phone — each card is its own row, and equal rows means
+          the shorter card is padded out to the taller one's height. On this
+          page that drew a card of blank space above the week's cash. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <HealthSection data={analysis.health} />
         <RecommendationSection data={analysis.recommendations} />
       </div>
