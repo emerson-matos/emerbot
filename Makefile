@@ -130,7 +130,7 @@ define build-if-stale
 	else \
 		echo "$(1): building..."; \
 		$(COMPOSE) build $(1); \
-		podman tag localhost/emerbot_$(1) emerbot-$(1):$$HASH; \
+		podman tag localhost/emerbot_$(1) localhost/emerbot_$(1):$$HASH; \
 	fi
 endef
 
