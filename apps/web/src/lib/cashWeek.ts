@@ -1,34 +1,30 @@
 import type { DayCash } from "@/api/types";
 
 /**
- * The window: one day behind, today, and five ahead — seven columns, same as
- * the weekday strip.
+ * The window: ontem, hoje, amanhã. Three columns, the same three days the rest
+ * of the page is built around — the anchor that has closed, the day being
+ * traded, and the one you can still do something about.
  *
- * Yesterday earns its column by being the anchor. Every other day carries an
- * amber estimate, and a reader has no way to judge whether those estimates look
- * sane without one real day beside them. It is deliberately one day and not
+ * Yesterday earns its column by being the anchor. The other two carry an amber
+ * estimate, and a reader has no way to judge whether those estimates look sane
+ * without one real day beside them. It is deliberately one day back and not
  * three: this card is for deciding what to do next, and the past is context,
  * not the subject.
+ *
+ * It ran five days ahead, and seven pairs of bars in the width of a phone are
+ * about eight points each, under labels that have to alternate to fit, behind a
+ * tooltip that covers the whole card at a touch. The window is not information
+ * if it cannot be read. It was briefly seven on a desktop and three on a phone,
+ * which cost more than it bought: the footer quotes the balance on the window's
+ * last day, so the same card announced "Saldo em 06/08" on a phone and "Saldo em
+ * 10/08" on a laptop — one card, one number, is worth more than two columns.
+ *
+ * Nothing is hidden by this. Whether the *month* runs dry is a different
+ * question and "Posição de caixa", directly below, answers it for the whole
+ * month.
  */
 export const CASH_WEEK_BACK = 1;
-export const CASH_WEEK_AHEAD = 5;
-
-/**
- * How far ahead the card looks on a phone: one day, for three columns —
- * ontem, hoje, amanhã.
- *
- * Seven columns in 320 points of chart is seven pairs of bars about eight
- * points wide, under labels that have to alternate to fit, over a tooltip that
- * covers the whole card the moment you touch it. The window is not information
- * if it cannot be read.
- *
- * Three is not an arbitrary trim: it is the same three days the rest of the
- * page is built around — the anchor that has closed, the day being traded, and
- * the one you can still do something about. Whether the *month* runs dry is a
- * different question, and "Posição de caixa" right below answers it for the
- * whole month, so nothing is hidden by narrowing this.
- */
-export const CASH_WEEK_AHEAD_NARROW = 1;
+export const CASH_WEEK_AHEAD = 1;
 
 export interface CashWeekDay extends DayCash {
   /** Everything landing that day: what is booked plus what the weekday brings. */
