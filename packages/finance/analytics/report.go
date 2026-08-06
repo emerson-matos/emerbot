@@ -272,9 +272,13 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 			"projecao_fim_do_mes":   reais(a.CashPosition.EndOfMonthProjection),
 			"menor_saldo_projetado": reais(a.CashPosition.LowestProjected),
 			"menor_saldo_data":      a.CashPosition.LowestProjectedDate,
-			// Absent rather than null when the balance never goes negative, so
-			// the model has nothing to misread as "zero days left".
-			"dias_ate_saldo_negativo": nil,
+			// dias_ate_saldo_negativo is deliberately not seeded here — see the
+			// conditional near the end of this function. The key used to be
+			// declared as an explicit nil, which is absent from a Go map lookup
+			// but serializes to `"dias_ate_saldo_negativo": null`. The digest now
+			// hands this payload to the model as JSON, where a null is a value
+			// like any other and reads exactly like the "zero days left" the
+			// comment set out to avoid.
 		},
 		"recomendacoes":           recommendationTexts(a.Recommendations),
 		"maiores_despesas":        topExpenses(a.ExpenseComposition),
@@ -343,6 +347,9 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
+	// Present only when the balance actually crosses zero. A month whose runway
+	// never dips has no such day, and the payload says so by not carrying the
+	// key at all.
 	if d := a.CashPosition.DaysUntilNegative; d != nil {
 		payload["caixa"].(map[string]any)["dias_ate_saldo_negativo"] = *d
 	}
@@ -381,6 +388,30 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		}
 	}
 
+	return payload
+}
+
+// toolOnlyPayloadKeys are the ToolPayload entries that exist only to be acted
+// on: they tell a model with tools what else it could fetch and how. A reader
+// that cannot call anything has no use for them, and "chame get_meta_do_dia" is
+// worse than useless in a one-shot rewrite — it is an instruction the writer
+// cannot follow and might repeat to the user.
+var toolOnlyPayloadKeys = []string{"secoes_disponiveis", "meta_de_outro_dia"}
+
+// DigestPayload is the insights JSON as the daily WhatsApp digest sees it: the
+// same payload the bot reads, minus the affordances above.
+//
+// It is derived from ToolPayload rather than assembled separately, and that is
+// the point. The digest and the analysis page and the bot are three renderings
+// of one analysis (see the epic behind ADR-017 onward); a second hand-picked
+// payload for the digest would be a fourth set of figures to keep in agreement,
+// and the first field anyone forgot to add to it would go missing from the
+// morning message with nothing failing.
+func (a Analysis) DigestPayload() map[string]any {
+	payload := a.ToolPayload()
+	for _, k := range toolOnlyPayloadKeys {
+		delete(payload, k)
+	}
 	return payload
 }
 

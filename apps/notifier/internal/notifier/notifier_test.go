@@ -208,6 +208,7 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
+	ctx := context.Background()
 
 	// Opted out entirely.
 	seedUser(t, s, inWindow,
@@ -216,13 +217,14 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	seedUser(t, s, outWindow,
 		domain.NotificationPrefs{UserID: "stale", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true},
 		dueExpense("Fornecedor", 285000))
-	// Enabled and in-window, but subscribed to no alert kind, so nothing fires.
-	// (Withholding entries would not work: every user reads the same shared
-	// ledger, so "stale"'s overdue bill is visible to this user too.)
+	// Enabled, in-window, and already sent today.
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "quiet", WAEnabled: true, Phone: "5511900000003"})
+		domain.NotificationPrefs{UserID: "done", WAEnabled: true, Phone: "5511900000003", NotifyDueToday: true})
+	if err := s.fin.RecordNotificationSent(ctx, "done", runDay.Format("2006-01-02"), runDay); err != nil {
+		t.Fatal(err)
+	}
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,17 +238,52 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	if res.OutsideWindow != 1 {
 		t.Errorf("OutsideWindow = %d, want 1 (the stale session)", res.OutsideWindow)
 	}
-	if res.SkippedNoAlerts != 1 {
-		t.Errorf("SkippedNoAlerts = %d, want 1 (the quiet user)", res.SkippedNoAlerts)
+	if res.SkippedAlreadySent != 1 {
+		t.Errorf("SkippedAlreadySent = %d, want 1 (the user already notified today)", res.SkippedAlreadySent)
 	}
-	if res.SkippedAlreadySent != 0 {
-		t.Errorf("SkippedAlreadySent = %d, want 0 — nothing was sent today yet", res.SkippedAlreadySent)
+	if res.SkippedNothingVerified != 0 {
+		t.Errorf("SkippedNothingVerified = %d, want 0 — the analysis assembled fine", res.SkippedNothingVerified)
 	}
 	if res.Sent != 0 || len(wa.sent) != 0 {
 		t.Errorf("nothing should have been sent, res=%+v sent=%d", res, len(wa.sent))
 	}
 	if got := res.Skipped(); got != 1 {
 		t.Errorf("Skipped() = %d, want 1 — outside-window is not a skip", got)
+	}
+}
+
+// brokenForecast is a store whose cash-flow projection fails, which is enough
+// to fail the whole analysis (analytics.Assemble reads it).
+type brokenForecast struct{ *pkgfinance.InMemoryStore }
+
+func (brokenForecast) CashFlowForecast(context.Context, string, string) ([]pkgfinance.CashFlowPoint, error) {
+	return nil, errors.New("dynamo down")
+}
+
+// TestRunStaysSilentWhenNothingWasActuallyChecked is the one silence the daily
+// digest keeps. The user hears about no bill kind, so the digest may not tell
+// them their bills are in order, and the analysis is unavailable, so it has
+// nothing to say about the month either. A "resumo do dia" with nothing in it
+// would be a message asserting, by its own existence, that someone looked.
+func TestRunStaysSilentWhenNothingWasActuallyChecked(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999"},
+		dueExpense("Fornecedor", 285000))
+
+	n := New(brokenForecast{s.fin}, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
+	n.SetClock(func() time.Time { return runDay })
+
+	res, err := n.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 || res.Sent != 0 {
+		t.Fatalf("nothing was verified, so nothing may be claimed: res=%+v sent=%v", res, wa.sent)
+	}
+	if res.SkippedNothingVerified != 1 {
+		t.Fatalf("SkippedNothingVerified = %d, want 1", res.SkippedNothingVerified)
 	}
 }
 
@@ -272,12 +309,15 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	}
 	// Specifically the dedupe counter: a run that skipped for any other reason
 	// would mean the resend guard is not what stopped it.
-	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNoAlerts != 0 {
+	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNothingVerified != 0 {
 		t.Fatalf("second run res=%+v, want SkippedAlreadySent=1", res)
 	}
 }
 
-func TestRunNoAlertsNoSend(t *testing.T) {
+// TestRunSendsCalmDigestWhenNothingIsDue is the behaviour change of issue #35:
+// a day with no alert is still a day with an answer. The digest used to skip
+// it, so "tudo tranquilo" arrived as no message at all.
+func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
 	// In-window and enabled, but the only expense is already paid -> no alert.
@@ -291,8 +331,48 @@ func TestRunNoAlertsNoSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 0 || res.Sent != 0 || res.SkippedNoAlerts != 1 || res.SkippedAlreadySent != 0 {
-		t.Fatalf("want no send for lack of alerts, res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 1 || len(wa.sent) != 1 {
+		t.Fatalf("a quiet day is still a day to report, res=%+v sent=%d", res, len(wa.sent))
+	}
+	body := wa.sent[0].body
+	for _, want := range []string{"Nada vence hoje e não há contas vencidas"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("calm digest does not say %q:\n%s", want, body)
+		}
+	}
+	if res.SkippedNothingVerified != 0 {
+		t.Errorf("SkippedNothingVerified = %d, want 0", res.SkippedNothingVerified)
+	}
+}
+
+// TestCalmLineClaimsOnlyWhatTheUserSubscribedTo: the absence of an alert is not
+// evidence that nothing is due — a user who switched the kind off gets no alert
+// either way. Telling them "nada vence hoje" over a bill due today is the one
+// sentence in the message that would be false, so it is built from the ledger
+// and gated on the preference.
+func TestCalmLineClaimsOnlyWhatTheUserSubscribedTo(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	// A bill really is due today; this user does not hear about due-today bills,
+	// but does hear about overdue ones (and there are none).
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	body := wa.sent[0].body
+	if strings.Contains(body, "Nada vence hoje") {
+		t.Errorf("digest claims nothing is due while a bill is due today:\n%s", body)
+	}
+	if !strings.Contains(body, "Não há contas vencidas") {
+		t.Errorf("digest drops the claim this user did subscribe to:\n%s", body)
 	}
 }
 
@@ -331,12 +411,16 @@ func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := newNotifier(s, wa).Run(ctx)
-	if err != nil {
+	// The digest goes out every day, so the assertion is about what it says: the
+	// "meta atingida" line must not be in it.
+	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 0 || len(wa.sent) != 0 {
-		t.Fatalf("neither May's sale nor July's loan may count toward July's faturamento goal, res=%+v sent=%d", res, len(wa.sent))
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	if strings.Contains(wa.sent[0].body, "Meta de faturamento atingida") {
+		t.Fatalf("neither May's sale nor July's loan may count toward July's faturamento goal:\n%s", wa.sent[0].body)
 	}
 }
 
@@ -372,6 +456,88 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 	}
 	if gen.gotMessage == "" {
 		t.Fatal("generator received an empty draft to rewrite")
+	}
+}
+
+// TestDigestFeedsTheModelTheWholeInsightsJSON is issue #35's other half: the
+// model used to receive a handful of rendered lines, so nothing the analysis
+// knew but did not print could ever reach the reader. It now writes from the
+// same insights JSON the analysis page renders.
+//
+// The split matters as much as the payload. The draft stays in the user message
+// because the no-LLM path echoes that field back verbatim — see
+// TestDigestWithoutAModelShipsTheDraftAndNotTheJSON.
+func TestDigestFeedsTheModelTheWholeInsightsJSON(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "Bom dia! Hoje vence uma conta de R$ 2.850,00. 🙂"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Figures the rendered lines never carried, and which the message can now
+	// draw on: the cash runway, the month's commitments and the week's pace.
+	for _, key := range []string{"\"caixa\"", "\"projecao_do_mes\"", "\"compromissos_situacao\"", "\"semana\""} {
+		if !strings.Contains(gen.gotSystem, key) {
+			t.Errorf("insights JSON is missing %s:\n%s", key, gen.gotSystem)
+		}
+	}
+	// Quoting is allowed, arithmetic is not — the same prohibition ADR-019 puts
+	// on the per-day target, and the reason the whole payload can be handed over
+	// at all.
+	if !strings.Contains(gen.gotSystem, "Nunca some, subtraia, divida ou calcule") {
+		t.Errorf("prompt does not forbid deriving new numbers:\n%s", gen.gotSystem)
+	}
+	// Affordances for a caller with tools have no meaning in a one-shot rewrite,
+	// and "chame get_meta_do_dia" is an instruction the writer cannot follow.
+	for _, toolOnly := range []string{"secoes_disponiveis", "get_meta_do_dia"} {
+		if strings.Contains(gen.gotSystem, toolOnly) {
+			t.Errorf("digest payload carries the tool affordance %q:\n%s", toolOnly, gen.gotSystem)
+		}
+	}
+	// The draft — the message that ships if the model fails — is what the user
+	// message carries, and it is prose rather than JSON.
+	if !strings.Contains(gen.gotMessage, "Farmácia Financeira") || strings.Contains(gen.gotMessage, "{\"") {
+		t.Errorf("the user message must be the ready-to-send draft, got:\n%s", gen.gotMessage)
+	}
+}
+
+// echoGen mirrors the orchestrator's no-LLM digest fallback: it returns the
+// caller's own message unchanged. Whatever the notifier puts in that field is
+// what a pharmacy with no GEMINI_API_KEY receives on WhatsApp.
+type echoGen struct{}
+
+func (echoGen) Generate(_ context.Context, input orchestrator.Input) (orchestrator.Output, error) {
+	return orchestrator.Output{Text: input.UserMessage.Text}, nil
+}
+
+func TestDigestWithoutAModelShipsTheDraftAndNotTheJSON(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		dueExpense("Fornecedor", 285000),
+	)
+
+	if _, err := newNotifierWithGen(s, wa, echoGen{}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	}
+	body := wa.sent[0].body
+	if strings.Contains(body, "{\"") || strings.Contains(body, "projecao_do_mes") {
+		t.Fatalf("raw insights JSON shipped to WhatsApp:\n%s", body)
+	}
+	if !strings.Contains(body, "vence hoje") {
+		t.Fatalf("the draft did not survive the echo path:\n%s", body)
 	}
 }
 

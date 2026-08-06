@@ -31,6 +31,68 @@ type Alert struct {
 	Text string // pt-BR, ready to render or send
 }
 
+// BillStatus is what the ledger's unpaid bills look like on one day, before any
+// preference is applied to them.
+//
+// Evaluate answers a different question — "what is this user subscribed to
+// hearing about" — and is deliberately silent about the kinds they turned off.
+// A digest that goes out every day, quiet days included, needs this one too: to
+// write "nada vence hoje" it has to know that nothing is due, not merely that
+// nothing was reported. The two coincide only for a user with every alert
+// enabled, and saying the first while meaning the second is the one sentence in
+// the message that would be a lie.
+type BillStatus struct {
+	DueTodayCount int
+	DueToday      int64
+	OverdueCount  int
+	OverdueTotal  int64
+}
+
+// Quiet reports a day with no bill asking for anything: nothing falling due and
+// nothing already late. It is the only condition under which a digest may tell
+// someone their bills are in order.
+func (s BillStatus) Quiet() bool { return s.DueTodayCount == 0 && s.OverdueCount == 0 }
+
+// Bills summarizes the unpaid expenses in `entries` as of `today`. Same window
+// requirement as Evaluate: entries should cover at least the overdue look-back
+// through today.
+func Bills(entries []domain.FinancialEntry, today time.Time) BillStatus {
+	dueToday, overdue := pendingBills(entries, today)
+
+	status := BillStatus{DueTodayCount: len(dueToday), OverdueCount: len(overdue)}
+	for _, e := range dueToday {
+		status.DueToday += e.Amount
+	}
+	for _, e := range overdue {
+		status.OverdueTotal += e.Amount
+	}
+	return status
+}
+
+// pendingBills splits the unpaid expenses into the ones falling due today and
+// the ones whose date has already passed. Overdue comes back most recent first,
+// matching the web hook's ordering.
+//
+// Both Evaluate and Bills read the same two lists, which is why the split lives
+// here: an alert saying a bill is late and a digest saying none is must never be
+// able to disagree about which bills those are.
+func pendingBills(entries []domain.FinancialEntry, today time.Time) (dueToday, overdue []domain.FinancialEntry) {
+	for _, e := range entries {
+		if e.Type != domain.EntryTypeExpense || e.PaymentStatus != domain.PaymentStatusPending {
+			continue
+		}
+		d := effectiveDate(e)
+		switch {
+		case sameDay(d, today):
+			dueToday = append(dueToday, e)
+		case d.Before(today):
+			overdue = append(overdue, e)
+		}
+	}
+	sortByEffectiveDateDesc(overdue)
+	return dueToday, overdue
+}
+
 // effectiveDate mirrors packages/finance: a pending bill counts on its DueDate,
 // falling back to the registration Date once settled.
 func effectiveDate(e domain.FinancialEntry) time.Time {
@@ -66,19 +128,12 @@ func Evaluate(
 ) []Alert {
 	var alerts []Alert
 
-	pending := make([]domain.FinancialEntry, 0, len(entries))
-	for _, e := range entries {
-		if e.Type == domain.EntryTypeExpense && e.PaymentStatus == domain.PaymentStatusPending {
-			pending = append(pending, e)
-		}
-	}
+	dueTodayBills, overdue := pendingBills(entries, today)
 
 	if prefs.NotifyDueToday {
 		var dueToday int64
-		for _, e := range pending {
-			if sameDay(effectiveDate(e), today) {
-				dueToday += e.Amount
-			}
+		for _, e := range dueTodayBills {
+			dueToday += e.Amount
 		}
 		if dueToday > 0 {
 			alerts = append(alerts, Alert{
@@ -89,15 +144,6 @@ func Evaluate(
 	}
 
 	if prefs.NotifyOverdue {
-		overdue := make([]domain.FinancialEntry, 0)
-		for _, e := range pending {
-			d := effectiveDate(e)
-			if d.Before(today) && !sameDay(d, today) {
-				overdue = append(overdue, e)
-			}
-		}
-		// Most recent first, matching the web hook's ordering.
-		sortByEffectiveDateDesc(overdue)
 		for i, e := range overdue {
 			if i >= MaxOverdue {
 				break

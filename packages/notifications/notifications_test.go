@@ -135,3 +135,50 @@ func TestEvaluateOrderDueTodayThenOverdueThenGoal(t *testing.T) {
 		}
 	}
 }
+
+// TestBillsCountsTheLedgerAndNotThePreferences is why BillStatus exists beside
+// Evaluate: the daily digest tells people their bills are in order, and an empty
+// alert list is not evidence of that. A user with every kind switched off gets
+// no alerts on the busiest day of the month.
+func TestBillsCountsTheLedgerAndNotThePreferences(t *testing.T) {
+	today := day("2026-07-20")
+	entries := []domain.FinancialEntry{
+		expense("Fornecedor", 285000, "2026-07-20", domain.PaymentStatusPending),
+		expense("Luz", 15000, "2026-07-20", domain.PaymentStatusPending),
+		expense("Ja pago", 99900, "2026-07-20", domain.PaymentStatusPaid),
+		expense("Vencida", 20000, "2026-07-01", domain.PaymentStatusPending),
+		expense("Vencida quitada", 50000, "2026-07-02", domain.PaymentStatusPaid),
+		// Still ahead: neither due today nor late.
+		expense("Aluguel", 300000, "2026-07-25", domain.PaymentStatusPending),
+	}
+
+	// Nobody is subscribed to anything, so Evaluate is silent...
+	allOff := domain.NotificationPrefs{UserID: "u", WAEnabled: true}
+	if a := Evaluate(allOff, entries, 0, domain.Goal{}, today); len(a) != 0 {
+		t.Fatalf("preconditions: want no alerts, got %+v", a)
+	}
+	// ...and the bills are there all the same.
+	got := Bills(entries, today)
+	want := BillStatus{DueTodayCount: 2, DueToday: 300000, OverdueCount: 1, OverdueTotal: 20000}
+	if got != want {
+		t.Fatalf("Bills = %+v, want %+v", got, want)
+	}
+	if got.Quiet() {
+		t.Error("Quiet() on a day with two bills due and one late")
+	}
+}
+
+func TestBillsQuietDay(t *testing.T) {
+	today := day("2026-07-20")
+	entries := []domain.FinancialEntry{
+		expense("Ja pago", 99900, "2026-07-20", domain.PaymentStatusPaid),
+		expense("Aluguel", 300000, "2026-07-25", domain.PaymentStatusPending),
+		// An income entry that is still to be received is not a bill.
+		{EntryID: "venda", Amount: 100000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPending, DueDate: ptrCD(day("2026-07-19"))},
+	}
+
+	got := Bills(entries, today)
+	if !got.Quiet() {
+		t.Fatalf("Bills = %+v, want a quiet day", got)
+	}
+}
