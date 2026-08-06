@@ -100,6 +100,12 @@ type Result struct {
 	NotOptedIn int // rows with WhatsApp off or no phone — never evaluated
 	Evaluated  int // users with WhatsApp enabled + a phone
 	Sent       int // digests actually delivered
+	// BillListsSent counts the messages carrying the day's outflows, which follow
+	// the digest and can be more than one per recipient on a heavy day. Counted
+	// apart from Sent because they are a different message with a different
+	// failure mode: a digest that arrives without its list is a real outcome, and
+	// "sent=2" would hide it.
+	BillListsSent int
 	// SkippedNothingVerified is the one remaining silence: the analysis failed
 	// *and* the day's bills could not be reported (the user unsubscribed from
 	// them), so there is nothing the message could truthfully say. It replaced
@@ -125,6 +131,7 @@ func (r Result) LogAttrs() []any {
 		"not_opted_in", r.NotOptedIn,
 		"evaluated", r.Evaluated,
 		"sent", r.Sent,
+		"bill_lists_sent", r.BillListsSent,
 		"skipped_nothing_verified", r.SkippedNothingVerified,
 		"skipped_already_sent", r.SkippedAlreadySent,
 		"outside_window", r.OutsideWindow,
@@ -241,6 +248,9 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	// user asked to hear; this says what is actually there, which is what a
 	// message claiming the day is quiet has to be built on.
 	bills := notifications.Bills(entries, today)
+	// The same bills, one by one, for the list that follows the digest. Read here
+	// with everything else the run shares: one ledger, one pass.
+	dueBills := notifications.DueToday(entries, today)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
@@ -321,12 +331,14 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		// nothing to flag is an answer to "como estamos?", and a silence is not —
 		// it reads the same as a broken cron. What replaced the old "no alerts"
 		// skip is a much narrower one, below: nothing *verified* to say.
+		listFollows := prefs.NotifyDueToday && len(dueBills) > 0
 		content := digestContent{
-			Calm:     calmLine(bills, commitments, prefs),
-			Alerts:   alerts,
-			Ahead:    digestAhead,
-			Insights: digestInsights,
-			Payload:  digestPayload,
+			Calm:        calmLine(bills, commitments, prefs),
+			Alerts:      alerts,
+			Ahead:       digestAhead,
+			Insights:    digestInsights,
+			Payload:     digestPayload,
+			ListFollows: listFollows,
 		}
 		if content.empty() {
 			res.SkippedNothingVerified++
@@ -347,6 +359,27 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		log.Info("notifier digest sent",
 			"alerts", len(alerts), "kinds", alertKinds(alerts),
 			"calm_day", content.Calm != "", "chars", len(msg))
+
+		// The day's outflows follow as their own message, verbatim and complete —
+		// see billListMessages. Only for a recipient who hears about bills due
+		// today: the list is the detail behind that alert, and sending it to
+		// someone who switched the alert off would be reporting the kind through
+		// the back door.
+		if listFollows {
+			parts := billListMessages(dueBills)
+			for i, part := range parts {
+				if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, part); err != nil {
+					// Not a `continue`: the digest did go out, and the delivery
+					// log below has to record that or tomorrow's run repeats it.
+					fail(log, fmt.Errorf("user %s: send bill list (%d/%d): %w", prefs.UserID, i+1, len(parts), err))
+					break
+				}
+				res.BillListsSent++
+			}
+			if len(parts) > 0 {
+				log.Info("notifier bill list sent", "bills", len(dueBills), "messages", len(parts))
+			}
+		}
 
 		// Record only after a successful send. A failure here risks a resend
 		// tomorrow, which is far better than dropping the alert entirely.
@@ -402,6 +435,10 @@ type digestContent struct {
 	// Payload is the insights JSON — nil when the month's analysis could not be
 	// assembled, in which case the model writes from the draft alone.
 	Payload map[string]any
+	// ListFollows says a second message with the day's outflows is right behind
+	// this one. The model is told, so it stays on the total instead of writing
+	// out a list that is about to arrive in full — and better — underneath it.
+	ListFollows bool
 }
 
 // empty reports a message with nothing in it but its own header. It is the last
@@ -458,13 +495,93 @@ func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCo
 	return line
 }
 
+// maxWhatsAppText is the budget one outgoing message gets. Meta's limit for a
+// text body is 4096 characters and it rejects the whole message past it, so the
+// margin here is for the header a continuation carries and for a multi-byte
+// character landing on the boundary.
+const maxWhatsAppText = 3800
+
+// billListMessages renders the day's outflows as their own message — or as
+// several, when one will not hold them.
+//
+// They are a separate message from the digest, and deliberately not part of it.
+// A digest is a paragraph someone reads in the morning; this is the list they
+// pay from, and the two fail differently when they are crowded together. The
+// digest is rewritten by the model, which is exactly where a line goes missing
+// or two amounts get merged into "cerca de R$ 3 mil" — and even without a model,
+// a fifteen-bill list inside the digest pushes the rest of it past what a phone
+// shows without scrolling. So the list ships verbatim: no model, no cap, no
+// "e mais 4" (ADR-015), and it splits into further messages rather than losing
+// its tail.
+//
+// Returns nil when nothing is due, which is not a case worth a message: the
+// digest already says the day is clear.
+func billListMessages(bills []notifications.Bill) []string {
+	if len(bills) == 0 {
+		return nil
+	}
+
+	var total int64
+	lines := make([]string, 0, len(bills))
+	for _, b := range bills {
+		total += b.Amount
+		lines = append(lines, "• "+b.Text)
+	}
+
+	header := fmt.Sprintf("💸 *Saídas previstas para hoje* (%d) — total R$ %s",
+		len(bills), notifications.FormatBRL(total))
+	// Every chunk is measured against the same budget, so the reserve is the
+	// longest header any of them could carry — which is the first one on a day
+	// with a big total, and the continuation on a day with a small one.
+	reserve := max(len(header), len(continuationHeader(999, 999))) + len("\n\n")
+	chunks := chunkLines(lines, maxWhatsAppText-reserve)
+	if len(chunks) == 1 {
+		return []string{header + "\n\n" + strings.Join(chunks[0], "\n")}
+	}
+
+	messages := make([]string, 0, len(chunks))
+	for i, chunk := range chunks {
+		head := header
+		if i > 0 {
+			head = continuationHeader(i+1, len(chunks))
+		}
+		messages = append(messages, head+"\n\n"+strings.Join(chunk, "\n"))
+	}
+	return messages
+}
+
+func continuationHeader(part, of int) string {
+	return fmt.Sprintf("💸 *Saídas previstas para hoje* — continuação (%d/%d)", part, of)
+}
+
+// chunkLines groups lines into runs that fit the budget, counting the newline
+// each one costs. A single line longer than the budget gets a chunk of its own
+// and goes out over-length rather than being cut: a bill's description is not
+// ours to shorten, and Meta rejecting one message is a louder failure — and a
+// more honest one — than a payment silently losing half its name.
+func chunkLines(lines []string, budget int) [][]string {
+	var chunks [][]string
+	var current []string
+	size := 0
+	for _, line := range lines {
+		cost := len(line) + 1
+		if len(current) > 0 && size+cost > budget {
+			chunks = append(chunks, current)
+			current, size = nil, 0
+		}
+		current = append(current, line)
+		size += cost
+	}
+	return append(chunks, current)
+}
+
 // buildDigest renders the daily message. Only the body is handed to the model to
 // rewrite; the dashboard call-to-action is appended afterwards, so the link that
 // actually ships is always the configured URL and never something the model
 // paraphrased, dropped or invented.
 func (n *Notifier) buildDigest(content digestContent) string {
 	body := buildAlertsBody(content)
-	if humanized, ok := n.humanize(body, content.Payload); ok {
+	if humanized, ok := n.humanize(body, content); ok {
 		body = humanized
 	}
 	return withDashboardLink(body, n.dashboardURL)
@@ -479,7 +596,7 @@ func (n *Notifier) buildDigest(content digestContent) string {
 // to an echo generator when Gemini is not configured, and an echo returns the
 // user message verbatim: keeping the ready-to-send draft there is what makes an
 // unconfigured notifier ship the static message instead of a page of JSON.
-func (n *Notifier) humanize(body string, payload map[string]any) (string, bool) {
+func (n *Notifier) humanize(body string, content digestContent) (string, bool) {
 	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -490,7 +607,7 @@ func (n *Notifier) humanize(body string, payload map[string]any) (string, bool) 
 			Timestamp: time.Now().UTC(),
 			MessageID: "notifier-digest",
 		},
-		SystemPrompt: digestSystemPrompt(payload),
+		SystemPrompt: digestSystemPrompt(content),
 	})
 	if err != nil {
 		// Not fatal: the caller ships the static draft instead. Logged all the
@@ -521,7 +638,7 @@ func (n *Notifier) humanize(body string, payload map[string]any) (string, bool) 
 // tests behind it; the one thing that turns it into a wrong number is the model
 // combining two of them. So: quote, never compute — the same prohibition
 // ADR-019 puts on the per-day target, stated once for every figure.
-func digestSystemPrompt(payload map[string]any) string {
+func digestSystemPrompt(content digestContent) string {
 	prompt := "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
 		"Escreva a mensagem do dia em português, amigável e objetiva. " +
 		"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
@@ -561,10 +678,18 @@ func digestSystemPrompt(payload map[string]any) string {
 		"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
 		"depois da sua resposta."
 
-	if len(payload) == 0 {
+	// Said only when it is true. Telling the model about a message that is not
+	// coming would have it referring the reader to a list nobody will receive.
+	if content.ListFollows {
+		prompt += " As contas que vencem hoje vão listadas uma a uma na mensagem " +
+			"seguinte, logo depois desta. Fique no total: não repita os itens nem " +
+			"invente quantos são."
+	}
+
+	if len(content.Payload) == 0 {
 		return prompt
 	}
-	data, err := json.Marshal(payload)
+	data, err := json.Marshal(content.Payload)
 	if err != nil {
 		// The draft alone is still a complete message; the JSON only makes it
 		// richer. Nothing about this is worth failing the digest over.

@@ -7,6 +7,7 @@ package notifications
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -67,6 +68,52 @@ func Bills(entries []domain.FinancialEntry, today time.Time) BillStatus {
 		status.OverdueTotal += e.Amount
 	}
 	return status
+}
+
+// Bill is one unpaid expense written out for reading. Text is pt-BR and ready
+// to send, like Alert.Text — Amount rides along so a caller can total or budget
+// a list of them without parsing its own copy back.
+type Bill struct {
+	Amount int64
+	Text   string
+}
+
+// DueToday lists the bills falling due today, one by one, biggest first.
+//
+// It exists beside the due-today Alert, which is a single total, because a
+// total is a warning and a list is a task: "R$ 3.000,00 vencem hoje" tells
+// someone to open the app, while the four lines behind it are what they
+// actually have to pay. The two are delivered as separate WhatsApp messages —
+// see apps/notifier — precisely so the list can be complete without pushing the
+// digest past what a phone will show.
+//
+// Biggest first because that is the order the list gets read in when it is long
+// and the reader is in a hurry, and because it is stable: entries added in the
+// same minute have no meaningful ledger order to preserve.
+func DueToday(entries []domain.FinancialEntry, today time.Time) []Bill {
+	dueToday, _ := pendingBills(entries, today)
+	sortByAmountDesc(dueToday)
+
+	bills := make([]Bill, 0, len(dueToday))
+	for _, e := range dueToday {
+		bills = append(bills, Bill{Amount: e.Amount, Text: billText(e)})
+	}
+	return bills
+}
+
+// billText words one line of the list. The supplier is appended only when it
+// adds something: it is a free-text field (see the epic behind ADR-023), so it
+// is as often empty as it is a copy of the description.
+func billText(e domain.FinancialEntry) string {
+	desc := strings.TrimSpace(e.Description)
+	if desc == "" {
+		desc = "Conta"
+	}
+	line := fmt.Sprintf("R$ %s — %s", FormatBRL(e.Amount), desc)
+	if s := strings.TrimSpace(e.Supplier); s != "" && !strings.EqualFold(s, desc) {
+		line += " (" + s + ")"
+	}
+	return line
 }
 
 // pendingBills splits the unpaid expenses into the ones falling due today and
@@ -138,7 +185,7 @@ func Evaluate(
 		if dueToday > 0 {
 			alerts = append(alerts, Alert{
 				Kind: KindDueToday,
-				Text: fmt.Sprintf("Pagamento de R$ %s vence hoje", formatBRL(dueToday)),
+				Text: fmt.Sprintf("Pagamento de R$ %s vence hoje", FormatBRL(dueToday)),
 			})
 		}
 	}
@@ -169,6 +216,17 @@ func Evaluate(
 	return alerts
 }
 
+// sortByAmountDesc is an insertion sort like sortByEffectiveDateDesc above:
+// these lists are a day's bills, so they are short, and a stable sort keeps
+// equal amounts in the order the ledger returned them.
+func sortByAmountDesc(entries []domain.FinancialEntry) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].Amount > entries[j-1].Amount; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
 func sortByEffectiveDateDesc(entries []domain.FinancialEntry) {
 	for i := 1; i < len(entries); i++ {
 		for j := i; j > 0 && effectiveDate(entries[j]).After(effectiveDate(entries[j-1])); j-- {
@@ -177,9 +235,12 @@ func sortByEffectiveDateDesc(entries []domain.FinancialEntry) {
 	}
 }
 
-// formatBRL renders centavos as Brazilian currency digits ("2850000" ->
-// "28.500,00"), matching the webhook's money() helper.
-func formatBRL(centavos int64) string {
+// FormatBRL renders centavos as Brazilian currency digits ("2850000" ->
+// "28.500,00"), matching the webhook's money() helper. It is exported so the
+// notifier can total the day's bill list in the same wording the alert beside it
+// uses — the total and the lines under it disagreeing about a thousands
+// separator is the kind of detail that makes a reader distrust both.
+func FormatBRL(centavos int64) string {
 	if centavos < 0 {
 		centavos = -centavos
 	}
