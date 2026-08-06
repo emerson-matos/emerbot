@@ -193,6 +193,11 @@ func (a *Agent) chat(ctx context.Context, messages []message) (*chatResponse, er
 
 // historyToMessages maps stored turns onto Ollama chat messages, translating
 // roles (Ollama uses "assistant") and dropping turns it can't represent.
+//
+// Stamped with the local time each turn was said, exactly as the Gemini agent
+// does — see agentprompt.StampTurn. The two agents share a prompt precisely so
+// what the model sees cannot drift between providers, and an undated history is
+// part of what it sees.
 func historyToMessages(history []domain.ConversationMessage) []message {
 	out := make([]message, 0, len(history))
 	for _, m := range history {
@@ -200,7 +205,7 @@ func historyToMessages(history []domain.ConversationMessage) []message {
 		if role == "" || strings.TrimSpace(m.Text) == "" {
 			continue
 		}
-		out = append(out, message{Role: role, Content: m.Text})
+		out = append(out, message{Role: role, Content: agentprompt.StampTurn(m.Text, m.Timestamp)})
 	}
 	return out
 }

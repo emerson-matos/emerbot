@@ -11,6 +11,7 @@ import (
 
 	"github.com/emerson/emerbot/packages/domain"
 	"github.com/emerson/emerbot/packages/finance"
+	"github.com/emerson/emerbot/packages/shared"
 )
 
 type scriptedGenerator struct {
@@ -126,8 +127,53 @@ func TestAgentThreadsPriorTurnsIntoContents(t *testing.T) {
 		t.Fatalf("unexpected roles: %q, %q, %q",
 			gen.firstContents[0].Role, gen.firstContents[1].Role, gen.firstContents[2].Role)
 	}
-	if got := gen.firstContents[0].Parts[0].Text; got != "meu nome é Emerson" {
+	if got := gen.firstContents[0].Parts[0].Text; !strings.HasSuffix(got, "meu nome é Emerson") {
 		t.Fatalf("first turn text not threaded through: %q", got)
+	}
+}
+
+// Every turn goes over stamped with the local time it was said. Undated, the
+// assistant's own "hoje é 06/08" from four minutes ago read as the newest word
+// on what day it is, and the model went on repeating it — and inventing clock
+// times to match — after the prompt behind it had been fixed and deployed.
+func TestAgentStampsEachTurnWithWhenItWasSaid(t *testing.T) {
+	t.Setenv("APP_TIMEZONE", shared.DefaultTimezone)
+
+	gen := &scriptedGenerator{responses: []*genai.GenerateContentResponse{
+		textResponse("Agora são 23:52 de quarta-feira, 05/08/2026."),
+	}}
+	agent := newTestAgent(gen, finance.NewInMemoryStore())
+
+	// The exchange that exposed this, at the times it happened: 23h48 and
+	// 23h52 in São Paulo, which are already the 6th in UTC.
+	history := []domain.ConversationMessage{
+		{
+			Role:      domain.RoleAssistant,
+			Text:      "Agora são 00:02 de quinta-feira, 06 de agosto de 2026.",
+			Timestamp: time.Date(2026, 8, 6, 2, 48, 0, 0, time.UTC),
+		},
+		{
+			Role:      domain.RoleUser,
+			Text:      "Que dia e hora agora?",
+			Timestamp: time.Date(2026, 8, 6, 2, 52, 0, 0, time.UTC),
+		},
+	}
+	if _, err := agent.Process(context.Background(), "u1", history, history[1].Timestamp); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(gen.firstContents) != 2 {
+		t.Fatalf("expected 2 turns sent to Gemini, got %d", len(gen.firstContents))
+	}
+	// Stale claim marked stale, in the pharmacy's clock and not UTC.
+	if got := gen.firstContents[0].Parts[0].Text; got != "[05/08 23:48] Agora são 00:02 de quinta-feira, 06 de agosto de 2026." {
+		t.Errorf("assistant turn not stamped with when it was said: %q", got)
+	}
+	// And the last thing in the context is the current question, stamped now —
+	// so "agora" is the most recent word in the conversation, not something
+	// buried in a system prompt above ten turns of it.
+	if got := gen.firstContents[1].Parts[0].Text; got != "[05/08 23:52] Que dia e hora agora?" {
+		t.Errorf("user turn not stamped: %q", got)
 	}
 }
 
