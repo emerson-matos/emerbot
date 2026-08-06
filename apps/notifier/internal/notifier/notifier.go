@@ -2,6 +2,14 @@
 // WhatsApp digest, deduplicated per day. It is the scheduled (EventBridge) twin
 // of the dashboard's notification bell: same rules (via packages/notifications),
 // different delivery channel.
+//
+// The digest goes out every day, not only when a rule fires. It is a report on
+// the morning, written from the month's analysis (packages/finance/analytics) —
+// the same insights the /analise page renders — and a morning with nothing to
+// flag is one of its answers, not a reason to withhold it. See ADR-023.
+//
+// Opting out is the WhatsApp toggle in NotificationPrefs. The per-kind toggles
+// below it decide what the message may claim, not whether it is sent.
 package notifier
 
 import (
@@ -84,23 +92,28 @@ func (n *Notifier) SetClock(now func() time.Time) { n.now = now }
 
 // Result summarizes one run for logging/telemetry. Every counter is a distinct
 // reason a digest did or did not go out, because "skipped" on its own is not an
-// answer to "why didn't I get a message today?" — the fixes for "you have no
-// alerts", "you already got it" and "your WhatsApp window is shut" have nothing
-// in common.
+// answer to "why didn't I get a message today?" — the fixes for "you already
+// got it", "your WhatsApp window is shut" and "nothing could be checked" have
+// nothing in common.
 type Result struct {
-	Prefs              int // notification-preference rows found
-	NotOptedIn         int // rows with WhatsApp off or no phone — never evaluated
-	Evaluated          int // users with WhatsApp enabled + a phone
-	Sent               int // digests actually delivered
-	SkippedNoAlerts    int // evaluated, but nothing worth saying today
-	SkippedAlreadySent int // today's digest already went out (dedupe hit)
-	OutsideWindow      int // enabled, but WhatsApp's 24h window is closed
-	Errors             int // per-user failures; the run continues past them
+	Prefs      int // notification-preference rows found
+	NotOptedIn int // rows with WhatsApp off or no phone — never evaluated
+	Evaluated  int // users with WhatsApp enabled + a phone
+	Sent       int // digests actually delivered
+	// SkippedNothingVerified is the one remaining silence: the analysis failed
+	// *and* the day's bills could not be reported (the user unsubscribed from
+	// them), so there is nothing the message could truthfully say. It replaced
+	// "no alerts", which is no longer a reason to stay quiet — a calm day is
+	// something to say, not something to withhold.
+	SkippedNothingVerified int
+	SkippedAlreadySent     int // today's digest already went out (dedupe hit)
+	OutsideWindow          int // enabled, but WhatsApp's 24h window is closed
+	Errors                 int // per-user failures; the run continues past them
 }
 
 // Skipped is the total of every "evaluated but not sent, without an error"
 // outcome. Kept as a derived value so the summary can still be read at a glance.
-func (r Result) Skipped() int { return r.SkippedNoAlerts + r.SkippedAlreadySent }
+func (r Result) Skipped() int { return r.SkippedNothingVerified + r.SkippedAlreadySent }
 
 // LogAttrs renders the counters as flat log fields. It lives next to the struct
 // so a new counter is named for the log in the same place it is declared —
@@ -112,7 +125,7 @@ func (r Result) LogAttrs() []any {
 		"not_opted_in", r.NotOptedIn,
 		"evaluated", r.Evaluated,
 		"sent", r.Sent,
-		"skipped_no_alerts", r.SkippedNoAlerts,
+		"skipped_nothing_verified", r.SkippedNothingVerified,
 		"skipped_already_sent", r.SkippedAlreadySent,
 		"outside_window", r.OutsideWindow,
 		"errors", r.Errors,
@@ -223,17 +236,31 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		revenue = summaries[month].TotalRevenue
 	}
 
+	// What the ledger's unpaid bills look like today, independent of anyone's
+	// preferences — see notifications.BillStatus. The alerts below say what each
+	// user asked to hear; this says what is actually there, which is what a
+	// message claiming the day is quiet has to be built on.
+	bills := notifications.Bills(entries, today)
+
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
 	// the digest its "how is the month going" section and nothing more, so it
 	// is logged and stepped over rather than aborting the run.
 	var digestInsights, digestAhead []string
+	var digestPayload map[string]any
+	var commitments analytics.CommitmentCoverage
 	analysis, err := analytics.Assemble(ctx, n.store, shared.FinanceLedgerID, month, nowT)
 	if err != nil {
 		runLog.Warn("notifier digest analysis unavailable, sending alerts alone", "error", err)
 	} else {
 		digestInsights = analysis.DigestLines()
 		digestAhead = analysis.AheadLines()
+		// The whole insights JSON — the same one the analysis page renders and
+		// the bot reads — is what the model writes the message from. It used to
+		// receive the rendered lines alone, which is why the digest could only
+		// ever say what those lines already said.
+		digestPayload = analysis.DigestPayload()
+		commitments = analysis.CashPosition.Commitments
 
 		// Persist the analysis as a daily snapshot — subproduct of the digest
 		// run, zero extra calculation. The dashboard-api serves this instead of
@@ -278,14 +305,6 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		}
 
 		alerts := notifications.Evaluate(prefs, entries, revenue, goal, today)
-		if len(alerts) == 0 {
-			res.SkippedNoAlerts++
-			log.Info("notifier digest not sent",
-				"reason", "no_alerts",
-				"detail", "nothing met an alert rule today",
-				"window_closes_at", expiry.In(n.loc).Format(time.RFC3339))
-			continue
-		}
 
 		already, err := n.store.NotificationSent(ctx, prefs.UserID, dedupeKey)
 		if err != nil {
@@ -298,14 +317,36 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		msg := n.buildDigest(alerts, digestAhead, digestInsights)
+		// The digest goes out every day now, quiet ones included: a morning with
+		// nothing to flag is an answer to "como estamos?", and a silence is not —
+		// it reads the same as a broken cron. What replaced the old "no alerts"
+		// skip is a much narrower one, below: nothing *verified* to say.
+		content := digestContent{
+			Calm:     calmLine(bills, commitments, prefs),
+			Alerts:   alerts,
+			Ahead:    digestAhead,
+			Insights: digestInsights,
+			Payload:  digestPayload,
+		}
+		if content.empty() {
+			res.SkippedNothingVerified++
+			log.Info("notifier digest not sent",
+				"reason", "nothing_verified",
+				"detail", "the month's analysis is unavailable and this user hears about no bill kind — "+
+					"a digest would have nothing in it that was actually checked",
+				"window_closes_at", expiry.In(n.loc).Format(time.RFC3339))
+			continue
+		}
+
+		msg := n.buildDigest(content)
 		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
 			fail(log, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
 		}
 		res.Sent++
 		log.Info("notifier digest sent",
-			"alerts", len(alerts), "kinds", alertKinds(alerts), "chars", len(msg))
+			"alerts", len(alerts), "kinds", alertKinds(alerts),
+			"calm_day", content.Calm != "", "chars", len(msg))
 
 		// Record only after a successful send. A failure here risks a resend
 		// tomorrow, which is far better than dropping the alert entirely.
@@ -346,22 +387,99 @@ func alertKinds(alerts []notifications.Alert) string {
 	return strings.Join(kinds, ",")
 }
 
-// buildDigest renders the daily message. Only the alert body is handed to the
-// model to rewrite; the dashboard call-to-action is appended afterwards, so the
-// link that actually ships is always the configured URL and never something the
-// model paraphrased, dropped or invented.
-func (n *Notifier) buildDigest(alerts []notifications.Alert, ahead, insights []string) string {
-	body := buildAlertsBody(alerts, ahead, insights)
-	if humanized, ok := n.humanize(body); ok {
+// digestContent is everything one recipient's message can be built from: the
+// deterministic draft's parts, and the analysis JSON the model writes from.
+//
+// The three line groups are separate because they are about different times and
+// the message keeps them apart — see buildAlertsBody.
+type digestContent struct {
+	// Calm is the "nothing is asking for you today" line, present only when the
+	// day is verifiably quiet for the kinds this recipient hears about.
+	Calm     string
+	Alerts   []notifications.Alert
+	Ahead    []string
+	Insights []string
+	// Payload is the insights JSON — nil when the month's analysis could not be
+	// assembled, in which case the model writes from the draft alone.
+	Payload map[string]any
+}
+
+// empty reports a message with nothing in it but its own header. It is the last
+// guard on the "send every day" rule: a digest that says nothing is worse than
+// no digest, because it teaches the reader that the message carries no
+// information.
+func (c digestContent) empty() bool {
+	return c.Calm == "" && len(c.Alerts) == 0 && len(c.Ahead) == 0 && len(c.Insights) == 0
+}
+
+// calmLine states that the day is quiet — and states it only for the bill kinds
+// this recipient subscribed to, because that is the extent of what the digest
+// may claim on their behalf. Someone who turned overdue alerts off is not told
+// "não há contas vencidas": they asked not to be tracked on that, and a
+// reassurance is still a report.
+//
+// The claims themselves come from the ledger (notifications.BillStatus), never
+// from an empty alert list — the two differ exactly when a kind is switched off,
+// and that is the case where "nada vence hoje" would be false.
+func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCoverage, prefs domain.NotificationPrefs) string {
+	// Clear means "nothing to raise here" — either because there is nothing, or
+	// because this recipient does not hear about it. A kind they hear about that
+	// is *not* clear has an alert of its own two lines down, and a ✅ above it
+	// would be the message disagreeing with itself.
+	dueClear := !prefs.NotifyDueToday || bills.DueTodayCount == 0
+	overdueClear := !prefs.NotifyOverdue || bills.OverdueCount == 0
+	if !dueClear || !overdueClear {
+		return ""
+	}
+
+	var claim string
+	switch {
+	case prefs.NotifyDueToday && prefs.NotifyOverdue:
+		claim = "Nada vence hoje e não há contas vencidas."
+	case prefs.NotifyDueToday:
+		claim = "Nada vence hoje."
+	case prefs.NotifyOverdue:
+		claim = "Não há contas vencidas."
+	default:
+		// Subscribed to no bill kind: there is no claim this digest may make on
+		// their behalf, and "tudo tranquilo" over an unread ledger is exactly the
+		// reassurance nobody checked.
+		return ""
+	}
+
+	line := "✅ " + claim
+	// The cash clause is added only where the projected balance says so. An
+	// uncovered month has its own line in the analysis half, and a ledger with no
+	// trading history cannot answer the question at all — neither may be dressed
+	// up as calm here (ADR-022).
+	if commitments == analytics.CommitmentsCovered {
+		line += " O caixa projetado cobre os compromissos do mês."
+	}
+	return line
+}
+
+// buildDigest renders the daily message. Only the body is handed to the model to
+// rewrite; the dashboard call-to-action is appended afterwards, so the link that
+// actually ships is always the configured URL and never something the model
+// paraphrased, dropped or invented.
+func (n *Notifier) buildDigest(content digestContent) string {
+	body := buildAlertsBody(content)
+	if humanized, ok := n.humanize(body, content.Payload); ok {
 		body = humanized
 	}
 	return withDashboardLink(body, n.dashboardURL)
 }
 
-// humanize asks the model to rewrite the alert body into friendlier prose. It
+// humanize asks the model to write the day's message from the analysis. It
 // reports false on any failure (or empty output) so the caller keeps the static
 // draft — a broken generator must never swallow the alert.
-func (n *Notifier) humanize(body string) (string, bool) {
+//
+// The draft goes in as the user message and the insights JSON rides in the
+// system prompt, which is not an arbitrary split. NewDigestGenerator falls back
+// to an echo generator when Gemini is not configured, and an echo returns the
+// user message verbatim: keeping the ready-to-send draft there is what makes an
+// unconfigured notifier ship the static message instead of a page of JSON.
+func (n *Notifier) humanize(body string, payload map[string]any) (string, bool) {
 	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -372,37 +490,7 @@ func (n *Notifier) humanize(body string) (string, bool) {
 			Timestamp: time.Now().UTC(),
 			MessageID: "notifier-digest",
 		},
-		SystemPrompt: "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
-			"Transforme os alertas abaixo em uma mensagem amigável e objetiva em português. " +
-			"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
-			"Não invente informações. Se não houver alertas, diga que está tudo em ordem. " +
-			// The draft is already split into "a partir de agora" and "até
-			// ontem", and the split is the point: the message arrives de manhã,
-			// quando o dia de hoje ainda não aconteceu.
-			"O rascunho vem dividido em duas partes: o que ainda precisa ser feito " +
-			"a partir de agora e como o mês fechou até ontem. Preserve essa " +
-			"divisão e nunca apresente um número do passado como se fosse de hoje. " +
-			// The model turned "Faturamento caiu — 100% abaixo do mês passado
-			// (até o dia 1)" into a bare "queda de 100% em relação ao mês
-			// passado", which reads as the whole month having collapsed.
-			"Se uma linha disser \"até o dia N\" ou \"até ontem\", repita essa " +
-			"ressalva junto do número — sem ela a comparação vira um mês inteiro. " +
-			"Se o rascunho disser que o mês está começando, não invente comparação " +
-			"nem diagnóstico: fale só do que vem pela frente. " +
-			// Days 2–7 have closed days to report on but no comparable window:
-			// the 1st and 2nd of one month are not the same weekdays as the 1st
-			// and 2nd of the one before.
-			"Se o rascunho disser que a primeira semana ainda não fechou, repita " +
-			"isso e não compare o mês com o anterior de nenhuma outra forma. " +
-			// The draft used to carry no daily figure at all, so the model
-			// filled the gap with the gap-over-days-left division — a flat ask
-			// that reads the same on a Sunday as on a Saturday (ADR-019).
-			"Nunca calcule uma meta por dia dividindo valores: se houver meta " +
-			"para hoje, ela já vem no rascunho, junto do que aquele dia da " +
-			"semana costuma faturar. Repita os dois. " +
-			"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
-			"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
-			"depois da sua resposta.",
+		SystemPrompt: digestSystemPrompt(payload),
 	})
 	if err != nil {
 		// Not fatal: the caller ships the static draft instead. Logged all the
@@ -416,6 +504,84 @@ func (n *Notifier) humanize(body string) (string, bool) {
 		return "", false
 	}
 	return text, true
+}
+
+// digestSystemPrompt is the instruction the digest is written under, with the
+// month's insights JSON appended as the data of record.
+//
+// The JSON is the same one the analysis page renders (analytics.DigestPayload),
+// and handing over the whole of it is the point: the message used to be a
+// rewrite of a handful of rendered lines, so anything the analysis knew but did
+// not print — the projected balance, the month's commitments and whether they
+// are covered, the week's pace — could not reach the reader no matter what the
+// day looked like.
+//
+// Which is also why the rules below are about arithmetic rather than about
+// tone. Every figure in that JSON is already computed, in reais, by code with
+// tests behind it; the one thing that turns it into a wrong number is the model
+// combining two of them. So: quote, never compute — the same prohibition
+// ADR-019 puts on the per-day target, stated once for every figure.
+func digestSystemPrompt(payload map[string]any) string {
+	prompt := "Você é um assistente financeiro que envia um resumo diário via WhatsApp. " +
+		"Escreva a mensagem do dia em português, amigável e objetiva. " +
+		"Mantenha o tom profissional mas acolhedor. Use emojis com moderação. " +
+		"Não invente informações. " +
+		// The draft is already split into "a partir de agora" and "até
+		// ontem", and the split is the point: the message arrives de manhã,
+		// quando o dia de hoje ainda não aconteceu.
+		"O rascunho vem dividido em duas partes: o que ainda precisa ser feito " +
+		"a partir de agora e como o mês fechou até ontem. Preserve essa " +
+		"divisão e nunca apresente um número do passado como se fosse de hoje. " +
+		// The model turned "Faturamento caiu — 100% abaixo do mês passado
+		// (até o dia 1)" into a bare "queda de 100% em relação ao mês
+		// passado", which reads as the whole month having collapsed.
+		"Se uma linha disser \"até o dia N\" ou \"até ontem\", repita essa " +
+		"ressalva junto do número — sem ela a comparação vira um mês inteiro. " +
+		"Se o rascunho disser que o mês está começando, não invente comparação " +
+		"nem diagnóstico: fale só do que vem pela frente. " +
+		// Days 2–7 have closed days to report on but no comparable window:
+		// the 1st and 2nd of one month are not the same weekdays as the 1st
+		// and 2nd of the one before.
+		"Se o rascunho disser que a primeira semana ainda não fechou, repita " +
+		"isso e não compare o mês com o anterior de nenhuma outra forma. " +
+		// The draft used to carry no daily figure at all, so the model
+		// filled the gap with the gap-over-days-left division — a flat ask
+		// that reads the same on a Sunday as on a Saturday (ADR-019).
+		"Nunca calcule uma meta por dia dividindo valores: se houver meta " +
+		"para hoje, ela já vem no rascunho, junto do que aquele dia da " +
+		"semana costuma faturar. Repita os dois. " +
+		// The digest now goes out on quiet days too. A model handed an analysis
+		// and asked for a message will find something in it to worry about if
+		// nobody says otherwise — and a daily warning about a month that is fine
+		// is how a reader learns to stop opening the message.
+		"Um dia tranquilo é uma boa notícia e a mensagem deve ser curta: confirme " +
+		"o que o rascunho diz que está em ordem e pare por aí. Não procure um " +
+		"problema para preencher a mensagem. " +
+		"IMPORTANTE: não escreva links, URLs nem textos substitutos como " +
+		"\"[Link para o dashboard]\" — o link é acrescentado automaticamente " +
+		"depois da sua resposta."
+
+	if len(payload) == 0 {
+		return prompt
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		// The draft alone is still a complete message; the JSON only makes it
+		// richer. Nothing about this is worth failing the digest over.
+		slog.Warn("notifier digest payload not serializable, prompting with the draft alone", "error", err)
+		return prompt
+	}
+
+	return prompt + "\n\n" +
+		"Os números da análise do mês vêm abaixo em JSON — é exatamente o que a " +
+		"página de Análise mostra, já calculado, com os valores em reais. " +
+		"Você pode citar qualquer número que esteja nele ou no rascunho, e pode " +
+		"usá-lo para dar contexto ao que o rascunho já diz. " +
+		"Nunca some, subtraia, divida ou calcule um número novo a partir deles: " +
+		"se o número não está escrito, ele não existe. " +
+		"Nem tudo que está no JSON precisa entrar na mensagem — escolha o que " +
+		"ajuda quem lê às sete da manhã e ignore o resto.\n\n" +
+		string(data)
 }
 
 // linkPlaceholderRE matches the fill-in-the-blank links models emit when asked
@@ -475,23 +641,33 @@ func dashboardLink(dashboardURL string) string {
 // used to lead with a verdict on a day nobody had traded yet, and on the 1st it
 // opened with "saúde crítica" and "receita caiu 100%" against a month whose
 // only content was its own bills.
-func buildAlertsBody(alerts []notifications.Alert, ahead, insights []string) string {
+// It is also the message a quiet day gets, and that is not a lesser case: the
+// digest used to go out only when a rule fired, so "nothing needs you today"
+// arrived as silence — indistinguishable from a broken schedule, and the one
+// morning report a pharmacist can act on by *not* acting. The calm line leads
+// the same "a partir de agora" half the alerts do, because it is an answer to
+// the same question.
+func buildAlertsBody(content digestContent) string {
 	var b strings.Builder
 	b.WriteString("🔔 *Farmácia Financeira* — resumo do dia\n")
 
-	if len(alerts) > 0 || len(ahead) > 0 {
+	if content.Calm != "" || len(content.Alerts) > 0 || len(content.Ahead) > 0 {
 		b.WriteString("\n⏭️ *A partir de agora:*\n")
-		for _, a := range alerts {
+		if content.Calm != "" {
+			b.WriteString("\n• ")
+			b.WriteString(content.Calm)
+		}
+		for _, a := range content.Alerts {
 			b.WriteString("\n• ")
 			b.WriteString(a.Text)
 		}
-		for _, line := range ahead {
+		for _, line := range content.Ahead {
 			b.WriteString("\n• ")
 			b.WriteString(line)
 		}
 	}
 
-	if len(insights) > 0 {
+	if insights := content.Insights; len(insights) > 0 {
 		b.WriteString("\n\n📊 *Como fechamos até ontem:*\n")
 		for _, line := range insights {
 			b.WriteString("\n• ")

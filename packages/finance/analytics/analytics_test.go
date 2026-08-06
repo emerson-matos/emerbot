@@ -2242,9 +2242,51 @@ func TestToolPayloadUsesReais(t *testing.T) {
 	if payload["month"] != "2026-07" {
 		t.Errorf("month = %v", payload["month"])
 	}
+	// Absent, not null: the digest serializes this payload to JSON for the model
+	// (see DigestPayload), and a null there reads as a value — "zero days left".
 	caixa := payload["caixa"].(map[string]any)
-	if caixa["dias_ate_saldo_negativo"] != nil {
-		t.Errorf("dias_ate_saldo_negativo = %v, want nil when the balance never goes negative", caixa["dias_ate_saldo_negativo"])
+	if _, ok := caixa["dias_ate_saldo_negativo"]; ok {
+		t.Errorf("dias_ate_saldo_negativo = %v, want the key absent when the balance never goes negative", caixa["dias_ate_saldo_negativo"])
+	}
+}
+
+// TestDigestPayloadIsTheAnalysisMinusItsToolAffordances: the daily digest writes
+// from the same insights JSON the bot reads, less the keys that only mean
+// something to a caller that can make another call.
+func TestDigestPayloadIsTheAnalysisMinusItsToolAffordances(t *testing.T) {
+	analysis := Analysis{
+		Month: "2026-07",
+		KPIs:  KPIs{Faturamento: 123456, Despesa: 20000},
+		CashPosition: CashPosition{
+			CurrentBalance: 500000,
+			Commitments:    CommitmentsCovered,
+		},
+	}
+
+	payload := analysis.DigestPayload()
+
+	// The figures are the same ones, unchanged.
+	if payload["faturamento"] != 1234.56 {
+		t.Errorf("faturamento = %v, want the same reais the bot gets", payload["faturamento"])
+	}
+	caixa, ok := payload["caixa"].(map[string]any)
+	if !ok {
+		t.Fatalf("caixa missing from the digest payload: %v", payload)
+	}
+	if caixa["compromissos_situacao"] != string(CommitmentsCovered) {
+		t.Errorf("compromissos_situacao = %v", caixa["compromissos_situacao"])
+	}
+
+	for _, key := range toolOnlyPayloadKeys {
+		if _, present := payload[key]; present {
+			t.Errorf("digest payload carries %q, which only a caller with tools can act on", key)
+		}
+	}
+	// And ToolPayload keeps them — this is a subtraction, not a move.
+	for _, key := range toolOnlyPayloadKeys {
+		if _, present := analysis.ToolPayload()[key]; !present {
+			t.Errorf("ToolPayload lost %q", key)
+		}
 	}
 }
 
