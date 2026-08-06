@@ -15,6 +15,13 @@ import (
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
+// scheduledRun is the payload EventBridge Scheduler is configured to send. Any
+// other field in the event is ignored, so a schedule with no input at all
+// unmarshals to the zero value — which ParseRunKind reads as the daily digest.
+type scheduledRun struct {
+	Run string `json:"run"`
+}
+
 func main() {
 	ctx := context.Background()
 	// Without this the notifier's slog output goes through the default handler,
@@ -63,10 +70,18 @@ func main() {
 	dashboardURL := shared.Getenv("DASHBOARD_URL", "")
 	n := notifier.New(finStore, sessions, wa, phoneNumberID, dashboardURL, loc, gen)
 
-	// EventBridge Scheduler invokes with an event we don't need to inspect —
-	// the job is the same every time.
-	lambda.Start(func(ctx context.Context) error {
-		_, err := n.Run(ctx)
+	// Two schedules invoke this Lambda: the morning digest and the afternoon
+	// reminder of what is still due today. Which one is in the event, not in the
+	// clock — an EventBridge flexible window and a retry both move the hour a run
+	// actually lands on, and reading the job off time.Now() would eventually send
+	// the wrong message. An event without the field (any schedule that predates
+	// it) is the digest.
+	lambda.Start(func(ctx context.Context, event scheduledRun) error {
+		kind, err := notifier.ParseRunKind(event.Run)
+		if err != nil {
+			return err
+		}
+		_, err = n.Run(ctx, kind)
 		return err
 	})
 }

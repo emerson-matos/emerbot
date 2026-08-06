@@ -569,9 +569,15 @@ resource "aws_iam_role_policy_attachment" "scheduler_notifier_exec" {
 
 # EventBridge Scheduler: invoke the notifier once a day with a 30-minute
 # flexible window so AWS can retry on transient failures.
+#
+# O Lambda não descobre qual das duas execuções do dia ele é olhando o relógio —
+# quem diz é o `input` do agendamento (ver notifier.ParseRunKind). Com a janela
+# flexível de 30 minutos e as retentativas, a hora em que uma execução realmente
+# cai varia, e ler o horário mandaria a mensagem errada mais cedo ou mais tarde.
+# Um agendamento sem `input` (o formato antigo) continua sendo o resumo da manhã.
 resource "aws_scheduler_schedule" "notifier_daily" {
   name        = "${local.prefix}-notifier-daily"
-  description = "Dispara o notifier (alertas por WhatsApp) uma vez ao dia."
+  description = "Dispara o resumo diário do notifier (alertas por WhatsApp) pela manhã."
 
   flexible_time_window {
     mode                      = "FLEXIBLE"
@@ -584,6 +590,39 @@ resource "aws_scheduler_schedule" "notifier_daily" {
   target {
     arn      = aws_lambda_function.notifier.arn
     role_arn = aws_iam_role.scheduler_notifier.arn
+    input    = jsonencode({ run = "digest" })
+
+    retry_policy {
+      maximum_retry_attempts       = 3
+      maximum_event_age_in_seconds = 300
+    }
+  }
+}
+
+# Segunda execução do dia: as contas que venciam hoje e continuam em aberto.
+# É lembrete, não repetição — a lista é remontada do que ainda está pendente, de
+# modo que uma conta paga de manhã não aparece à tarde. Não recalcula a análise
+# nem regrava o snapshot: a tarde não tem nada de novo a dizer sobre o mês.
+#
+# A janela flexível aqui é menor que a da manhã: "pouco depois das 15h" é um
+# horário escolhido para caber no expediente, e meia hora de folga o empurraria
+# para perto das 16h.
+resource "aws_scheduler_schedule" "notifier_open_bills" {
+  name        = "${local.prefix}-notifier-open-bills"
+  description = "Relembra à tarde as saídas de hoje que continuam em aberto."
+
+  flexible_time_window {
+    mode                      = "FLEXIBLE"
+    maximum_window_in_minutes = 10
+  }
+
+  schedule_expression          = var.notifier_open_bills_schedule
+  schedule_expression_timezone = var.app_timezone
+
+  target {
+    arn      = aws_lambda_function.notifier.arn
+    role_arn = aws_iam_role.scheduler_notifier.arn
+    input    = jsonencode({ run = "saidas_tarde" })
 
     retry_policy {
       maximum_retry_attempts       = 3
@@ -598,6 +637,14 @@ resource "aws_lambda_permission" "allow_scheduler_notifier" {
   function_name = aws_lambda_function.notifier.function_name
   principal     = "scheduler.amazonaws.com"
   source_arn    = aws_scheduler_schedule.notifier_daily.arn
+}
+
+resource "aws_lambda_permission" "allow_scheduler_notifier_open_bills" {
+  statement_id  = "AllowExecutionFromSchedulerOpenBills"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.notifier.function_name
+  principal     = "scheduler.amazonaws.com"
+  source_arn    = aws_scheduler_schedule.notifier_open_bills.arn
 }
 
 # ---------------------------------------------------------------------------

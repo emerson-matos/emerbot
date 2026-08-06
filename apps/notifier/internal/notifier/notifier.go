@@ -106,20 +106,21 @@ type Result struct {
 	// failure mode: a digest that arrives without its list is a real outcome, and
 	// "sent=2" would hide it.
 	BillListsSent int
-	// SkippedNothingVerified is the one remaining silence: the analysis failed
-	// *and* the day's bills could not be reported (the user unsubscribed from
-	// them), so there is nothing the message could truthfully say. It replaced
-	// "no alerts", which is no longer a reason to stay quiet — a calm day is
-	// something to say, not something to withhold.
-	SkippedNothingVerified int
-	SkippedAlreadySent     int // today's digest already went out (dedupe hit)
-	OutsideWindow          int // enabled, but WhatsApp's 24h window is closed
-	Errors                 int // per-user failures; the run continues past them
+	// SkippedNothingToSend is "evaluated, and this run had nothing for this
+	// recipient". On the digest run it is the one remaining silence: the analysis
+	// failed *and* the day's bills could not be reported (the user unsubscribed
+	// from them), so there is nothing the message could truthfully say — it
+	// replaced "no alerts", which is no longer a reason to stay quiet. On the
+	// afternoon run it is a recipient who does not hear about bills due today.
+	SkippedNothingToSend int
+	SkippedAlreadySent   int // today's digest already went out (dedupe hit)
+	OutsideWindow        int // enabled, but WhatsApp's 24h window is closed
+	Errors               int // per-user failures; the run continues past them
 }
 
 // Skipped is the total of every "evaluated but not sent, without an error"
 // outcome. Kept as a derived value so the summary can still be read at a glance.
-func (r Result) Skipped() int { return r.SkippedNothingVerified + r.SkippedAlreadySent }
+func (r Result) Skipped() int { return r.SkippedNothingToSend + r.SkippedAlreadySent }
 
 // LogAttrs renders the counters as flat log fields. It lives next to the struct
 // so a new counter is named for the log in the same place it is declared —
@@ -132,23 +133,59 @@ func (r Result) LogAttrs() []any {
 		"evaluated", r.Evaluated,
 		"sent", r.Sent,
 		"bill_lists_sent", r.BillListsSent,
-		"skipped_nothing_verified", r.SkippedNothingVerified,
+		"skipped_nothing_to_send", r.SkippedNothingToSend,
 		"skipped_already_sent", r.SkippedAlreadySent,
 		"outside_window", r.OutsideWindow,
 		"errors", r.Errors,
 	}
 }
 
-// Run evaluates every enabled user and sends at most one digest each. It keeps
-// going past a per-user failure and returns the joined errors, so one bad user
-// never blocks the rest.
+// RunKind names which of the day's scheduled runs this is. The two do
+// different work — see Run — and the caller says which rather than the Lambda
+// guessing from the hour on its own clock: a schedule that drifts, or a retry
+// that lands late, must not turn the afternoon reminder into a second morning
+// digest.
+type RunKind string
+
+const (
+	// RunDigest is the morning run: the day's message, plus the list of what is
+	// due, plus the analysis snapshot the dashboard serves.
+	RunDigest RunKind = "digest"
+	// RunOpenBills is the afternoon run. It sends one thing — the bills that
+	// fell due today and are *still* unpaid — and computes no analysis, writes
+	// no snapshot and rewrites nothing through the model.
+	RunOpenBills RunKind = "saidas_tarde"
+)
+
+// ParseRunKind resolves the scheduler's `run` field. An empty value is the
+// morning digest, so a schedule with no input configured keeps working; an
+// unrecognised one is an error rather than a default, because the failure it
+// prevents — the wrong message going out to real people at the wrong hour — is
+// worse than one run erroring loudly on its first fire after a deploy.
+func ParseRunKind(s string) (RunKind, error) {
+	switch RunKind(s) {
+	case "", RunDigest:
+		return RunDigest, nil
+	case RunOpenBills:
+		return RunOpenBills, nil
+	default:
+		return "", fmt.Errorf("unknown notifier run kind %q (want %q or %q)", s, RunDigest, RunOpenBills)
+	}
+}
+
+// Run performs one scheduled run of the given kind. It keeps going past a
+// per-user failure and returns the joined errors, so one bad user never blocks
+// the rest.
 //
 // Every user gets exactly one log line naming the outcome and, when nothing was
-// sent, the reason. This runs once a day for a handful of recipients, so the
+// sent, the reason. This runs twice a day for a handful of recipients, so the
 // volume is negligible against CloudWatch's free tier — and the alternative was
 // a summary saying "skipped=1" with no way to find out who, or why, after the
 // fact. A silent day has to be diagnosable from the logs alone.
-func (n *Notifier) Run(ctx context.Context) (Result, error) {
+//
+// The preamble below is what the two runs share: the day, who is opted in, and
+// the ledger. Everything after the split is specific to one of them.
+func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 	var res Result
 
 	nowInstant := n.now()
@@ -165,8 +202,15 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	// carries who it is about. Binding those once with With beats repeating them
 	// at each call site: they cannot drift apart, and a new log line gets them
 	// for free instead of by remembering to.
-	runLog := slog.With("date", dedupeKey)
+	runLog := slog.With("date", dedupeKey, "run", string(kind))
 	runLog.Info("notifier run started", "timezone", n.loc.String())
+
+	// The afternoon reminder keys its own delivery log: it is a second message
+	// on the same day, and sharing the morning's key would have each of them
+	// silence the other.
+	if kind == RunOpenBills {
+		dedupeKey += "#saidas-tarde"
+	}
 
 	prefsList, err := n.store.ListNotificationPrefs(ctx)
 	if err != nil {
@@ -225,6 +269,24 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		runLog.Error("notifier run aborted", "error", err)
 		return res, err
 	}
+	// What the ledger's unpaid bills look like today, independent of anyone's
+	// preferences — see notifications.BillStatus. The alerts below say what each
+	// user asked to hear; this says what is actually there, which is what a
+	// message claiming the day is quiet has to be built on.
+	bills := notifications.Bills(entries, today)
+	// The same bills, one by one, for the list that goes out behind the digest
+	// and again in the afternoon. Read here with everything else the runs share:
+	// one ledger, one pass.
+	dueBills := notifications.DueToday(entries, today)
+
+	// The afternoon run's whole job is those bills. It stops here — no goal, no
+	// summary, no analysis, no snapshot: none of it would reach a message, and
+	// recomputing the analysis at 15h would also overwrite the morning's
+	// snapshot with a second, unnecessary write.
+	if kind == RunOpenBills {
+		return n.remindOpenBills(ctx, res, runLog, candidates, dueBills, bills, nowInstant, dedupeKey)
+	}
+
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
 	goal, _ := n.store.GetGoal(ctx, shared.FinanceLedgerID, month)
 	// The goal alert compares against *this month's* faturamento, which cannot
@@ -242,15 +304,6 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 	} else {
 		revenue = summaries[month].TotalRevenue
 	}
-
-	// What the ledger's unpaid bills look like today, independent of anyone's
-	// preferences — see notifications.BillStatus. The alerts below say what each
-	// user asked to hear; this says what is actually there, which is what a
-	// message claiming the day is quiet has to be built on.
-	bills := notifications.Bills(entries, today)
-	// The same bills, one by one, for the list that follows the digest. Read here
-	// with everything else the run shares: one ledger, one pass.
-	dueBills := notifications.DueToday(entries, today)
 
 	// The month's analysis, read once for the whole run like the ledger above.
 	// It is context for the alerts, not a reason to send: a failure here costs
@@ -341,7 +394,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 			ListFollows: listFollows,
 		}
 		if content.empty() {
-			res.SkippedNothingVerified++
+			res.SkippedNothingToSend++
 			log.Info("notifier digest not sent",
 				"reason", "nothing_verified",
 				"detail", "the month's analysis is unavailable and this user hears about no bill kind — "+
@@ -366,7 +419,7 @@ func (n *Notifier) Run(ctx context.Context) (Result, error) {
 		// someone who switched the alert off would be reporting the kind through
 		// the back door.
 		if listFollows {
-			parts := billListMessages(dueBills)
+			parts := billListMessages(dueBills, dueTodayTitle)
 			for i, part := range parts {
 				if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, part); err != nil {
 					// Not a `continue`: the digest did go out, and the delivery
@@ -495,6 +548,141 @@ func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCo
 	return line
 }
 
+// remindOpenBills is the afternoon run: the day's outflows again, minus the
+// ones that have been paid since the morning.
+//
+// It is a reminder and not a repeat, and the difference is the ledger's: the
+// list is rebuilt from what is *still* pending, so a bill settled at eleven is
+// gone from the three o'clock message. That is also why it is worth sending at
+// all — a morning list is read before the day starts and forgotten by the
+// afternoon, and the shorter the second one is, the more it is worth reading.
+//
+// Everything the digest run does beyond this is deliberately absent. No model
+// rewrites it (see billListMessages), no analysis is assembled and no snapshot
+// is written: the afternoon has nothing new to say about the month, and a
+// second snapshot a day would only overwrite the morning's with the same
+// figures.
+func (n *Notifier) remindOpenBills(
+	ctx context.Context,
+	res Result,
+	runLog *slog.Logger,
+	candidates []domain.NotificationPrefs,
+	dueBills []notifications.Bill,
+	bills notifications.BillStatus,
+	nowInstant time.Time,
+	dedupeKey string,
+) (Result, error) {
+	// A day with no outflows at all needs no afternoon message: the morning
+	// digest already said the day was clear, and "nothing is open" about a day
+	// that never had anything is a message whose only content is that it exists.
+	// Checked once, before any per-user work, because the ledger is shared.
+	if len(dueBills) == 0 && bills.SettledTodayCount == 0 {
+		runLog.Info("notifier run finished with nothing to remind",
+			"reason", "no_outflows_today", "prefs", res.Prefs, "evaluated", 0)
+		return res, nil
+	}
+
+	var errs []error
+	for _, prefs := range candidates {
+		res.Evaluated++
+		log := runLog.With("user", prefs.UserID, "phone", maskPhone(prefs.Phone))
+
+		// Same opt-in as the list that follows the digest: this is the detail
+		// behind the due-today alert, in the afternoon instead of the morning.
+		if !prefs.NotifyDueToday {
+			res.SkippedNothingToSend++
+			log.Info("notifier bill reminder not sent",
+				"reason", "due_today_alerts_off",
+				"detail", "this recipient does not hear about bills due today")
+			continue
+		}
+
+		expiry, err := n.sessions.ActiveUntil(ctx, prefs.Phone)
+		if err != nil {
+			res.Errors++
+			err = fmt.Errorf("user %s: session check: %w", prefs.UserID, err)
+			log.Error("notifier bill reminder failed", "error", err)
+			errs = append(errs, err)
+			continue
+		}
+		if expiry.IsZero() || !expiry.After(nowInstant) {
+			res.OutsideWindow++
+			log.Info("notifier bill reminder not sent", "reason", "outside_whatsapp_window")
+			continue
+		}
+
+		already, err := n.store.NotificationSent(ctx, prefs.UserID, dedupeKey)
+		if err != nil {
+			res.Errors++
+			err = fmt.Errorf("user %s: check log: %w", prefs.UserID, err)
+			log.Error("notifier bill reminder failed", "error", err)
+			errs = append(errs, err)
+			continue
+		}
+		if already {
+			res.SkippedAlreadySent++
+			log.Info("notifier bill reminder not sent", "reason", "already_sent_today")
+			continue
+		}
+
+		var parts []string
+		if len(dueBills) > 0 {
+			parts = billListMessages(dueBills, openBillsTitle)
+		} else {
+			// Everything the day owed is paid. That is the answer to the same
+			// question the list answers, and the reason this run does not just go
+			// quiet: silence here would be indistinguishable from a reminder that
+			// failed to send.
+			parts = []string{settledMessage(bills.SettledTodayCount)}
+		}
+
+		failed := false
+		for i, part := range parts {
+			if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, part); err != nil {
+				err = fmt.Errorf("user %s: send bill reminder (%d/%d): %w", prefs.UserID, i+1, len(parts), err)
+				res.Errors++
+				log.Error("notifier bill reminder failed", "error", err)
+				errs = append(errs, err)
+				failed = true
+				break
+			}
+			res.BillListsSent++
+		}
+		if failed {
+			// Nothing recorded, so the scheduler's retry — or tomorrow — can try
+			// again. There is no half-sent state worth protecting here: the
+			// reminder is one list, and a resend of it is harmless.
+			continue
+		}
+		log.Info("notifier bill reminder sent", "bills", len(dueBills), "messages", len(parts))
+
+		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, dedupeKey, n.now()); err != nil {
+			res.Errors++
+			err = fmt.Errorf("user %s: record log: %w", prefs.UserID, err)
+			log.Error("notifier bill reminder failed", "error", err)
+			errs = append(errs, err)
+		}
+	}
+
+	if res.BillListsSent == 0 {
+		runLog.Warn("notifier run finished without sending anything", res.LogAttrs()...)
+	} else {
+		runLog.Info("notifier run finished", res.LogAttrs()...)
+	}
+	return res, errors.Join(errs...)
+}
+
+// settledMessage is the afternoon's other outcome: the day had bills and they
+// are all paid. It names how many so the reader can tell it apart from a day
+// that never had any — the case this run stays quiet about.
+func settledMessage(settled int) string {
+	if settled == 1 {
+		return "✅ *Saídas de hoje* — tudo baixado: a única conta que vencia hoje já foi paga."
+	}
+	return fmt.Sprintf(
+		"✅ *Saídas de hoje* — tudo baixado: as %d contas que venciam hoje já foram pagas.", settled)
+}
+
 // maxWhatsAppText is the budget one outgoing message gets. Meta's limit for a
 // text body is 4096 characters and it rejects the whole message past it, so the
 // margin here is for the header a continuation carries and for a multi-byte
@@ -516,7 +704,7 @@ const maxWhatsAppText = 3800
 //
 // Returns nil when nothing is due, which is not a case worth a message: the
 // digest already says the day is clear.
-func billListMessages(bills []notifications.Bill) []string {
+func billListMessages(bills []notifications.Bill, title string) []string {
 	if len(bills) == 0 {
 		return nil
 	}
@@ -528,12 +716,12 @@ func billListMessages(bills []notifications.Bill) []string {
 		lines = append(lines, "• "+b.Text)
 	}
 
-	header := fmt.Sprintf("💸 *Saídas previstas para hoje* (%d) — total R$ %s",
-		len(bills), notifications.FormatBRL(total))
+	header := fmt.Sprintf("💸 *%s* (%d) — total R$ %s",
+		title, len(bills), notifications.FormatBRL(total))
 	// Every chunk is measured against the same budget, so the reserve is the
 	// longest header any of them could carry — which is the first one on a day
 	// with a big total, and the continuation on a day with a small one.
-	reserve := max(len(header), len(continuationHeader(999, 999))) + len("\n\n")
+	reserve := max(len(header), len(continuationHeader(title, 999, 999))) + len("\n\n")
 	chunks := chunkLines(lines, maxWhatsAppText-reserve)
 	if len(chunks) == 1 {
 		return []string{header + "\n\n" + strings.Join(chunks[0], "\n")}
@@ -543,16 +731,25 @@ func billListMessages(bills []notifications.Bill) []string {
 	for i, chunk := range chunks {
 		head := header
 		if i > 0 {
-			head = continuationHeader(i+1, len(chunks))
+			head = continuationHeader(title, i+1, len(chunks))
 		}
 		messages = append(messages, head+"\n\n"+strings.Join(chunk, "\n"))
 	}
 	return messages
 }
 
-func continuationHeader(part, of int) string {
-	return fmt.Sprintf("💸 *Saídas previstas para hoje* — continuação (%d/%d)", part, of)
+func continuationHeader(title string, part, of int) string {
+	return fmt.Sprintf("💸 *%s* — continuação (%d/%d)", title, part, of)
 }
+
+// The two titles the list ships under. They differ because the messages answer
+// different questions: the morning one is the day's plan, the afternoon one is
+// what is left of it — and a reader who paid three bills after lunch has to be
+// able to tell why the second list is shorter without counting.
+const (
+	dueTodayTitle  = "Saídas previstas para hoje"
+	openBillsTitle = "Saídas de hoje ainda em aberto"
+)
 
 // chunkLines groups lines into runs that fit the budget, counting the newline
 // each one costs. A single line longer than the budget gets a chunk of its own
