@@ -88,6 +88,34 @@ três razões:
    para encurtar, e uma mensagem rejeitada é um erro mais honesto que um
    pagamento com metade do nome.
 
+**E ela sai duas vezes por dia.** Uma lista lida às sete da manhã está esquecida
+às três da tarde, e as contas do dia não vencem de manhã — vencem no dia. Então
+há uma segunda execução, pouco depois das 15h, que manda **o que ainda está em
+aberto**: a lista é remontada do ledger, então uma conta paga às onze não
+aparece na de três. É lembrete, não repetição, e quanto mais curta a segunda,
+mais ela vale a leitura.
+
+Três consequências dessa segunda execução:
+
+- **Qual execução é ela vem no evento, não no relógio.** O `input` do
+  agendamento diz `{"run": "saidas_tarde"}`; o Lambda não deduz nada de
+  `time.Now()`. A janela flexível do EventBridge e as retentativas movem a hora
+  em que uma execução realmente cai, e um resumo matinal disparado às 15h30
+  seria pior que nenhum. Um `run` vazio é o resumo (agendamento antigo continua
+  funcionando); um `run` desconhecido é erro, não default.
+- **Ela tem chave de dedupe própria** (`…#saidas-tarde`). A do resumo silenciaria
+  o lembrete, que é a mensagem que ela existe para não silenciar.
+- **Ela não recalcula nada.** Sem análise, sem `MultiMonthlySummary`, sem
+  snapshot: a tarde não tem nada de novo a dizer sobre o mês, e um segundo
+  snapshot por dia só sobrescreveria o da manhã com os mesmos números.
+
+Quando o dia tinha contas e **todas foram pagas**, a tarde manda uma linha
+dizendo isso, em vez de silêncio — pelo mesmo motivo do resumo diário: um
+lembrete que não chegou e um lembrete desnecessário são indistinguíveis do lado
+de fora. Quando o dia **não tinha conta nenhuma**, não sai nada: o resumo da
+manhã já disse que o dia estava limpo, e a execução para antes de qualquer
+leitura por usuário (o ledger é compartilhado, a resposta é a mesma para todos).
+
 A lista segue o mesmo opt-in do alerta que ela detalha (`NotifyDueToday`) — não
 é uma porta dos fundos para reportar um tipo que a pessoa desligou. E o prompt
 avisa o modelo de que ela vem, só quando vem, para que o digest fique no total
@@ -98,18 +126,24 @@ registrado, mas não desfaz o digest nem faz a execução de amanhã repeti-lo.
 **Sobra um silêncio, e só um:** quando a análise do mês falha *e* o usuário não
 assina nenhum tipo de conta, não há nada verificado para dizer. A mensagem
 seria um "resumo do dia" que, pela própria existência, afirma que alguém olhou.
-Esse caso tem contador próprio (`SkippedNothingVerified`) e linha de log
+Esse caso tem contador próprio (`SkippedNothingToSend`) e linha de log
 própria, pela mesma razão que os outros têm: um dia sem mensagem precisa ser
 diagnosticável só pelos logs.
 
 ## Consequências
 
-- Duas mensagens por usuário por dia continuam impossíveis (o dedupe por dia
-  não mudou), mas o número de mensagens enviadas sobe para ~1/dia/usuário. Com
-  2 usuários e a janela de 20h, o custo segue irrelevante.
+- O volume sobe para ~2–3 mensagens por usuário por dia (resumo, lista da manhã,
+  lembrete da tarde), cada uma com dedupe próprio. Com 2 usuários e a janela de
+  20h, o custo segue irrelevante — e nenhuma delas pode sair duas vezes.
+- O Lambda do notifier passa a ser invocado por dois agendamentos
+  (`notifier-daily` e `notifier-open-bills`). O horário da tarde é a variável
+  `notifier_open_bills_schedule` (padrão `cron(10 15 * * ? *)`, no fuso de
+  `app_timezone`), com janela flexível de 10 minutos em vez dos 30 da manhã —
+  meia hora de folga empurraria "pouco depois das 15h" para perto das 16h.
 - O `SkippedNoAlerts` saiu do `Result`. Quem grepava `skipped_no_alerts` no
-  CloudWatch passa a grepar `skipped_nothing_verified`, que quer dizer outra
-  coisa — bem mais rara.
+  CloudWatch passa a grepar `skipped_nothing_to_send`, que quer dizer outra
+  coisa — bem mais rara. E toda linha de log carrega `run` (`digest` ou
+  `saidas_tarde`): duas execuções por dia sem isso viram um log ambíguo.
 - O prompt do digest cresceu com o JSON (~1,5 KB por execução, uma vez por
   dia). Irrelevante contra o cap de custo, e é o mesmo dado que o bot já manda
   a cada pergunta aberta.

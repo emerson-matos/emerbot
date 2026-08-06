@@ -28,10 +28,16 @@ type fakeWA struct {
 func (f *fakeWA) digests() []sentMsg   { return f.byKind(false) }
 func (f *fakeWA) billLists() []sentMsg { return f.byKind(true) }
 
+// isBillList matches both shapes the outflow message takes: the list itself and
+// the afternoon's "everything is paid" confirmation.
+func isBillList(body string) bool {
+	return strings.HasPrefix(body, "💸") || strings.HasPrefix(body, "✅ *Saídas")
+}
+
 func (f *fakeWA) byKind(lists bool) []sentMsg {
 	var out []sentMsg
 	for _, m := range f.sent {
-		if strings.HasPrefix(m.body, "💸") == lists {
+		if isBillList(m.body) == lists {
 			out = append(out, m)
 		}
 	}
@@ -146,7 +152,7 @@ func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +174,7 @@ func TestRunSkipsOutsideCustomerServiceWindow(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +196,7 @@ func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +213,7 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 	seedUser(t, s, inWindow,
 		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true})
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +249,7 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := newNotifier(s, wa).Run(ctx)
+	res, err := newNotifier(s, wa).Run(ctx, RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +266,8 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	if res.SkippedAlreadySent != 1 {
 		t.Errorf("SkippedAlreadySent = %d, want 1 (the user already notified today)", res.SkippedAlreadySent)
 	}
-	if res.SkippedNothingVerified != 0 {
-		t.Errorf("SkippedNothingVerified = %d, want 0 — the analysis assembled fine", res.SkippedNothingVerified)
+	if res.SkippedNothingToSend != 0 {
+		t.Errorf("SkippedNothingToSend = %d, want 0 — the analysis assembled fine", res.SkippedNothingToSend)
 	}
 	if res.Sent != 0 || len(wa.sent) != 0 {
 		t.Errorf("nothing should have been sent, res=%+v sent=%d", res, len(wa.sent))
@@ -294,15 +300,15 @@ func TestRunStaysSilentWhenNothingWasActuallyChecked(t *testing.T) {
 	n := New(brokenForecast{s.fin}, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return runDay })
 
-	res, err := n.Run(context.Background())
+	res, err := n.Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.sent) != 0 || res.Sent != 0 {
 		t.Fatalf("nothing was verified, so nothing may be claimed: res=%+v sent=%v", res, wa.sent)
 	}
-	if res.SkippedNothingVerified != 1 {
-		t.Fatalf("SkippedNothingVerified = %d, want 1", res.SkippedNothingVerified)
+	if res.SkippedNothingToSend != 1 {
+		t.Fatalf("SkippedNothingToSend = %d, want 1", res.SkippedNothingToSend)
 	}
 }
 
@@ -316,10 +322,10 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	)
 	n := newNotifier(s, wa)
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
-	res, err := n.Run(context.Background()) // second run, same day
+	res, err := n.Run(context.Background(), RunDigest) // second run, same day
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +334,7 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	}
 	// Specifically the dedupe counter: a run that skipped for any other reason
 	// would mean the resend guard is not what stopped it.
-	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNothingVerified != 0 {
+	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNothingToSend != 0 {
 		t.Fatalf("second run res=%+v, want SkippedAlreadySent=1", res)
 	}
 }
@@ -346,7 +352,7 @@ func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 		domain.FinancialEntry{UserID: shared.FinanceLedgerID, EntryID: domain.EntryID("e1"), TransactionDate: domain.NewCalendarDate(runDay), Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(runDay), DueDate: ptrCD(runDay), Source: domain.SourceManual},
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,8 +365,8 @@ func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 			t.Errorf("calm digest does not say %q:\n%s", want, body)
 		}
 	}
-	if res.SkippedNothingVerified != 0 {
-		t.Errorf("SkippedNothingVerified = %d, want 0", res.SkippedNothingVerified)
+	if res.SkippedNothingToSend != 0 {
+		t.Errorf("SkippedNothingToSend = %d, want 0", res.SkippedNothingToSend)
 	}
 }
 
@@ -380,7 +386,7 @@ func TestCalmLineClaimsOnlyWhatTheUserSubscribedTo(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
+	if _, err := newNotifier(s, wa).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -432,7 +438,7 @@ func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
 
 	// The digest goes out every day, so the assertion is about what it says: the
 	// "meta atingida" line must not be in it.
-	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
+	if _, err := newNotifier(s, wa).Run(ctx, RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -458,7 +464,7 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +509,7 @@ func TestBillListShipsAsItsOwnMessage(t *testing.T) {
 		pendingExpense("e3", "Água", "", 1500),
 	)
 
-	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +577,7 @@ func TestBillListSplitsRatherThanTruncates(t *testing.T) {
 	}
 	seedUser(t, s, inWindow, prefs, entries...)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +623,7 @@ func TestBillListRespectsTheDueTodayOptOut(t *testing.T) {
 		pendingExpense("e1", "Distribuidora", "", 285000),
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +647,7 @@ func TestDigestPromptOnlyAnnouncesAListThatIsComing(t *testing.T) {
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
 	)
 
-	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(gen.gotSystem, "mensagem seguinte") {
@@ -660,7 +666,7 @@ func TestNoBillListOnAQuietDay(t *testing.T) {
 		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
 	)
 
-	res, err := newNotifier(s, wa).Run(context.Background())
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +690,7 @@ func TestDigestSurvivesAFailedBillList(t *testing.T) {
 	n := New(s.fin, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return runDay })
 
-	res, err := n.Run(context.Background())
+	res, err := n.Run(context.Background(), RunDigest)
 	if err == nil {
 		t.Fatal("a failed list send must be reported as an error")
 	}
@@ -711,6 +717,234 @@ func (f *failAfterFirst) SendText(ctx context.Context, phoneNumberID, to, body s
 	return f.fakeWA.SendText(ctx, phoneNumberID, to, body)
 }
 
+// paidExpense is a bill that fell due today and has already been settled.
+func paidExpense(id, desc string, amount int64) domain.FinancialEntry {
+	e := pendingExpense(id, desc, "", amount)
+	e.PaymentStatus = domain.PaymentStatusPaid
+	e.PaymentDate = ptrCD(runDay)
+	return e
+}
+
+// TestAfternoonRunSendsOnlyWhatIsStillOpen is the point of the second run: it
+// is a reminder, not a repeat. The bill paid at eleven is gone from the three
+// o'clock message, and the digest is not sent a second time.
+func TestAfternoonRunSendsOnlyWhatIsStillOpen(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "não deveria ser chamado"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Folha de pagamento", "", 900000),
+		paidExpense("e2", "Distribuidora Santa Cruz", 285000),
+	)
+
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.digests()) != 0 || res.Sent != 0 {
+		t.Fatalf("the afternoon run must not send a second digest: %v", wa.digests())
+	}
+	if len(wa.billLists()) != 1 || res.BillListsSent != 1 {
+		t.Fatalf("want 1 reminder, got %d (res=%+v)", len(wa.billLists()), res)
+	}
+
+	body := wa.billLists()[0].body
+	if !strings.Contains(body, "ainda em aberto") {
+		t.Errorf("the reminder does not say it is what is left of the day:\n%s", body)
+	}
+	if !strings.Contains(body, "R$ 9.000,00 — Folha de pagamento") {
+		t.Errorf("the reminder lost the bill that is still open:\n%s", body)
+	}
+	if strings.Contains(body, "Distribuidora") {
+		t.Errorf("a bill paid during the morning is still being asked for:\n%s", body)
+	}
+	// The total is the open one, not the day's original.
+	if !strings.Contains(body, "total R$ 9.000,00") {
+		t.Errorf("the reminder totals bills that are already paid:\n%s", body)
+	}
+	if gen.gotMessage != "" {
+		t.Errorf("the reminder was handed to the model: %q", gen.gotMessage)
+	}
+}
+
+// TestAfternoonRunConfirmsWhenEverythingIsPaid: a day whose bills were all
+// settled gets the confirmation instead of the list. Silence here would be
+// indistinguishable from a reminder that failed to send.
+func TestAfternoonRunConfirmsWhenEverythingIsPaid(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		paidExpense("e1", "Folha de pagamento", 900000),
+		paidExpense("e2", "Energia", 13500),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 {
+		t.Fatalf("want the confirmation alone, got %d messages", len(wa.sent))
+	}
+	if body := wa.sent[0].body; !strings.Contains(body, "as 2 contas que venciam hoje já foram pagas") {
+		t.Errorf("confirmation does not name what was settled:\n%s", body)
+	}
+	if res.BillListsSent != 1 {
+		t.Errorf("BillListsSent = %d, want 1", res.BillListsSent)
+	}
+}
+
+// TestAfternoonRunStaysQuietWithoutOutflows: a day that never had a bill needs
+// no afternoon message — the morning digest already said the day was clear, and
+// this run has nothing to add to it.
+func TestAfternoonRunStaysQuietWithoutOutflows(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 || res.BillListsSent != 0 {
+		t.Fatalf("nothing was due today, so nothing to remind: %v", wa.sent)
+	}
+	// Not even the session or delivery-log reads: the ledger is shared, so the
+	// answer is the same for everyone and is settled once.
+	if res.Evaluated != 0 {
+		t.Errorf("Evaluated = %d, want 0 — the run stops before the per-user work", res.Evaluated)
+	}
+}
+
+// TestAfternoonRunDedupesApartFromTheDigest: the two runs share a day but not a
+// delivery-log key, or the morning would silence the afternoon.
+func TestAfternoonRunDedupesApartFromTheDigest(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Folha de pagamento", "", 900000),
+	)
+	n := newNotifier(s, wa)
+
+	if _, err := n.Run(context.Background(), RunDigest); err != nil {
+		t.Fatal(err)
+	}
+	morning := len(wa.sent)
+
+	res, err := n.Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SkippedAlreadySent != 0 {
+		t.Fatalf("the morning digest deduped the afternoon reminder: %+v", res)
+	}
+	if len(wa.sent) != morning+1 {
+		t.Fatalf("want the reminder on top of the morning's %d messages, got %d", morning, len(wa.sent))
+	}
+
+	// And the afternoon run does dedupe against itself — a scheduler retry must
+	// not send the same list twice.
+	again, err := n.Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.SkippedAlreadySent != 1 || len(wa.sent) != morning+1 {
+		t.Fatalf("a repeated afternoon run resent the list: res=%+v, messages=%d", again, len(wa.sent))
+	}
+}
+
+// TestAfternoonRunWritesNoSnapshot: the analysis is the morning's business. The
+// afternoon has nothing new to say about the month and must not spend a write
+// (or a read) saying it again.
+func TestAfternoonRunWritesNoSnapshot(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Folha de pagamento", "", 900000),
+	)
+
+	if _, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.fin.GetInsightSnapshot(context.Background(), shared.FinanceLedgerID, runDay.Format("2006-01-02")); err == nil {
+		t.Error("the afternoon run wrote an analysis snapshot")
+	}
+}
+
+func TestAfternoonRunRespectsTheDueTodayOptOut(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
+		pendingExpense("e1", "Folha de pagamento", "", 900000),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 || res.SkippedNothingToSend != 1 {
+		t.Fatalf("reminder sent to someone who opted out: %v (res=%+v)", wa.sent, res)
+	}
+}
+
+func TestAfternoonRunHonoursTheWhatsAppWindow(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, outWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Folha de pagamento", "", 900000),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 0 || res.OutsideWindow != 1 {
+		t.Fatalf("res=%+v sent=%v, want the 20h window to hold for the reminder too", res, wa.sent)
+	}
+}
+
+// TestParseRunKind: an empty run is the digest, so a schedule with no input
+// keeps working; an unknown one fails loudly rather than picking a default that
+// would put the wrong message in front of a real person.
+func TestParseRunKind(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    RunKind
+		wantErr bool
+	}{
+		{in: "", want: RunDigest},
+		{in: "digest", want: RunDigest},
+		{in: "saidas_tarde", want: RunOpenBills},
+		{in: "manhã", wantErr: true},
+		{in: "DIGEST", wantErr: true},
+	} {
+		got, err := ParseRunKind(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("ParseRunKind(%q) = %q, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("ParseRunKind(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+}
+
 // TestDigestFeedsTheModelTheWholeInsightsJSON is issue #35's other half: the
 // model used to receive a handful of rendered lines, so nothing the analysis
 // knew but did not print could ever reach the reader. It now writes from the
@@ -729,7 +963,7 @@ func TestDigestFeedsTheModelTheWholeInsightsJSON(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -778,7 +1012,7 @@ func TestDigestWithoutAModelShipsTheDraftAndNotTheJSON(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	if _, err := newNotifierWithGen(s, wa, echoGen{}).Run(context.Background()); err != nil {
+	if _, err := newNotifierWithGen(s, wa, echoGen{}).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -805,7 +1039,7 @@ func TestRunFallsBackToStaticDigestOnGeneratorError(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,7 +1067,7 @@ func TestDigestReplacesInventedLinkPlaceholderWithRealURL(t *testing.T) {
 		dueExpense("Fornecedor", 10000),
 	)
 
-	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -875,7 +1109,7 @@ func TestDigestOmitsCallToActionWhenNoDashboardURL(t *testing.T) {
 	n := New(s.fin, s.sessions, wa, "PHONE_ID", "", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return runDay })
 
-	if _, err := n.Run(context.Background()); err != nil {
+	if _, err := n.Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -898,7 +1132,7 @@ func TestStaticDigestCarriesLinkExactlyOnce(t *testing.T) {
 		dueExpense("Fornecedor", 10000),
 	)
 
-	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(wa.digests()[0].body, "/analise"); n != 1 {
@@ -931,7 +1165,7 @@ func TestRunNotifiesMultipleCognitoUsersFromSharedLedger(t *testing.T) {
 	seedUser(t, s, inWindow,
 		domain.NotificationPrefs{UserID: "u2", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true})
 
-	res, err := newNotifier(s, wa).Run(ctx)
+	res, err := newNotifier(s, wa).Run(ctx, RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,7 +1199,7 @@ func TestRunDedupeIsPerRecipientNotPerLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := newNotifier(s, wa).Run(ctx)
+	res, err := newNotifier(s, wa).Run(ctx, RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -999,7 +1233,7 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
+	if _, err := newNotifier(s, wa).Run(ctx, RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -1040,7 +1274,7 @@ func TestDigestStillSendsWhenTheAnalysisIsEmpty(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
+	if _, err := newNotifier(s, wa).Run(context.Background(), RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {
@@ -1060,7 +1294,7 @@ func TestRunPersistsInsightSnapshot(t *testing.T) {
 		dueExpense("Fornecedor", 285000),
 	)
 
-	_, err := newNotifier(s, wa).Run(context.Background())
+	_, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1130,7 +1364,7 @@ func TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead(t *testing.T) {
 
 	n := New(s.fin, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
 	n.SetClock(func() time.Time { return firstOfMonth.Add(9 * time.Hour) })
-	if _, err := n.Run(ctx); err != nil {
+	if _, err := n.Run(ctx, RunDigest); err != nil {
 		t.Fatal(err)
 	}
 	if len(wa.digests()) != 1 {

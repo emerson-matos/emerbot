@@ -77,7 +77,16 @@ variable "whatsapp_phone_number_id" {
 variable "notifier_schedule" {
   type        = string
   default     = "cron(0 9 * * ? *)"
-  description = "Horário do notifier (cron). O fuso horário é app_timezone."
+  description = "Horário do resumo diário do notifier (cron). O fuso horário é app_timezone."
+}
+
+variable "notifier_open_bills_schedule" {
+  type    = string
+  default = "cron(10 15 * * ? *)"
+  # Pouco depois das 15h: tarde o bastante para que o que ia ser pago de manhã
+  # já tenha sido baixado, cedo o bastante para dar tempo de resolver o que
+  # sobrou antes do fim do expediente bancário.
+  description = "Horário do lembrete das saídas ainda em aberto (cron). O fuso horário é app_timezone."
 }
 
 variable "app_timezone" {

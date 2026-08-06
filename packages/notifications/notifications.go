@@ -47,6 +47,13 @@ type BillStatus struct {
 	DueToday      int64
 	OverdueCount  int
 	OverdueTotal  int64
+	// SettledTodayCount is how many of the day's bills have already been paid.
+	// It is what tells "nothing was due today" from "everything due today is
+	// done" — two situations that leave DueTodayCount at zero and mean opposite
+	// things to the afternoon reminder (see apps/notifier): the first is a day
+	// with no outflows, the second is a day whose outflows were dealt with, and
+	// only the second is worth a message.
+	SettledTodayCount int
 }
 
 // Quiet reports a day with no bill asking for anything: nothing falling due and
@@ -66,6 +73,12 @@ func Bills(entries []domain.FinancialEntry, today time.Time) BillStatus {
 	}
 	for _, e := range overdue {
 		status.OverdueTotal += e.Amount
+	}
+	for _, e := range entries {
+		if e.Type == domain.EntryTypeExpense && e.PaymentStatus == domain.PaymentStatusPaid &&
+			sameDay(effectiveDate(e), today) {
+			status.SettledTodayCount++
+		}
 	}
 	return status
 }

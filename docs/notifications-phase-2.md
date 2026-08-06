@@ -12,11 +12,11 @@ follow-up opcional (expor o log de entrega como histórico real na UI).
 | Telefone | Vem do atributo `phone_number` do usuário no Cognito (claim do JWT), nunca digitado no formulário — `apps/dashboard-api/internal/finance/notifications.go` normaliza para dígitos E.164 ao salvar/ler. |
 | API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go`. |
 | Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
-| Job agendado | `apps/notifier` (Lambda) — avalia cada usuário e envia **um resumo diário** por WhatsApp, deduplicado por dia (log `SK=NOTIFLOG#<data>`). |
+| Job agendado | `apps/notifier` (Lambda), **dois agendamentos por dia** — de manhã o **resumo diário** (que sai todo dia, mesmo tranquilo) mais a lista das saídas do dia; pouco depois das 15h, só as saídas **ainda em aberto**. Qual execução é vem no `input` do EventBridge (`{"run": …}` → `notifier.ParseRunKind`), nunca do relógio. Cada uma deduplica por dia com chave própria (log `SK=NOTIFLOG#<data>` e `…#saidas-tarde`). Ver ADR-023. |
 | Janela de 24h | `packages/wasession` — tabela DynamoDB própria (`whatsapp-sessions`, on-demand, **TTL de 20h**). O webhook grava uma sessão por telefone a cada inbound; o notifier só envia se a sessão estiver ativa. |
 | Envio | `whatsapp.Client.SendText` (mensagem proativa, sem `context` de resposta). |
 | Frontend | form real em `apps/web/src/pages/Notificacoes.tsx` (`useNotificationPrefs` / `useSaveNotificationPrefsMutation`). |
-| Infra | notifier Lambda + IAM + `aws_cloudwatch_event_rule` (EventBridge) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
+| Infra | notifier Lambda + IAM + dois `aws_scheduler_schedule` (EventBridge Scheduler: `notifier-daily` e `notifier-open-bills`, horários em `notifier_schedule` / `notifier_open_bills_schedule`) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
 
 ### Janela de atendimento de 24h (evita cobrança)
 
