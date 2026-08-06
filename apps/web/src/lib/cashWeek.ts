@@ -13,6 +13,23 @@ import type { DayCash } from "@/api/types";
 export const CASH_WEEK_BACK = 1;
 export const CASH_WEEK_AHEAD = 5;
 
+/**
+ * How far ahead the card looks on a phone: one day, for three columns —
+ * ontem, hoje, amanhã.
+ *
+ * Seven columns in 320 points of chart is seven pairs of bars about eight
+ * points wide, under labels that have to alternate to fit, over a tooltip that
+ * covers the whole card the moment you touch it. The window is not information
+ * if it cannot be read.
+ *
+ * Three is not an arbitrary trim: it is the same three days the rest of the
+ * page is built around — the anchor that has closed, the day being traded, and
+ * the one you can still do something about. Whether the *month* runs dry is a
+ * different question, and "Posição de caixa" right below answers it for the
+ * whole month, so nothing is hidden by narrowing this.
+ */
+export const CASH_WEEK_AHEAD_NARROW = 1;
+
 export interface CashWeekDay extends DayCash {
   /** Everything landing that day: what is booked plus what the weekday brings. */
   totalIn: number;
@@ -130,16 +147,26 @@ const WEEKDAY_FULL = [
  * are the words a reader sees: a key of "in" would have to be translated
  * somewhere else and then kept in step.
  *
- * The two days a reader locates themselves by are named rather than numbered —
- * "Ontem" and "Hoje" beside five weekdays is a week you can read without
- * counting.
+ * The three days a reader locates themselves by are named rather than numbered —
+ * "Ontem", "Hoje" and "Amanhã" beside the remaining weekdays is a week you can
+ * read without counting. Tomorrow earns its name twice over on a phone, where
+ * the window is exactly those three days (CASH_WEEK_AHEAD_NARROW): a card whose
+ * whole subject is ontem/hoje/amanhã must not label a third of itself "Qui".
  */
 export function cashWeekSeries(days: CashWeekDay[]): CashWeekBar[] {
-  return days.map((day) => {
+  const todayIndex = days.findIndex((d) => d.isToday);
+  return days.map((day, i) => {
     const weekday = new Date(`${day.date}T12:00:00`).getDay();
+    const isTomorrow = todayIndex !== -1 && i === todayIndex + 1;
     return {
       date: day.date,
-      label: day.isToday ? "Hoje" : day.isPast ? "Ontem" : WEEKDAY_SHORT[weekday],
+      label: day.isToday
+        ? "Hoje"
+        : day.isPast
+          ? "Ontem"
+          : isTomorrow
+            ? "Amanhã"
+            : WEEKDAY_SHORT[weekday],
       full: `${WEEKDAY_FULL[weekday]}, ${day.date.slice(8)}/${day.date.slice(5, 7)}`,
       isToday: day.isToday,
       isPast: day.isPast,

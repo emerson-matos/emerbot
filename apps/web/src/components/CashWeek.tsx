@@ -7,7 +7,11 @@ import { format, parseISO } from 'date-fns'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
 import { brlAxisTick, chartColor, tooltipProps } from '@/lib/chart'
-import { cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative } from '@/lib/cashWeek'
+import {
+  CASH_WEEK_AHEAD, CASH_WEEK_AHEAD_NARROW, CASH_WEEK_BACK,
+  cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative,
+} from '@/lib/cashWeek'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { CashPosition } from '@/api/types'
 
 // The week around today, in money moving rather than in balance. The line chart
@@ -60,7 +64,14 @@ export default function CashWeek({ position, today }: {
   position: CashPosition
   today: string
 }) {
-  const days = cashWeekDays(position.forecast, today)
+  // Tailwind's `sm`. Below it the card gets three columns instead of seven —
+  // see CASH_WEEK_AHEAD_NARROW. A media query and not a CSS class because what
+  // changes is the series, not its styling: seven columns squeezed into a phone
+  // are unreadable whatever is done to them.
+  const wide = useMediaQuery('(min-width: 40rem)')
+  const days = cashWeekDays(
+    position.forecast, today, CASH_WEEK_BACK, wide ? CASH_WEEK_AHEAD : CASH_WEEK_AHEAD_NARROW,
+  )
   const { ceiling } = cashWeekPeaks(days)
 
   if (days.length === 0) {

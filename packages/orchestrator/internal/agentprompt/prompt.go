@@ -6,18 +6,47 @@ package agentprompt
 import (
 	"fmt"
 	"time"
+
+	"github.com/emerson/emerbot/packages/shared"
 )
+
+// weekdayNames is the pharmacy's calendar in Portuguese, Sunday first, so the
+// prompt states the day of the week instead of leaving the model to derive it
+// from a date. Every day target in this system is keyed by weekday, and a model
+// that has to work out which one a date is guesses.
+var weekdayNames = [7]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
 
 // Finance is the finance-assistant system prompt, dated with `now` so the model
 // resolves relative dates ("amanhã", "último dia do mês") against the real day.
+//
+// `now` is an instant, and it arrives in UTC: the WhatsApp webhook stamps every
+// message with time.Unix(...).UTC(). It used to be formatted as it came, under a
+// line that told the model the timezone was America/Sao_Paulo. From 21h to
+// midnight in Brazil that date is tomorrow's — so at 23h06 of the 5th the model
+// was told "Hoje é 06/08/2026", asked get_meta_do_dia about the 6th, got a day
+// that had not begun, and reported "o faturamento de hoje é R$ 0,00" at the end
+// of a day that had traded.
+//
+// The tools never had the bug — they read time.Now().In(loc) — which made it
+// worse rather than better: for those three hours the prompt and the tools
+// disagreed about what day it was, and the model believed the prompt. So the
+// date is rendered in the pharmacy's own Location and the timezone line is
+// printed from that same Location, because the two saying different things is
+// the failure itself.
+//
+// The clock time goes in for the same reason: a day with nothing sold at 07h and
+// one with nothing sold at 23h are not the same fact, and only one of them is
+// worth telling someone about.
 func Finance(now time.Time) string {
+	loc := shared.PharmacyLocation()
+	local := now.In(loc)
 	return fmt.Sprintf(
 		`Você é um assistente financeiro de uma farmácia.
 Sua função é ajudar o usuário a gerenciar o fluxo de caixa.
 
 Contexto atual:
-- Hoje é %s
-- Fuso horário: America/Sao_Paulo
+- Hoje é %s, %s, e agora são %s
+- Fuso horário: %s
 
 Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem")
 usando a data acima como referência. Nunca invente datas.
@@ -151,6 +180,9 @@ Regras:
 - Valores em reais (R$).
 - Se a mensagem não for financeira, responda educadamente que você é um
   assistente financeiro e pode ajudar com o fluxo de caixa.`,
-		now.Format("02/01/2006"),
+		weekdayNames[int(local.Weekday())],
+		local.Format("02/01/2006"),
+		local.Format("15:04"),
+		loc,
 	)
 }
