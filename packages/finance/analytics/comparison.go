@@ -119,6 +119,29 @@ func totalsThroughDay(entries []domain.FinancialEntry, throughDay int) monthTota
 	return totals
 }
 
+// entriesThrough keeps the entries falling on or before throughDay of their
+// month, so a retrospective breakdown cannot describe a day that has not
+// arrived. It is the slice form of totalsThroughDay, for the builders that need
+// the entries rather than their sum.
+//
+// The date to read is the caller's, because the two bases genuinely differ and
+// picking one for both is how a figure ends up on the wrong day: money is dated
+// by the day it moves (effective), a sale by the day it was made (transaction)
+// — the same split totalsThroughDay and revenueThroughDay already stand on.
+func entriesThrough(entries []domain.FinancialEntry, throughDay int, day func(domain.FinancialEntry) int) []domain.FinancialEntry {
+	out := make([]domain.FinancialEntry, 0, len(entries))
+	for _, e := range entries {
+		if day(e) <= throughDay {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func effectiveDay(e domain.FinancialEntry) int { return pkgfinance.EffectiveDate(e).Day() }
+
+func transactionDay(e domain.FinancialEntry) int { return e.TransactionDate.Day() }
+
 // revenueThroughDay sums faturamento up to throughDay, bucketed by the day of
 // the sale — the only date a sale can honestly be attributed to. entries must
 // have been read on the transaction basis.

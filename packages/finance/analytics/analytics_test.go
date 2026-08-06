@@ -341,11 +341,16 @@ func TestCategoryLabelFallsBackToTitleCase(t *testing.T) {
 }
 
 func TestGoalProgress(t *testing.T) {
-	// 10 July; July has 31 days.
-	sum := pkgfinance.MonthlySummary{TotalRevenue: 40000, TotalExpectedIn: 50000, TotalExpense: 30000}
+	// 10 July; July has 31 days. The actuals are passed in — the faturamento
+	// and the despesa the KPI row reports, so the goal card cannot quote a
+	// different total for the same month than the row above it does.
+	const (
+		revenue int64 = 40000
+		expense int64 = 30000
+	)
 
 	t.Run("without a goal", func(t *testing.T) {
-		got := goalProgress(sum, nil, clock(t, "2026-07", "2026-07-10"), 40000)
+		got := goalProgress(nil, clock(t, "2026-07", "2026-07-10"), revenue, expense)
 		if got.RevenueTarget != 0 || got.RevenuePct != 0 {
 			t.Errorf("targets = %+v, want zeroes with no goal set", got)
 		}
@@ -361,7 +366,7 @@ func TestGoalProgress(t *testing.T) {
 
 	t.Run("percentages cap at 100", func(t *testing.T) {
 		goal := &domain.Goal{RevenueTarget: 20000, ExpenseTarget: 60000}
-		got := goalProgress(sum, goal, clock(t, "2026-07", "2026-07-10"), 40000)
+		got := goalProgress(goal, clock(t, "2026-07", "2026-07-10"), revenue, expense)
 		if got.RevenuePct != 100 {
 			t.Errorf("IncomePct = %d, want it capped at 100", got.RevenuePct)
 		}
@@ -3529,5 +3534,121 @@ func TestWeekdayStatsWeightedExpensesExcluded(t *testing.T) {
 	monday := stats[1]
 	if monday.Avg != 10000 {
 		t.Errorf("Avg = %d, want 10000 (expense must not count)", monday.Avg)
+	}
+}
+
+// A month in progress carries bills booked for days that have not arrived, and
+// every retrospective figure has to stop where KPIs.Despesa stops. They did not:
+// the KPI was re-totalled over the elapsed days while the goal card, the
+// composition, the cash-out days and the highlights all still read the whole
+// month. One tool payload then carried "despesa R$ 300,00" beside a composition
+// totalling R$ 900,00 and a "pior dia" three days in the future — the R$ 600,00
+// of difference being bills nobody had paid. What is booked for later is
+// KPIs.DespesaAgendada, beside the runway that says whether there is money for
+// it (ADR-022), and it belongs in no total of what the month has spent.
+func TestRetrospectiveFiguresStopWhereDespesaStops(t *testing.T) {
+	now := at12(t, "2026-07-15")
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-14", 250000),
+		sale(t, "2026-07-15", 180000), // today: traded, and it counts
+		expense(t, "2026-07-05", "aluguel", 300000),
+		// Booked for days still ahead: a commitment, not a spend.
+		expense(t, "2026-07-20", "fornecedor", 400000),
+		expense(t, "2026-07-28", "energia", 200000),
+	}
+
+	got := Build(Input{
+		Month:          "2026-07",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(430000, 900000)},
+		Goals:          []*domain.Goal{nil, nil, {RevenueTarget: 1000000, ExpenseTarget: 1000000}},
+		Now:            now,
+	})
+
+	if got.KPIs.Despesa != 300000 {
+		t.Fatalf("KPIs.Despesa = %d, want only the 300000 that has left the account", got.KPIs.Despesa)
+	}
+	if got.KPIs.DespesaAgendada != 600000 {
+		t.Errorf("KPIs.DespesaAgendada = %d, want the 600000 still to fall due", got.KPIs.DespesaAgendada)
+	}
+
+	// The ceiling is spent against, not committed against.
+	if got.Goals.ExpenseActual != got.KPIs.Despesa {
+		t.Errorf("Goals.ExpenseActual = %d, want it to agree with KPIs.Despesa (%d)",
+			got.Goals.ExpenseActual, got.KPIs.Despesa)
+	}
+	if got.Goals.ExpensePct != 30 {
+		t.Errorf("Goals.ExpensePct = %d, want 30 — 300000 of a 1000000 ceiling", got.Goals.ExpensePct)
+	}
+
+	// A breakdown decomposes a total, so it covers the total's own days.
+	var composed int64
+	for _, c := range got.ExpenseComposition {
+		composed += c.Amount
+	}
+	if composed != got.KPIs.Despesa {
+		t.Errorf("ExpenseComposition totals %d, want it to decompose KPIs.Despesa (%d)",
+			composed, got.KPIs.Despesa)
+	}
+
+	for _, d := range got.CashOutDays {
+		if d.Date > "2026-07-15" {
+			t.Errorf("CashOutDays names %s — money that has not left the account yet", d.Date)
+		}
+	}
+
+	// The worst day of the month cannot be a day the month has not reached: it
+	// has no sales because it has not happened, not because it went badly.
+	if got.Highlights.WorstIncome.Date > "2026-07-15" {
+		t.Errorf("Highlights.WorstIncome = %+v, want a day that has arrived", got.Highlights.WorstIncome)
+	}
+	if got.Highlights.WorstBalance.Date > "2026-07-15" {
+		t.Errorf("Highlights.WorstBalance = %+v, want a day that has arrived", got.Highlights.WorstBalance)
+	}
+
+	// And the payload the bot reads carries one despesa, not three.
+	payload := got.ToolPayload(SectionCashOutDays, SectionExpensesFull)
+	if payload["despesa"] != reais(got.KPIs.Despesa) {
+		t.Errorf("payload despesa = %v, want %v", payload["despesa"], reais(got.KPIs.Despesa))
+	}
+	meta := payload["meta"].(map[string]any)
+	if meta["despesa_atual"] != payload["despesa"] {
+		t.Errorf("meta.despesa_atual = %v, want the same despesa as the row above (%v)",
+			meta["despesa_atual"], payload["despesa"])
+	}
+}
+
+// A closed month has no days left to exclude, so nothing here narrows it: the
+// filter is "days that have arrived", and in a finished month that is all of
+// them.
+func TestClosedMonthKeepsEveryDay(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-06-02", 100000),
+		expense(t, "2026-06-10", "aluguel", 300000),
+		expense(t, "2026-06-28", "fornecedor", 200000),
+	}
+
+	got := Build(Input{
+		Month:          "2026-06",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(100000, 500000)},
+		Goals:          []*domain.Goal{nil, nil, {ExpenseTarget: 1000000}},
+		Now:            at12(t, "2026-07-15"),
+	})
+
+	if got.KPIs.Despesa != 500000 {
+		t.Errorf("KPIs.Despesa = %d, want the whole closed month (500000)", got.KPIs.Despesa)
+	}
+	if got.Goals.ExpenseActual != 500000 {
+		t.Errorf("Goals.ExpenseActual = %d, want the whole closed month (500000)", got.Goals.ExpenseActual)
+	}
+	var composed int64
+	for _, c := range got.ExpenseComposition {
+		composed += c.Amount
+	}
+	if composed != 500000 {
+		t.Errorf("ExpenseComposition totals %d, want the whole closed month (500000)", composed)
 	}
 }
