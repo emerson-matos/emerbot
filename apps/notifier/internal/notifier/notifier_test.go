@@ -3,6 +3,7 @@ package notifier
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,27 @@ import (
 	"github.com/emerson/emerbot/packages/wasession"
 )
 
+type sentMsg struct{ to, body string }
+
 type fakeWA struct {
-	sent []struct{ to, body string }
+	sent []sentMsg
 	err  error
+}
+
+// digests and billLists split what a run delivered. Every recipient gets one
+// digest and, on a day with outflows, one or more list messages behind it — so
+// a test that means "the digest" has to say which of the two it is counting.
+func (f *fakeWA) digests() []sentMsg   { return f.byKind(false) }
+func (f *fakeWA) billLists() []sentMsg { return f.byKind(true) }
+
+func (f *fakeWA) byKind(lists bool) []sentMsg {
+	var out []sentMsg
+	for _, m := range f.sent {
+		if strings.HasPrefix(m.body, "💸") == lists {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func (f *fakeWA) MarkAsRead(context.Context, string, string) error { return nil }
@@ -28,7 +47,7 @@ func (f *fakeWA) SendText(_ context.Context, _ /*phoneNumberID*/, to, body strin
 	if f.err != nil {
 		return f.err
 	}
-	f.sent = append(f.sent, struct{ to, body string }{to, body})
+	f.sent = append(f.sent, sentMsg{to, body})
 	return nil
 }
 
@@ -131,11 +150,11 @@ func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 1 || len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 1 || len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.digests()))
 	}
-	if wa.sent[0].to != "5511999999999" {
-		t.Fatalf("sent to %q", wa.sent[0].to)
+	if wa.digests()[0].to != "5511999999999" {
+		t.Fatalf("sent to %q", wa.digests()[0].to)
 	}
 }
 
@@ -304,8 +323,8 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("second run should not resend, total sent=%d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("second run should not resend, total sent=%d", len(wa.digests()))
 	}
 	// Specifically the dedupe counter: a run that skipped for any other reason
 	// would mean the resend guard is not what stopped it.
@@ -331,10 +350,10 @@ func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 1 || len(wa.sent) != 1 {
-		t.Fatalf("a quiet day is still a day to report, res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 1 || len(wa.digests()) != 1 {
+		t.Fatalf("a quiet day is still a day to report, res=%+v sent=%d", res, len(wa.digests()))
 	}
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 	for _, want := range []string{"Nada vence hoje e não há contas vencidas"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("calm digest does not say %q:\n%s", want, body)
@@ -364,10 +383,10 @@ func TestCalmLineClaimsOnlyWhatTheUserSubscribedTo(t *testing.T) {
 	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 	if strings.Contains(body, "Nada vence hoje") {
 		t.Errorf("digest claims nothing is due while a bill is due today:\n%s", body)
 	}
@@ -416,11 +435,11 @@ func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
 	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	if strings.Contains(wa.sent[0].body, "Meta de faturamento atingida") {
-		t.Fatalf("neither May's sale nor July's loan may count toward July's faturamento goal:\n%s", wa.sent[0].body)
+	if strings.Contains(wa.digests()[0].body, "Meta de faturamento atingida") {
+		t.Fatalf("neither May's sale nor July's loan may count toward July's faturamento goal:\n%s", wa.digests()[0].body)
 	}
 }
 
@@ -443,11 +462,11 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 1 || len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 1 || len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.digests()))
 	}
-	if !strings.HasPrefix(wa.sent[0].body, gen.reply) {
-		t.Fatalf("digest was not humanized: got %q, want it to start with %q", wa.sent[0].body, gen.reply)
+	if !strings.HasPrefix(wa.digests()[0].body, gen.reply) {
+		t.Fatalf("digest was not humanized: got %q, want it to start with %q", wa.digests()[0].body, gen.reply)
 	}
 	// The generator must receive both the system prompt and a non-empty draft to
 	// rewrite — the fields the old agent-based path dropped.
@@ -457,6 +476,239 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 	if gen.gotMessage == "" {
 		t.Fatal("generator received an empty draft to rewrite")
 	}
+}
+
+// pendingExpense is a bill due today with a description and a supplier of its
+// own, so the list has something to render beyond an amount.
+func pendingExpense(id, desc, supplier string, amount int64) domain.FinancialEntry {
+	e := dueExpense(id, amount)
+	e.Description = desc
+	e.Supplier = supplier
+	return e
+}
+
+// TestBillListShipsAsItsOwnMessage: the digest gives the total, the list gives
+// the items. They are two messages because the digest is rewritten by the model
+// — the one place a line goes missing — and because a long list inside it pushes
+// everything else off the screen.
+func TestBillListShipsAsItsOwnMessage(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "Bom dia! Hoje há pagamentos a fazer. 🙂"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Distribuidora Santa Cruz", "Santa Cruz LTDA", 285000),
+		pendingExpense("e2", "Energia", "", 13500),
+		pendingExpense("e3", "Água", "", 1500),
+	)
+
+	res, err := newNotifierWithGen(s, wa, gen).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 digest, got %d", len(wa.digests()))
+	}
+	lists := wa.billLists()
+	if len(lists) != 1 {
+		t.Fatalf("want the outflows in 1 message of their own, got %d", len(lists))
+	}
+	if res.BillListsSent != 1 {
+		t.Errorf("BillListsSent = %d, want 1", res.BillListsSent)
+	}
+
+	list := lists[0].body
+	// Every bill, in full, biggest first.
+	for _, want := range []string{
+		"R$ 2.850,00 — Distribuidora Santa Cruz (Santa Cruz LTDA)",
+		"R$ 135,00 — Energia",
+		"R$ 15,00 — Água",
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("bill list is missing %q:\n%s", want, list)
+		}
+	}
+	if i, j := strings.Index(list, "2.850,00"), strings.Index(list, "135,00"); i > j {
+		t.Errorf("want the biggest outflow first:\n%s", list)
+	}
+	// The header carries the count and the total, so a list split across
+	// messages still says how much the day owes.
+	if !strings.Contains(list, "(3)") || !strings.Contains(list, "total R$ 3.000,00") {
+		t.Errorf("bill list header lost its count or total:\n%s", list)
+	}
+	// It is the ledger's own copy, not the model's.
+	if strings.Contains(list, gen.reply) {
+		t.Errorf("the bill list was handed to the model:\n%s", list)
+	}
+	// And the digest knows the list is coming, so it does not write out a
+	// half-remembered version of it above.
+	if !strings.Contains(gen.gotSystem, "mensagem seguinte") {
+		t.Errorf("the digest prompt does not mention the list that follows:\n%s", gen.gotSystem)
+	}
+	// A supplier equal to the description would just repeat it.
+	if strings.Contains(list, "Energia (Energia)") {
+		t.Errorf("supplier repeated the description:\n%s", list)
+	}
+}
+
+// TestBillListSplitsRatherThanTruncates: a day heavy enough to blow WhatsApp's
+// limit continues into further messages. Meta rejects an over-length body
+// outright, so the alternative to splitting is not a shorter list — it is no
+// list at all.
+func TestBillListSplitsRatherThanTruncates(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	prefs := domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true}
+
+	const bills = 120
+	entries := make([]domain.FinancialEntry, 0, bills)
+	for i := range bills {
+		entries = append(entries, pendingExpense(
+			fmt.Sprintf("e%03d", i),
+			fmt.Sprintf("Fornecedor de material hospitalar número %03d", i),
+			"", int64(100*(i+1))))
+	}
+	seedUser(t, s, inWindow, prefs, entries...)
+
+	res, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lists := wa.billLists()
+	if len(lists) < 2 {
+		t.Fatalf("preconditions: %d bills should not fit one message, got %d", bills, len(lists))
+	}
+	if res.BillListsSent != len(lists) {
+		t.Errorf("BillListsSent = %d, want %d", res.BillListsSent, len(lists))
+	}
+
+	all := ""
+	for i, m := range lists {
+		if len(m.body) > maxWhatsAppText {
+			t.Errorf("message %d is %d chars, over the %d budget", i+1, len(m.body), maxWhatsAppText)
+		}
+		all += m.body
+	}
+	// Nothing was dropped on the way, and the last bill is as present as the
+	// first — the whole point of splitting instead of capping.
+	for i := range bills {
+		want := fmt.Sprintf("hospitalar número %03d", i)
+		if got := strings.Count(all, want); got != 1 {
+			t.Fatalf("bill %d appears %d times across %d messages", i, got, len(lists))
+		}
+	}
+	// Continuations say which part they are, so a reader knows another is coming.
+	if !strings.Contains(lists[1].body, fmt.Sprintf("continuação (2/%d)", len(lists))) {
+		t.Errorf("continuation is not numbered:\n%s", lists[1].body)
+	}
+}
+
+// TestBillListRespectsTheDueTodayOptOut: the list is the detail behind the
+// due-today alert. Someone who switched that alert off must not receive it by
+// another route.
+func TestBillListRespectsTheDueTodayOptOut(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
+		pendingExpense("e1", "Distribuidora", "", 285000),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.billLists()) != 0 || res.BillListsSent != 0 {
+		t.Fatalf("bill list sent to someone who opted out: %v", wa.billLists())
+	}
+	if len(wa.digests()) != 1 {
+		t.Fatalf("the digest itself must still go out, got %d", len(wa.digests()))
+	}
+}
+
+// TestDigestPromptOnlyAnnouncesAListThatIsComing: the sentence pointing at the
+// next message is written only when there is one, or the digest sends the
+// reader looking for something that never arrives.
+func TestDigestPromptOnlyAnnouncesAListThatIsComing(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	gen := &fakeGen{reply: "Bom dia! Está tudo em ordem por aqui. 🙂"}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+	)
+
+	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(gen.gotSystem, "mensagem seguinte") {
+		t.Errorf("nothing is due, so no list follows — the prompt must not promise one:\n%s", gen.gotSystem)
+	}
+}
+
+// TestNoBillListOnAQuietDay: nothing due, nothing to list. The digest already
+// says the day is clear, and an empty "saídas previstas" message would only
+// make the reader look for what is not there.
+func TestNoBillListOnAQuietDay(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wa.sent) != 1 || res.BillListsSent != 0 {
+		t.Fatalf("want the digest alone, got %d messages (%+v)", len(wa.sent), res)
+	}
+}
+
+// TestDigestSurvivesAFailedBillList: the two messages fail independently. A
+// list that could not be delivered must not un-send the digest, nor make
+// tomorrow's run repeat it.
+func TestDigestSurvivesAFailedBillList(t *testing.T) {
+	s := newStores()
+	wa := &failAfterFirst{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		pendingExpense("e1", "Distribuidora", "", 285000),
+	)
+
+	n := New(s.fin, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
+	n.SetClock(func() time.Time { return runDay })
+
+	res, err := n.Run(context.Background())
+	if err == nil {
+		t.Fatal("a failed list send must be reported as an error")
+	}
+	if res.Sent != 1 || res.Errors != 1 {
+		t.Fatalf("res=%+v, want the digest counted as sent and one error", res)
+	}
+	sent, lerr := s.fin.NotificationSent(context.Background(), "u1", runDay.Format("2006-01-02"))
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if !sent {
+		t.Error("the digest went out but was not recorded — tomorrow's run would send it again")
+	}
+}
+
+// failAfterFirst delivers the digest and then fails, which is the only way the
+// two messages can come apart in production.
+type failAfterFirst struct{ fakeWA }
+
+func (f *failAfterFirst) SendText(ctx context.Context, phoneNumberID, to, body string) error {
+	if len(f.sent) > 0 {
+		return errors.New("meta rejected the message")
+	}
+	return f.fakeWA.SendText(ctx, phoneNumberID, to, body)
 }
 
 // TestDigestFeedsTheModelTheWholeInsightsJSON is issue #35's other half: the
@@ -529,10 +781,10 @@ func TestDigestWithoutAModelShipsTheDraftAndNotTheJSON(t *testing.T) {
 	if _, err := newNotifierWithGen(s, wa, echoGen{}).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 	if strings.Contains(body, "{\"") || strings.Contains(body, "projecao_do_mes") {
 		t.Fatalf("raw insights JSON shipped to WhatsApp:\n%s", body)
 	}
@@ -557,11 +809,11 @@ func TestRunFallsBackToStaticDigestOnGeneratorError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 1 || len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 1 || len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got res=%+v sent=%d", res, len(wa.digests()))
 	}
-	if !strings.Contains(wa.sent[0].body, "Farmácia Financeira") {
-		t.Fatalf("expected the static digest fallback, got %q", wa.sent[0].body)
+	if !strings.Contains(wa.digests()[0].body, "Farmácia Financeira") {
+		t.Fatalf("expected the static digest fallback, got %q", wa.digests()[0].body)
 	}
 }
 
@@ -584,10 +836,10 @@ func TestDigestReplacesInventedLinkPlaceholderWithRealURL(t *testing.T) {
 	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 	if strings.Contains(body, "[Link para o dashboard]") {
 		t.Fatalf("placeholder shipped to the user: %q", body)
 	}
@@ -626,11 +878,11 @@ func TestDigestOmitsCallToActionWhenNoDashboardURL(t *testing.T) {
 	if _, err := n.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	if strings.Contains(wa.sent[0].body, "Acesse a análise completa") {
-		t.Fatalf("call-to-action shipped without a URL: %q", wa.sent[0].body)
+	if strings.Contains(wa.digests()[0].body, "Acesse a análise completa") {
+		t.Fatalf("call-to-action shipped without a URL: %q", wa.digests()[0].body)
 	}
 }
 
@@ -649,8 +901,8 @@ func TestStaticDigestCarriesLinkExactlyOnce(t *testing.T) {
 	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(wa.sent[0].body, "/analise"); n != 1 {
-		t.Fatalf("want the dashboard link exactly once, got %d in %q", n, wa.sent[0].body)
+	if n := strings.Count(wa.digests()[0].body, "/analise"); n != 1 {
+		t.Fatalf("want the dashboard link exactly once, got %d in %q", n, wa.digests()[0].body)
 	}
 }
 
@@ -683,12 +935,13 @@ func TestRunNotifiesMultipleCognitoUsersFromSharedLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 2 || len(wa.sent) != 2 {
-		t.Fatalf("want 2 independent sends, got res=%+v sent=%d", res, len(wa.sent))
+	if res.Sent != 2 || len(wa.digests()) != 2 {
+		t.Fatalf("want 2 independent sends, got res=%+v sent=%d", res, len(wa.digests()))
 	}
-	gotPhones := map[string]bool{wa.sent[0].to: true, wa.sent[1].to: true}
+	digests := wa.digests()
+	gotPhones := map[string]bool{digests[0].to: true, digests[1].to: true}
 	if !gotPhones["5511900000001"] || !gotPhones["5511900000002"] {
-		t.Fatalf("want both recipients to receive their own digest, got %v", wa.sent)
+		t.Fatalf("want both recipients to receive their own digest, got %v", digests)
 	}
 }
 
@@ -716,7 +969,7 @@ func TestRunDedupeIsPerRecipientNotPerLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 1 || len(wa.sent) != 1 || wa.sent[0].to != "5511900000002" {
+	if res.Sent != 1 || len(wa.digests()) != 1 || wa.digests()[0].to != "5511900000002" {
 		t.Fatalf("want only u2 sent (u1 already deduped), got res=%+v sent=%v", res, wa.sent)
 	}
 }
@@ -749,11 +1002,11 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 	if _, err := newNotifier(s, wa).Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
 
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 	// What has to be dealt with from here leads the message, and the bill with
 	// a deadline leads that.
 	agora := strings.Index(body, "A partir de agora")
@@ -790,11 +1043,11 @@ func TestDigestStillSendsWhenTheAnalysisIsEmpty(t *testing.T) {
 	if _, err := newNotifier(s, wa).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	if !strings.Contains(wa.sent[0].body, "vence hoje") {
-		t.Errorf("digest lost its alert:\n%s", wa.sent[0].body)
+	if !strings.Contains(wa.digests()[0].body, "vence hoje") {
+		t.Errorf("digest lost its alert:\n%s", wa.digests()[0].body)
 	}
 }
 
@@ -880,10 +1133,10 @@ func TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead(t *testing.T) {
 	if _, err := n.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.sent))
+	if len(wa.digests()) != 1 {
+		t.Fatalf("want 1 send, got %d", len(wa.digests()))
 	}
-	body := wa.sent[0].body
+	body := wa.digests()[0].body
 
 	// The pendências are real and still lead the message.
 	if !strings.Contains(body, "Folha de pagamento está vencida") {
