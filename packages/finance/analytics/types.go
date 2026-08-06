@@ -865,7 +865,26 @@ type KPIs struct {
 // before any of it reached main. A version that no stored snapshot was ever
 // written under is not a version, and leaving a gap in this list would suggest
 // there are snapshots out there wearing it.
-const SchemaVersion = 8
+// 9: the rest of the month stopped counting as spent. goals.expenseActual,
+// expenseComposition, cashOutDays and highlights all covered the whole month,
+// including bills merely booked for days still ahead, while kpis.despesa had
+// covered only the days that have arrived since 6. So one Analysis carried two
+// despesas — the KPI row's and everything else's — and the bot read both out of
+// the same payload: "gastei R$ 3.000,00" beside "usei 60% do teto (R$
+// 9.000,00)" and a composition totalling the second. Highlights had the same
+// hole and it showed worst: a day still in the future, carrying a booked bill
+// and no sales, was reported as the month's worst day at R$ 0,00.
+//
+// No field is added or renamed — four of them change meaning, which is what
+// this number is for. The diff does not read them, but the dashboard serves the
+// stored snapshot, so without the bump a v8 snapshot written this morning would
+// keep drawing the whole-month figures beside a KPI row that no longer agrees
+// with them. What is booked for later is kpis.despesaAgendada, unchanged, and
+// whether there is money for it is cashPosition.commitments (ADR-022).
+//
+// This one *is* a step of its own: unlike the run up to 8, v8 shipped and
+// snapshots were written under it.
+const SchemaVersion = 9
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

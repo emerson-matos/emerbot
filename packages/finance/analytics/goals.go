@@ -7,17 +7,25 @@ import (
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 )
 
-// goalProgress measures the month against its targets. The revenue figure is
-// passed in rather than re-derived so that every faturamento number in one
-// Analysis comes from the same place and they cannot disagree about the same
-// month.
+// goalProgress measures the month against its targets. Both actuals are passed
+// in rather than re-derived so that every faturamento and every despesa figure
+// in one Analysis comes from the same place and they cannot disagree about the
+// same month.
+//
+// expense used to be read off the summary here, which totals the whole month
+// including bills merely booked for days still ahead. Beside a KPI row that
+// counts only what has left the account, that put two despesas in one payload:
+// "gastei R$ 3.000,00" and "usei 60% do teto (R$ 9.000,00)". A ceiling is spent
+// against, not committed against — what is booked for later is
+// KPIs.DespesaAgendada, and whether there is money for it is a cash question
+// (ADR-022).
 //
 // Percentages are capped at 100 so a bar cannot overflow its track; the raw
 // amounts stay uncapped for anyone who wants the overshoot.
-func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, clock monthClock, revenue int64) GoalProgress {
+func goalProgress(goal *domain.Goal, clock monthClock, revenue, expense int64) GoalProgress {
 	progress := GoalProgress{
 		RevenueActual: revenue,
-		ExpenseActual: summary.TotalExpense,
+		ExpenseActual: expense,
 		// Today counts as a day still to trade, and a closed month has none —
 		// the day numbers used to be read off now's calendar whatever month was
 		// being analysed, so a finished July opened in August still had "30
@@ -35,7 +43,7 @@ func goalProgress(summary pkgfinance.MonthlySummary, goal *domain.Goal, clock mo
 		progress.RevenuePct = min(100, roundToInt(float64(revenue)/float64(goal.RevenueTarget)*100))
 	}
 	if goal.ExpenseTarget > 0 {
-		progress.ExpensePct = min(100, roundToInt(float64(summary.TotalExpense)/float64(goal.ExpenseTarget)*100))
+		progress.ExpensePct = min(100, roundToInt(float64(expense)/float64(goal.ExpenseTarget)*100))
 	}
 	return progress
 }

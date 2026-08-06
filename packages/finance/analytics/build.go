@@ -100,6 +100,19 @@ func Build(in Input) Analysis {
 	// "everything scheduled" ones in the same row, and made Resultado the one
 	// minus the other. See monthClock.elapsed.
 	sofar := totalsThroughDay(in.Entries, clock.elapsed())
+	// The same window as a slice, for every retrospective breakdown below. They
+	// read the whole month while Despesa above read the days that had arrived,
+	// so one payload carried both "despesa R$ 3.000,00" and a composition
+	// totalling R$ 9.000,00 — the R$ 6.000,00 of difference being bills nobody
+	// had paid. The month's worst day came out the same way: a day still in the
+	// future, carrying a booked bill and no sales, won "pior dia" at R$ 0,00.
+	//
+	// A breakdown decomposes a total, so it has to cover the total's own days.
+	// What is merely booked for later is not missing from the analysis — it is
+	// KPIs.DespesaAgendada, beside the runway that says whether there is money
+	// for it (ADR-022).
+	arrived := entriesThrough(in.Entries, clock.elapsed(), effectiveDay)
+	arrivedRevenue := entriesThrough(in.RevenueEntries, clock.elapsed(), transactionDay)
 
 	kpis := KPIs{
 		Resultado:     sofar.balance,
@@ -118,7 +131,7 @@ func Build(in Input) Analysis {
 		revenueTarget = currentGoal.RevenueTarget
 	}
 	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
-	goals := goalProgress(currentSummary, currentGoal, clock, faturamento)
+	goals := goalProgress(currentGoal, clock, faturamento, sofar.expense)
 	// One reading of the trailing window: per-weekday averages, Gaussian-weighted
 	// so recent weeks count for more. The card is a view of it (weekdayStats) and
 	// the projection is priced from it, so the average the page displays is by
@@ -155,9 +168,9 @@ func Build(in Input) Analysis {
 		Trends:             trends,
 		Weekdays:           weekdays,
 		WeekComparison:     week,
-		Highlights:         buildHighlights(in.Entries, in.RevenueEntries),
-		CashOutDays:        buildCashOutDays(in.Entries),
-		ExpenseComposition: expenseComposition(in.Entries),
+		Highlights:         buildHighlights(arrived, arrivedRevenue),
+		CashOutDays:        buildCashOutDays(arrived),
+		ExpenseComposition: expenseComposition(arrived),
 		Goals:              goals,
 		Projection:         projection,
 		History:            buildHistory(months, in.Summaries, in.Goals),
