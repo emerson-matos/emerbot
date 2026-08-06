@@ -7,11 +7,7 @@ import { format, parseISO } from 'date-fns'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
 import { brlAxisTick, chartColor, tooltipProps } from '@/lib/chart'
-import {
-  CASH_WEEK_AHEAD, CASH_WEEK_AHEAD_NARROW, CASH_WEEK_BACK,
-  cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative,
-} from '@/lib/cashWeek'
-import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative } from '@/lib/cashWeek'
 import type { CashPosition } from '@/api/types'
 
 // The week around today, in money moving rather than in balance. The line chart
@@ -30,12 +26,12 @@ import type { CashPosition } from '@/api/types'
 // brings and nobody has promised — the same amber the three-month chart uses
 // for the month's projection, meaning the same thing: this has not happened
 // yet. Yesterday therefore carries no amber at all, which is what makes it the
-// anchor: one real column to judge six estimated ones against.
+// anchor: one real column to judge the estimated ones against.
 //
 // Over the bars runs the balance at the end of each day, on its own axis to the
 // right. The bars answer "what moves"; only the line answers the question
 // somebody actually opens this card with — "vou ficar sem dinheiro nesta
-// semana?". R$ 8.500,00 leaving on Saturday is a crisis or a Tuesday depending
+// semana?". R$ 8.500,00 leaving tomorrow is a crisis or a Tuesday depending
 // entirely on what is in the account, and the zero line is where the difference
 // becomes visible.
 
@@ -64,14 +60,7 @@ export default function CashWeek({ position, today }: {
   position: CashPosition
   today: string
 }) {
-  // Tailwind's `sm`. Below it the card gets three columns instead of seven —
-  // see CASH_WEEK_AHEAD_NARROW. A media query and not a CSS class because what
-  // changes is the series, not its styling: seven columns squeezed into a phone
-  // are unreadable whatever is done to them.
-  const wide = useMediaQuery('(min-width: 40rem)')
-  const days = cashWeekDays(
-    position.forecast, today, CASH_WEEK_BACK, wide ? CASH_WEEK_AHEAD : CASH_WEEK_AHEAD_NARROW,
-  )
+  const days = cashWeekDays(position.forecast, today)
   const { ceiling } = cashWeekPeaks(days)
 
   if (days.length === 0) {
@@ -103,7 +92,13 @@ export default function CashWeek({ position, today }: {
 
   return (
     <>
-      <ResponsiveContainer width="100%" height={240}>
+      {/* Capped rather than stretched. Three columns given the full width of a
+          desktop card are three pairs of slivers marooned in it, with the
+          balance line a flat diagonal across the gaps — a chart of three days
+          does not need eleven hundred points to say so. Left-aligned, so it
+          reads as a chart of a given size rather than one that failed to
+          centre. */}
+      <ResponsiveContainer className="max-w-xl" width="100%" height={240}>
         <ComposedChart data={series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartColor.grid} vertical={false} />
           <XAxis
@@ -153,12 +148,12 @@ export default function CashWeek({ position, today }: {
           {/* One stack for the inflow: booked at the bottom, expected on top,
               so the uncertain money sits furthest from the axis. Outflow is a
               second bar beside it, never in the same stack. */}
-          <Bar yAxisId="fluxo" dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={28} />
-          <Bar yAxisId="fluxo" dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={28} />
+          <Bar yAxisId="fluxo" dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={44} />
+          <Bar yAxisId="fluxo" dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={44} />
           {/* Only what is booked: the backend never invents an unbooked bill,
               because a guessed expense would soften an alarm on evidence
               nobody has. */}
-          <Bar yAxisId="fluxo" dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={28}>
+          <Bar yAxisId="fluxo" dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={44}>
             {series.map((d) => (
               <Cell key={d.date} fillOpacity={d.isPast ? 0.55 : 1} />
             ))}

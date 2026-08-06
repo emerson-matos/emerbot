@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  CASH_WEEK_AHEAD_NARROW, CASH_WEEK_BACK,
-  cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative,
-} from "./cashWeek";
+import { cashWeekDays, cashWeekPeaks, cashWeekSeries, firstNegative } from "./cashWeek";
 import type { DayCash } from "@/api/types";
 
 const day = (date: string, o: Partial<DayCash> = {}): DayCash => ({
@@ -29,29 +26,18 @@ const forecast: DayCash[] = [
 ];
 
 describe("cashWeekDays", () => {
-  it("opens on yesterday and runs five days past today", () => {
+  it("opens on yesterday and runs one day past today", () => {
+    // Ontem, hoje, amanhã. It ran five days ahead, and seven pairs of bars in
+    // the width of a phone are about eight points each, under labels that have
+    // to alternate to fit.
     const days = cashWeekDays(forecast, "2026-08-05");
 
-    expect(days.map((d) => d.date)).toEqual([
-      "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07",
-      "2026-08-08", "2026-08-09", "2026-08-10",
-    ]);
-    // Yesterday is the anchor: every other column carries an amber estimate,
+    expect(days.map((d) => d.date)).toEqual(["2026-08-04", "2026-08-05", "2026-08-06"]);
+    // Yesterday is the anchor: the other two columns carry an amber estimate,
     // and one real day is what lets a reader judge whether they look sane.
     expect(days[0].isPast).toBe(true);
     expect(days[1].isToday).toBe(true);
     expect(days.filter((d) => d.isPast)).toHaveLength(1);
-  });
-
-  it("narrows to ontem, hoje and amanhã on a phone", () => {
-    // Seven pairs of bars in a phone's width are about eight points each,
-    // under labels that have to alternate to fit. Three columns are the same
-    // three days the rest of the page is built around, and whether the month
-    // runs dry is answered by "Posição de caixa" below either way.
-    const days = cashWeekDays(forecast, "2026-08-05", CASH_WEEK_BACK, CASH_WEEK_AHEAD_NARROW);
-
-    expect(days.map((d) => d.date)).toEqual(["2026-08-04", "2026-08-05", "2026-08-06"]);
-    expect(days[1].isToday).toBe(true);
   });
 
   it("opens on today when yesterday belongs to another month", () => {
@@ -79,15 +65,19 @@ describe("cashWeekDays", () => {
   });
 
   it("shows what is left when the month ends inside the window", () => {
-    expect(cashWeekDays(forecast, "2026-08-10").map((d) => d.date)).toEqual([
-      "2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12",
+    // The 12th is the forecast's last day: there is no tomorrow to draw, and
+    // the card shows the two days it has rather than reaching into a month
+    // this series does not cover.
+    expect(cashWeekDays(forecast, "2026-08-12").map((d) => d.date)).toEqual([
+      "2026-08-11", "2026-08-12",
     ]);
   });
 });
 
 describe("cashWeekPeaks", () => {
   it("draws both bars against one ceiling", () => {
-    const { maxIn, maxOut, ceiling } = cashWeekPeaks(cashWeekDays(forecast, "2026-08-05"));
+    // The 8th, where the R$ 8.500,00 payroll falls due.
+    const { maxIn, maxOut, ceiling } = cashWeekPeaks(cashWeekDays(forecast, "2026-08-08"));
 
     expect(maxIn).toBe(148000);
     expect(maxOut).toBe(850000);
@@ -116,7 +106,7 @@ describe("cashWeekPeaks", () => {
 
 describe("firstNegative", () => {
   it("names the first day ahead that goes under water", () => {
-    expect(firstNegative(cashWeekDays(forecast, "2026-08-05"))?.date).toBe("2026-08-08");
+    expect(firstNegative(cashWeekDays(forecast, "2026-08-07"))?.date).toBe("2026-08-08");
   });
 
   it("ignores a dip that already happened", () => {
@@ -131,20 +121,10 @@ describe("firstNegative", () => {
 });
 
 describe("cashWeekSeries", () => {
-  it("names the three days a reader locates themselves by", () => {
+  it("names all three days rather than numbering any of them", () => {
+    // The window *is* ontem/hoje/amanhã, so labelling a third of the card
+    // "Qui" would make a reader count days on a card about three of them.
     const series = cashWeekSeries(cashWeekDays(forecast, "2026-08-05"));
-
-    expect(series.map((d) => d.label)).toEqual([
-      "Ontem", "Hoje", "Amanhã", "Sex", "Sáb", "Dom", "Seg",
-    ]);
-  });
-
-  it("still names tomorrow when the window is only three days", () => {
-    // The phone window is exactly ontem/hoje/amanhã, and labelling a third of
-    // that card "Qui" makes the reader count days on a card about three of them.
-    const series = cashWeekSeries(
-      cashWeekDays(forecast, "2026-08-05", CASH_WEEK_BACK, CASH_WEEK_AHEAD_NARROW),
-    );
 
     expect(series.map((d) => d.label)).toEqual(["Ontem", "Hoje", "Amanhã"]);
   });
@@ -168,11 +148,11 @@ describe("cashWeekSeries", () => {
 
   it("carries the balance at the end of each day", () => {
     // The bars say what moves; only this says whether the account survives it.
-    const series = cashWeekSeries(cashWeekDays(forecast, "2026-08-05"));
+    // Read on the 7th, so tomorrow is the 8th — the day the payroll takes the
+    // account under water.
+    const series = cashWeekSeries(cashWeekDays(forecast, "2026-08-07"));
 
-    expect(series.map((d) => d["Saldo projetado"])).toEqual([
-      5000, 5000, 5000, 5000, -400, 5000, 5000,
-    ]);
+    expect(series.map((d) => d["Saldo projetado"])).toEqual([5000, 5000, -400]);
   });
 
   it("leaves a closed day with no expected inflow at all", () => {
