@@ -92,14 +92,14 @@ export default function CashWeek({ position, today }: {
 
   return (
     <>
-      {/* Capped rather than stretched. Three columns given the full width of a
-          desktop card are three pairs of slivers marooned in it, with the
-          balance line a flat diagonal across the gaps — a chart of three days
-          does not need eleven hundred points to say so. Left-aligned, so it
-          reads as a chart of a given size rather than one that failed to
-          centre. */}
-      <ResponsiveContainer className="max-w-xl" width="100%" height={240}>
-        <ComposedChart data={series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+      {/* Full width, and the bars widen to fill it rather than staying slivers
+          in the middle of it. Three columns across a desktop card left the
+          chart mostly air at maxBarSize 28; capping the plot instead just moved
+          the emptiness to the right of it. barCategoryGap sets how much of each
+          day is bar and how much is gap, so the columns scale with the card —
+          the cap only stops them going absurd on an ultrawide. */}
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={series} barCategoryGap="18%" barGap={6} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartColor.grid} vertical={false} />
           <XAxis
             dataKey="label"
@@ -148,12 +148,12 @@ export default function CashWeek({ position, today }: {
           {/* One stack for the inflow: booked at the bottom, expected on top,
               so the uncertain money sits furthest from the axis. Outflow is a
               second bar beside it, never in the same stack. */}
-          <Bar yAxisId="fluxo" dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={44} />
-          <Bar yAxisId="fluxo" dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={44} />
+          <Bar yAxisId="fluxo" dataKey="Entrada lançada" stackId="entra" fill={chartColor.income} maxBarSize={96} />
+          <Bar yAxisId="fluxo" dataKey="Entrada esperada" stackId="entra" fill={chartColor.projected} radius={[4, 4, 0, 0]} maxBarSize={96} />
           {/* Only what is booked: the backend never invents an unbooked bill,
               because a guessed expense would soften an alarm on evidence
               nobody has. */}
-          <Bar yAxisId="fluxo" dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={44}>
+          <Bar yAxisId="fluxo" dataKey="Saída" fill={chartColor.expense} radius={[4, 4, 0, 0]} maxBarSize={96}>
             {series.map((d) => (
               <Cell key={d.date} fillOpacity={d.isPast ? 0.55 : 1} />
             ))}
