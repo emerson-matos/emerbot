@@ -144,6 +144,9 @@ func (a *Agent) runTool(ctx context.Context, userID string, fc *genai.FunctionCa
 // historyToContents maps stored conversation turns onto Gemini contents,
 // translating roles (Gemini expects "model", not "assistant") and dropping
 // turns it can't represent (empty text or non-conversational roles).
+//
+// Every turn carries the local time it was said — see agentprompt.StampTurn for
+// what went wrong without it.
 func historyToContents(history []domain.ConversationMessage) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(history))
 	for _, m := range history {
@@ -153,7 +156,7 @@ func historyToContents(history []domain.ConversationMessage) []*genai.Content {
 		}
 		contents = append(contents, &genai.Content{
 			Role:  role,
-			Parts: []*genai.Part{{Text: m.Text}},
+			Parts: []*genai.Part{{Text: agentprompt.StampTurn(m.Text, m.Timestamp)}},
 		})
 	}
 	return contents

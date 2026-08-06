@@ -16,6 +16,28 @@ import (
 // that has to work out which one a date is guesses.
 var weekdayNames = [7]string{"domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"}
 
+// StampTurn renders one stored conversation turn with the local time it was
+// said, for the agents that replay history to the model.
+//
+// The history used to go over as bare text: `{role, text}`, with
+// ConversationMessage.Timestamp thrown away. So a sentence the assistant wrote
+// last night was indistinguishable from one it wrote this second, and the
+// model treated its own stale claims as current.
+//
+// That is not theoretical. The night the prompt was still dated in UTC, the bot
+// answered "hoje é 06/08" at 23h47 of the 5th. The fix shipped four minutes
+// later and it kept answering 06/08 — because its own wrong answer was sitting
+// in the history, undated, being read as the most recent word on the subject.
+// Asked the time twice, four minutes apart, it went from "00:02" to "00:03":
+// it was not reading a clock, it was continuing its own last sentence.
+//
+// The stamp fixes both halves of that. An old claim is now visibly old, and the
+// authoritative "now" is no longer only in a system prompt above ten turns of
+// history — the last thing in the context is the current user turn, stamped.
+func StampTurn(text string, at time.Time) string {
+	return fmt.Sprintf("[%s] %s", at.In(shared.PharmacyLocation()).Format("02/01 15:04"), text)
+}
+
 // Finance is the finance-assistant system prompt, dated with `now` so the model
 // resolves relative dates ("amanhã", "último dia do mês") against the real day.
 //
@@ -50,6 +72,13 @@ Contexto atual:
 
 Interprete datas relativas ("amanhã", "último dia do mês", "mês que vem")
 usando a data acima como referência. Nunca invente datas.
+
+Cada turno anterior desta conversa vem prefixado com a hora local em que foi
+dito, entre colchetes — inclusive os seus. Eles são passado. A data e a hora
+de agora são as do "Contexto atual" acima e só elas: se uma resposta sua
+anterior disser outra data, ela estava errada ou já envelheceu, e a de agora
+vence. Nunca deduza que horas são a partir do que você respondeu antes, e não
+escreva o prefixo entre colchetes nas suas respostas.
 
 Você tem acesso a ferramentas para criar lançamentos, editar lançamentos
 existentes, consultar o resumo mensal (com metas de faturamento e teto de
