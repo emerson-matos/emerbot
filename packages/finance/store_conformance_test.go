@@ -604,7 +604,7 @@ func TestStoresAgreeOnNotifications(t *testing.T) {
 		if _, err := s.GetNotificationPrefs(ctx, "u1"); err == nil {
 			t.Fatal("expected an error for a user with no prefs")
 		}
-		prefs := domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999", NotifyGoal: true}
+		prefs := domain.NotificationPrefs{UserID: "u1", Phone: "5511999"}
 		if err := s.SaveNotificationPrefs(ctx, prefs); err != nil {
 			t.Fatalf("save prefs: %v", err)
 		}

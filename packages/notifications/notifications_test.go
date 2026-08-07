@@ -29,13 +29,6 @@ func expense(desc string, amount int64, due string, status domain.PaymentStatus)
 	}
 }
 
-func allOn() domain.NotificationPrefs {
-	return domain.NotificationPrefs{
-		UserID: "u", WAEnabled: true,
-		NotifyDueToday: true, NotifyOverdue: true, NotifyGoal: true,
-	}
-}
-
 func kinds(alerts []Alert) []Kind {
 	out := make([]Kind, len(alerts))
 	for i, a := range alerts {
@@ -53,7 +46,7 @@ func TestEvaluateDueTodayAggregatesPendingExpenses(t *testing.T) {
 		expense("Ja pago", 99900, "2026-07-20", domain.PaymentStatusPaid),
 	}
 
-	alerts := Evaluate(allOn(), entries, 0, domain.Goal{}, today)
+	alerts := Evaluate(entries, 0, domain.Goal{}, today)
 
 	if len(alerts) != 1 || alerts[0].Kind != KindDueToday {
 		t.Fatalf("want one due_today alert, got %+v", alerts)
@@ -72,7 +65,7 @@ func TestEvaluateOverdueSortedAndCapped(t *testing.T) {
 		expense("Antiga2", 4000, "2026-07-05", domain.PaymentStatusPending),
 	}
 
-	alerts := Evaluate(allOn(), entries, 0, domain.Goal{}, today)
+	alerts := Evaluate(entries, 0, domain.Goal{}, today)
 
 	if len(alerts) != MaxOverdue {
 		t.Fatalf("want %d overdue alerts (capped), got %d", MaxOverdue, len(alerts))
@@ -80,40 +73,6 @@ func TestEvaluateOverdueSortedAndCapped(t *testing.T) {
 	// Most recent overdue first.
 	if alerts[0].Text != "Recente está vencida (venceu em 18/07)" {
 		t.Fatalf("first overdue = %q", alerts[0].Text)
-	}
-}
-
-func TestEvaluateGoalReachedRespectsTargetAndPref(t *testing.T) {
-	today := day("2026-07-20")
-	goal := domain.Goal{RevenueTarget: 5000000}
-
-	// Income below target -> no alert.
-	if a := Evaluate(allOn(), nil, 4999999, goal, today); len(a) != 0 {
-		t.Fatalf("below target should yield no alert, got %+v", a)
-	}
-	// Income at target -> alert.
-	a := Evaluate(allOn(), nil, 5000000, goal, today)
-	if len(a) != 1 || a[0].Kind != KindGoal {
-		t.Fatalf("want goal alert, got %+v", a)
-	}
-	// Pref off -> no alert even when reached.
-	prefs := allOn()
-	prefs.NotifyGoal = false
-	if a := Evaluate(prefs, nil, 6000000, goal, today); len(a) != 0 {
-		t.Fatalf("goal pref off should suppress alert, got %+v", a)
-	}
-}
-
-func TestEvaluateDisabledTypesAreSkipped(t *testing.T) {
-	today := day("2026-07-20")
-	entries := []domain.FinancialEntry{
-		expense("Hoje", 10000, "2026-07-20", domain.PaymentStatusPending),
-		expense("Vencida", 20000, "2026-07-01", domain.PaymentStatusPending),
-	}
-	prefs := domain.NotificationPrefs{UserID: "u", NotifyDueToday: false, NotifyOverdue: false, NotifyGoal: false}
-
-	if a := Evaluate(prefs, entries, 0, domain.Goal{}, today); len(a) != 0 {
-		t.Fatalf("all types off should yield no alerts, got %+v", a)
 	}
 }
 
@@ -125,7 +84,7 @@ func TestEvaluateOrderDueTodayThenOverdueThenGoal(t *testing.T) {
 	}
 	goal := domain.Goal{RevenueTarget: 100}
 
-	got := kinds(Evaluate(allOn(), entries, 100, goal, today))
+	got := kinds(Evaluate(entries, 100, goal, today))
 	want := []Kind{KindDueToday, KindOverdue, KindGoal}
 	if len(got) != len(want) {
 		t.Fatalf("kinds = %v, want %v", got, want)
@@ -137,11 +96,11 @@ func TestEvaluateOrderDueTodayThenOverdueThenGoal(t *testing.T) {
 	}
 }
 
-// TestBillsCountsTheLedgerAndNotThePreferences is why BillStatus exists beside
-// Evaluate: the daily digest tells people their bills are in order, and an empty
-// alert list is not evidence of that. A user with every kind switched off gets
-// no alerts on the busiest day of the month.
-func TestBillsCountsTheLedgerAndNotThePreferences(t *testing.T) {
+// TestBillsCountsWhatTheDayOwes: BillStatus is the ledger's own count, which is
+// what the digest's "nada vence hoje" is built on. It is deliberately not read
+// off the alert list — the two say the same thing today only because nothing
+// filters the alerts, and that is a property of Evaluate, not a guarantee.
+func TestBillsCountsWhatTheDayOwes(t *testing.T) {
 	today := day("2026-07-20")
 	entries := []domain.FinancialEntry{
 		expense("Fornecedor", 285000, "2026-07-20", domain.PaymentStatusPending),
@@ -153,18 +112,34 @@ func TestBillsCountsTheLedgerAndNotThePreferences(t *testing.T) {
 		expense("Aluguel", 300000, "2026-07-25", domain.PaymentStatusPending),
 	}
 
-	// Nobody is subscribed to anything, so Evaluate is silent...
-	allOff := domain.NotificationPrefs{UserID: "u", WAEnabled: true}
-	if a := Evaluate(allOff, entries, 0, domain.Goal{}, today); len(a) != 0 {
-		t.Fatalf("preconditions: want no alerts, got %+v", a)
-	}
-	// ...and the bills are there all the same.
 	got := Bills(entries, today)
-	// "Ja pago" fell due today and is settled, so it counts nowhere: what is
-	// already paid is not what anyone has left to do.
+	// What is already paid counts nowhere: it is not what anyone has left to do.
 	want := BillStatus{DueTodayCount: 2, DueToday: 300000, OverdueCount: 1, OverdueTotal: 20000}
 	if got != want {
 		t.Fatalf("Bills = %+v, want %+v", got, want)
+	}
+	if got.Quiet() {
+		t.Error("Quiet() on a day with two bills due and one late")
+	}
+}
+
+// TestEvaluateGoalNeedsATargetAndTheRevenueToClearIt keeps the goal rule itself
+// under test now that the toggle that used to gate it is gone: a month with no
+// target set is not a month that met one.
+func TestEvaluateGoalNeedsATargetAndTheRevenueToClearIt(t *testing.T) {
+	today := day("2026-07-20")
+	goal := domain.Goal{RevenueTarget: 5000000}
+
+	if a := Evaluate(nil, 4999999, goal, today); len(a) != 0 {
+		t.Fatalf("below target should yield no alert, got %+v", a)
+	}
+	a := Evaluate(nil, 5000000, goal, today)
+	if len(a) != 1 || a[0].Kind != KindGoal {
+		t.Fatalf("want goal alert at target, got %+v", a)
+	}
+	// No goal set at all: a target of zero is not a target that was met.
+	if a := Evaluate(nil, 6000000, domain.Goal{}, today); len(a) != 0 {
+		t.Fatalf("no target means no goal alert, got %+v", a)
 	}
 }
 

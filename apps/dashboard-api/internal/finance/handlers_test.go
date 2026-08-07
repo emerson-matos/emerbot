@@ -225,7 +225,6 @@ func TestEveryEndpointRequiresClaims(t *testing.T) {
 		"category summary": {summary.Categories, http.MethodGet, "/summary/categories"},
 		"cashflow":         {summary.CashFlow, http.MethodGet, "/summary/cashflow"},
 		"get prefs":        {notifs.Get, http.MethodGet, "/notifications/preferences"},
-		"save prefs":       {notifs.Save, http.MethodPut, "/notifications/preferences"},
 	}
 
 	for name, ep := range endpoints {
@@ -1294,71 +1293,6 @@ func TestGetNotificationPrefsFallsBackToDefaults(t *testing.T) {
 	if prefs["phone"] != "5511987654321" {
 		t.Fatalf("phone = %v, want the claim's digits", prefs["phone"])
 	}
-}
-
-func TestSaveNotificationPrefsIsPartial(t *testing.T) {
-	store := newStore(t)
-	h := NewNotificationsHandler(store)
-
-	w := run(h.Save, authed(http.MethodPut, "/notifications/preferences", `{"waEnabled":true,"notifyGoal":true}`))
-	assertStatus(t, w, http.StatusOK)
-
-	// A second PUT touching only one field must leave the others as they were.
-	w = run(h.Save, authed(http.MethodPut, "/notifications/preferences", `{"notifyGoal":false}`))
-	assertStatus(t, w, http.StatusOK)
-
-	prefs := decode(t, w)["preferences"].(map[string]any)
-	if prefs["waEnabled"] != true {
-		t.Fatalf("waEnabled = %v, want the earlier true to survive a partial update", prefs["waEnabled"])
-	}
-	if prefs["notifyGoal"] != false {
-		t.Fatalf("notifyGoal = %v, want the submitted false", prefs["notifyGoal"])
-	}
-}
-
-func TestSaveNotificationPrefsIgnoresAClientSuppliedPhone(t *testing.T) {
-	store := newStore(t)
-	body := `{"waEnabled":true,"phone":"5599999999999"}`
-
-	w := run(NewNotificationsHandler(store).Save, authed(http.MethodPut, "/notifications/preferences", body))
-	assertStatus(t, w, http.StatusOK)
-
-	// Honouring a client-supplied number would let anyone redirect another
-	// account's WhatsApp alerts to a phone they control.
-	saved, err := store.GetNotificationPrefs(context.Background(), "cognito-sub")
-	if err != nil {
-		t.Fatalf("get prefs: %v", err)
-	}
-	if saved.Phone != "5511987654321" {
-		t.Fatalf("stored phone = %q, want the claim's number, not the request's", saved.Phone)
-	}
-}
-
-func TestSaveNotificationPrefsRequiresAPhoneToEnableWhatsApp(t *testing.T) {
-	store := newStore(t)
-	r := httptest.NewRequest(http.MethodPut, "/notifications/preferences", strings.NewReader(`{"waEnabled":true}`))
-	// An account with no registered phone number.
-	claims := apiauth.Claims{UserID: testUser, Subject: "cognito-sub", Phone: ""}
-	r = r.WithContext(apiauth.WithClaims(r.Context(), claims))
-
-	w := run(NewNotificationsHandler(store).Save, r)
-	assertStatus(t, w, http.StatusBadRequest)
-
-	if _, err := store.GetNotificationPrefs(context.Background(), "cognito-sub"); err == nil {
-		t.Fatal("the rejected preferences must not have been saved")
-	}
-}
-
-func TestSaveNotificationPrefsRejectsMalformedBody(t *testing.T) {
-	h := NewNotificationsHandler(newStore(t))
-	w := run(h.Save, authed(http.MethodPut, "/notifications/preferences", `{`))
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestSaveNotificationPrefsStoreFailureIs500(t *testing.T) {
-	h := NewNotificationsHandler(failingStore{Store: newStore(t), fail: "SaveNotificationPrefs"})
-	w := run(h.Save, authed(http.MethodPut, "/notifications/preferences", `{"notifyGoal":true}`))
-	assertStatus(t, w, http.StatusInternalServerError)
 }
 
 func TestNormalizePhone(t *testing.T) {

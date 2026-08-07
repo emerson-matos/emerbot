@@ -395,28 +395,6 @@ func TestMemoryKey(t *testing.T) {
 	}
 }
 
-func TestDefaultNotificationPrefs(t *testing.T) {
-	p := DefaultNotificationPrefs("u1")
-	if p.UserID != "u1" {
-		t.Errorf("UserID = %q, want %q", p.UserID, "u1")
-	}
-	if p.WAEnabled {
-		t.Error("WAEnabled should be false")
-	}
-	if !p.NotifyDueToday {
-		t.Error("NotifyDueToday should be true")
-	}
-	if !p.NotifyOverdue {
-		t.Error("NotifyOverdue should be true")
-	}
-	if p.NotifyGoal {
-		t.Error("NotifyGoal should be false")
-	}
-	if p.Phone != "" {
-		t.Errorf("Phone = %q, want empty", p.Phone)
-	}
-}
-
 func TestNormalize(t *testing.T) {
 	d := NewCalendarDate(time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC))
 	payDate := NewCalendarDate(time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC))

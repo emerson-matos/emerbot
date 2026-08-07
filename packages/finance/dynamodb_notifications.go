@@ -13,27 +13,24 @@ import (
 	"github.com/emerson/emerbot/packages/domain"
 )
 
+// notifPrefsItem is the stored recipient. The toggles that used to live here
+// (WAEnabled, NotifyDueToday, NotifyOverdue, NotifyGoal) are gone from the type
+// but may still sit on rows written before they were removed: unmarshalling
+// ignores attributes it has no field for, so nothing needs migrating and the
+// leftovers are inert. A row rewritten by the handler simply drops them.
 type notifPrefsItem struct {
-	PK             string `dynamodbav:"PK"`
-	SK             string `dynamodbav:"SK"`
-	UserID         string `dynamodbav:"UserID"`
-	WAEnabled      bool   `dynamodbav:"WAEnabled"`
-	Phone          string `dynamodbav:"Phone"`
-	NotifyDueToday bool   `dynamodbav:"NotifyDueToday"`
-	NotifyOverdue  bool   `dynamodbav:"NotifyOverdue"`
-	NotifyGoal     bool   `dynamodbav:"NotifyGoal"`
+	PK     string `dynamodbav:"PK"`
+	SK     string `dynamodbav:"SK"`
+	UserID string `dynamodbav:"UserID"`
+	Phone  string `dynamodbav:"Phone"`
 }
 
 func (s *DynamoDBStore) SaveNotificationPrefs(ctx context.Context, prefs domain.NotificationPrefs) error {
 	item := notifPrefsItem{
-		PK:             pkPrefix + prefs.UserID,
-		SK:             notifPrefsSK,
-		UserID:         prefs.UserID,
-		WAEnabled:      prefs.WAEnabled,
-		Phone:          prefs.Phone,
-		NotifyDueToday: prefs.NotifyDueToday,
-		NotifyOverdue:  prefs.NotifyOverdue,
-		NotifyGoal:     prefs.NotifyGoal,
+		PK:     pkPrefix + prefs.UserID,
+		SK:     notifPrefsSK,
+		UserID: prefs.UserID,
+		Phone:  prefs.Phone,
 	}
 	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
@@ -97,14 +94,7 @@ func (s *DynamoDBStore) ListNotificationPrefs(ctx context.Context) ([]domain.Not
 }
 
 func itemToNotifPrefs(item notifPrefsItem) domain.NotificationPrefs {
-	return domain.NotificationPrefs{
-		UserID:         item.UserID,
-		WAEnabled:      item.WAEnabled,
-		Phone:          item.Phone,
-		NotifyDueToday: item.NotifyDueToday,
-		NotifyOverdue:  item.NotifyOverdue,
-		NotifyGoal:     item.NotifyGoal,
-	}
+	return domain.NotificationPrefs{UserID: item.UserID, Phone: item.Phone}
 }
 
 func (s *DynamoDBStore) NotificationSent(ctx context.Context, userID, key string) (bool, error) {

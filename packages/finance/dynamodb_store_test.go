@@ -670,8 +670,7 @@ func TestNotificationPrefsRoundTrip(t *testing.T) {
 	s, _ := newStore(t, 0)
 	ctx := context.Background()
 	prefs := domain.NotificationPrefs{
-		UserID: "u1", WAEnabled: true, Phone: "+5511999999999",
-		NotifyDueToday: true, NotifyOverdue: false, NotifyGoal: true,
+		UserID: "u1", Phone: "+5511999999999",
 	}
 
 	if err := s.SaveNotificationPrefs(ctx, prefs); err != nil {
@@ -694,7 +693,7 @@ func TestListNotificationPrefsScansEveryUser(t *testing.T) {
 	s, _ := newStore(t, 2) // small pages, so the scan paginator must loop
 	ctx := context.Background()
 	for _, u := range []string{"u3", "u1", "u2"} {
-		if err := s.SaveNotificationPrefs(ctx, domain.NotificationPrefs{UserID: u, WAEnabled: true}); err != nil {
+		if err := s.SaveNotificationPrefs(ctx, domain.NotificationPrefs{UserID: u, Phone: "5511999999999"}); err != nil {
 			t.Fatalf("save prefs %s: %v", u, err)
 		}
 	}

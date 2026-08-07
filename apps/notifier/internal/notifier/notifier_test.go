@@ -159,7 +159,7 @@ func TestRunSendsDigestToEnabledUserInWindow(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -181,7 +181,7 @@ func TestRunSkipsOutsideCustomerServiceWindow(t *testing.T) {
 	// Enabled, with a real due-today alert, but last messaged us days ago.
 	seedUser(
 		t, s, outWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -203,7 +203,7 @@ func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
 	// No inbound recorded at all -> no session -> outside the window.
 	seedUser(
 		t, s, time.Time{},
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -216,13 +216,13 @@ func TestRunSkipsWhenNeverMessagedUs(t *testing.T) {
 	}
 }
 
-func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
+// TestRunSkipsRecipientsWithNoPhone: the WhatsApp switch is gone, so the only
+// recipient the notifier cannot reach is one whose Cognito account carries no
+// number — and that is a gap in the data, not a choice, so it is named as such.
+func TestRunSkipsRecipientsWithNoPhone(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
-	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511999999999", NotifyDueToday: true})
-	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "nophone", WAEnabled: true, Phone: "", NotifyDueToday: true})
+	seedUser(t, s, inWindow, domain.NotificationPrefs{UserID: "nophone", Phone: ""})
 
 	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
 	if err != nil {
@@ -231,10 +231,27 @@ func TestRunSkipsDisabledOrPhoneless(t *testing.T) {
 	if res.Evaluated != 0 || len(wa.sent) != 0 {
 		t.Fatalf("nothing should be sent, got res=%+v sent=%d", res, len(wa.sent))
 	}
-	// Both users must be accounted for. A run that reports two prefs rows and
-	// zero of everything else gives no clue that opt-in was the blocker.
-	if res.Prefs != 2 || res.NotOptedIn != 2 {
-		t.Errorf("res=%+v, want Prefs=2 NotOptedIn=2", res)
+	if res.Prefs != 1 || res.Unreachable != 1 {
+		t.Errorf("res=%+v, want Prefs=1 Unreachable=1", res)
+	}
+}
+
+// TestRunSendsToEveryRegisteredRecipient is the other half of removing the
+// opt-in: a row in the table is a recipient, full stop. Nobody has to have
+// switched anything on, and there is no combination of settings that turns the
+// morning quiet.
+func TestRunSendsToEveryRegisteredRecipient(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(t, s, inWindow, domain.NotificationPrefs{UserID: "u1", Phone: "5511900000001"})
+	seedUser(t, s, inWindow, domain.NotificationPrefs{UserID: "u2", Phone: "5511900000002"})
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 2 || len(wa.digests()) != 2 {
+		t.Fatalf("both recipients should get the digest, res=%+v digests=%d", res, len(wa.digests()))
 	}
 }
 
@@ -246,16 +263,14 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	wa := &fakeWA{}
 	ctx := context.Background()
 
-	// Opted out entirely.
-	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "off", WAEnabled: false, Phone: "5511900000001", NotifyDueToday: true})
-	// Enabled and has alerts, but the WhatsApp window closed days ago.
+	// Registered, but no number on the Cognito account.
+	seedUser(t, s, inWindow, domain.NotificationPrefs{UserID: "nophone", Phone: ""})
+	// Reachable, but the WhatsApp window closed days ago.
 	seedUser(t, s, outWindow,
-		domain.NotificationPrefs{UserID: "stale", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "stale", Phone: "5511900000002"},
 		dueExpense("Fornecedor", 285000))
-	// Enabled, in-window, and already sent today.
-	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "done", WAEnabled: true, Phone: "5511900000003", NotifyDueToday: true})
+	// Reachable, in-window, and already sent today.
+	seedUser(t, s, inWindow, domain.NotificationPrefs{UserID: "done", Phone: "5511900000003"})
 	if err := s.fin.RecordNotificationSent(ctx, "done", runDay.Format("2006-01-02"), runDay); err != nil {
 		t.Fatal(err)
 	}
@@ -268,17 +283,14 @@ func TestRunDistinguishesEveryNonDeliveryReason(t *testing.T) {
 	if res.Prefs != 3 {
 		t.Errorf("Prefs = %d, want 3", res.Prefs)
 	}
-	if res.NotOptedIn != 1 {
-		t.Errorf("NotOptedIn = %d, want 1 (the disabled user)", res.NotOptedIn)
+	if res.Unreachable != 1 {
+		t.Errorf("Unreachable = %d, want 1 (the user with no phone)", res.Unreachable)
 	}
 	if res.OutsideWindow != 1 {
 		t.Errorf("OutsideWindow = %d, want 1 (the stale session)", res.OutsideWindow)
 	}
 	if res.SkippedAlreadySent != 1 {
 		t.Errorf("SkippedAlreadySent = %d, want 1 (the user already notified today)", res.SkippedAlreadySent)
-	}
-	if res.SkippedNothingToSend != 0 {
-		t.Errorf("SkippedNothingToSend = %d, want 0 — the analysis assembled fine", res.SkippedNothingToSend)
 	}
 	if res.Sent != 0 || len(wa.sent) != 0 {
 		t.Errorf("nothing should have been sent, res=%+v sent=%d", res, len(wa.sent))
@@ -296,16 +308,18 @@ func (brokenForecast) CashFlowForecast(context.Context, string, string) ([]pkgfi
 	return nil, errors.New("dynamo down")
 }
 
-// TestRunStaysSilentWhenNothingWasActuallyChecked is the one silence the daily
-// digest keeps. The user hears about no bill kind, so the digest may not tell
-// them their bills are in order, and the analysis is unavailable, so it has
-// nothing to say about the month either. A "resumo do dia" with nothing in it
-// would be a message asserting, by its own existence, that someone looked.
-func TestRunStaysSilentWhenNothingWasActuallyChecked(t *testing.T) {
+// TestDigestGoesOutWhenTheAnalysisIsUnavailable: the month's analysis is context
+// for the day's alerts, never a condition for sending them. It used to be the
+// half of the one silence the digest still kept — a recipient who heard about no
+// bill kind and an analysis that failed left nothing verified to say — and with
+// the toggles gone that combination cannot happen: the bills are always
+// reportable, so a broken analysis costs the message its retrospective half and
+// nothing else.
+func TestDigestGoesOutWhenTheAnalysisIsUnavailable(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999"},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000))
 
 	n := New(brokenForecast{s.fin}, s.sessions, wa, "PHONE_ID", "http://localhost:5173", time.UTC, orchestrator.StaticClient{})
@@ -315,11 +329,15 @@ func TestRunStaysSilentWhenNothingWasActuallyChecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 0 || res.Sent != 0 {
-		t.Fatalf("nothing was verified, so nothing may be claimed: res=%+v sent=%v", res, wa.sent)
+	if res.Sent != 1 || len(wa.digests()) != 1 {
+		t.Fatalf("the alerts still had to go out, res=%+v digests=%d", res, len(wa.digests()))
 	}
-	if res.SkippedNothingToSend != 1 {
-		t.Fatalf("SkippedNothingToSend = %d, want 1", res.SkippedNothingToSend)
+	body := wa.digests()[0].body
+	if !strings.Contains(body, "vence hoje") {
+		t.Errorf("digest lost its alert:\n%s", body)
+	}
+	if strings.Contains(body, "Como fechamos até ontem") {
+		t.Errorf("digest reported on a month it could not read:\n%s", body)
 	}
 }
 
@@ -328,7 +346,7 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("e1", 1000),
 	)
 	n := newNotifier(s, wa)
@@ -345,7 +363,7 @@ func TestRunDedupesWithinDay(t *testing.T) {
 	}
 	// Specifically the dedupe counter: a run that skipped for any other reason
 	// would mean the resend guard is not what stopped it.
-	if res.Sent != 0 || res.SkippedAlreadySent != 1 || res.SkippedNothingToSend != 0 {
+	if res.Sent != 0 || res.SkippedAlreadySent != 1 {
 		t.Fatalf("second run res=%+v, want SkippedAlreadySent=1", res)
 	}
 }
@@ -359,7 +377,7 @@ func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 	// In-window and enabled, but the only expense is already paid -> no alert.
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		domain.FinancialEntry{UserID: shared.FinanceLedgerID, EntryID: domain.EntryID("e1"), TransactionDate: domain.NewCalendarDate(runDay), Amount: 1000, Type: domain.EntryTypeExpense, PaymentStatus: domain.PaymentStatusPaid, PaymentDate: ptrCD(runDay), DueDate: ptrCD(runDay), Source: domain.SourceManual},
 	)
 
@@ -375,40 +393,6 @@ func TestRunSendsCalmDigestWhenNothingIsDue(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("calm digest does not say %q:\n%s", want, body)
 		}
-	}
-	if res.SkippedNothingToSend != 0 {
-		t.Errorf("SkippedNothingToSend = %d, want 0", res.SkippedNothingToSend)
-	}
-}
-
-// TestCalmLineClaimsOnlyWhatTheUserSubscribedTo: the absence of an alert is not
-// evidence that nothing is due — a user who switched the kind off gets no alert
-// either way. Telling them "nada vence hoje" over a bill due today is the one
-// sentence in the message that would be false, so it is built from the ledger
-// and gated on the preference.
-func TestCalmLineClaimsOnlyWhatTheUserSubscribedTo(t *testing.T) {
-	s := newStores()
-	wa := &fakeWA{}
-	// A bill really is due today; this user does not hear about due-today bills,
-	// but does hear about overdue ones (and there are none).
-	seedUser(
-		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
-		dueExpense("Fornecedor", 285000),
-	)
-
-	if _, err := newNotifier(s, wa).Run(context.Background(), RunDigest); err != nil {
-		t.Fatal(err)
-	}
-	if len(wa.digests()) != 1 {
-		t.Fatalf("want 1 send, got %d", len(wa.digests()))
-	}
-	body := wa.digests()[0].body
-	if strings.Contains(body, "Nada vence hoje") {
-		t.Errorf("digest claims nothing is due while a bill is due today:\n%s", body)
-	}
-	if !strings.Contains(body, "Não há contas vencidas") {
-		t.Errorf("digest drops the claim this user did subscribe to:\n%s", body)
 	}
 }
 
@@ -438,7 +422,7 @@ func TestGoalAlertOnlyCountsCurrentMonthFaturamento(t *testing.T) {
 	}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyGoal: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		maySale, julyLoan,
 	)
 	if err := s.fin.SaveGoal(ctx, domain.Goal{
@@ -471,7 +455,7 @@ func TestRunSendsHumanizedDigestWhenGeneratorSucceeds(t *testing.T) {
 	gen := &fakeGen{reply: "Olá! Você tem uma conta de R$2.850,00 vencendo hoje. 🙂"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -514,7 +498,7 @@ func TestBillListShipsAsItsOwnMessage(t *testing.T) {
 	gen := &fakeGen{reply: "Bom dia! Hoje há pagamentos a fazer. 🙂"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Distribuidora Santa Cruz", "Santa Cruz LTDA", 285000),
 		pendingExpense("e2", "Energia", "", 13500),
 		pendingExpense("e3", "Água", "", 1500),
@@ -576,7 +560,7 @@ func TestBillListShipsAsItsOwnMessage(t *testing.T) {
 func TestBillListSplitsRatherThanTruncates(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
-	prefs := domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true}
+	prefs := domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"}
 
 	const bills = 120
 	entries := make([]domain.FinancialEntry, 0, bills)
@@ -635,7 +619,7 @@ func TestBillListSurvivesAnAbsurdDescription(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		// A paste accident in the description field, and two ordinary bills
 		// behind it that must still arrive.
 		pendingExpense("e1", strings.Repeat("descrição colada por engano ", 300), "", 100000),
@@ -677,30 +661,6 @@ func TestBillListSurvivesAnAbsurdDescription(t *testing.T) {
 	}
 }
 
-// TestBillListRespectsTheDueTodayOptOut: the list is the detail behind the
-// due-today alert. Someone who switched that alert off must not receive it by
-// another route.
-func TestBillListRespectsTheDueTodayOptOut(t *testing.T) {
-	s := newStores()
-	wa := &fakeWA{}
-	seedUser(
-		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
-		pendingExpense("e1", "Distribuidora", "", 285000),
-	)
-
-	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(wa.billLists()) != 0 || res.BillListsSent != 0 {
-		t.Fatalf("bill list sent to someone who opted out: %v", wa.billLists())
-	}
-	if len(wa.digests()) != 1 {
-		t.Fatalf("the digest itself must still go out, got %d", len(wa.digests()))
-	}
-}
-
 // TestDigestPromptOnlyAnnouncesAListThatIsComing: the sentence pointing at the
 // next message is written only when there is one, or the digest sends the
 // reader looking for something that never arrives.
@@ -710,7 +670,7 @@ func TestDigestPromptOnlyAnnouncesAListThatIsComing(t *testing.T) {
 	gen := &fakeGen{reply: "Bom dia! Está tudo em ordem por aqui. 🙂"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 	)
 
 	if _, err := newNotifierWithGen(s, wa, gen).Run(context.Background(), RunDigest); err != nil {
@@ -729,7 +689,7 @@ func TestNoBillListOnAQuietDay(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 	)
 
 	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
@@ -749,7 +709,7 @@ func TestDigestSurvivesAFailedBillList(t *testing.T) {
 	wa := &failAfterFirst{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Distribuidora", "", 285000),
 	)
 
@@ -800,7 +760,7 @@ func TestAfternoonRunSendsOnlyWhatIsStillOpen(t *testing.T) {
 	gen := &fakeGen{reply: "não deveria ser chamado"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Folha de pagamento", "", 900000),
 		paidExpense("e2", "Distribuidora Santa Cruz", 285000),
 	)
@@ -859,7 +819,7 @@ func TestAfternoonRunSendsWithNothingPending(t *testing.T) {
 			wa := &fakeWA{}
 			seedUser(
 				t, s, inWindow,
-				domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+				domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 				tc.entries...,
 			)
 
@@ -884,7 +844,7 @@ func TestAfternoonRunDedupesApartFromTheDigest(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Folha de pagamento", "", 900000),
 	)
 	n := newNotifier(s, wa)
@@ -924,7 +884,7 @@ func TestAfternoonRunWritesNoSnapshot(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Folha de pagamento", "", 900000),
 	)
 
@@ -936,30 +896,12 @@ func TestAfternoonRunWritesNoSnapshot(t *testing.T) {
 	}
 }
 
-func TestAfternoonRunRespectsTheDueTodayOptOut(t *testing.T) {
-	s := newStores()
-	wa := &fakeWA{}
-	seedUser(
-		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
-		pendingExpense("e1", "Folha de pagamento", "", 900000),
-	)
-
-	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(wa.sent) != 0 || res.SkippedNothingToSend != 1 {
-		t.Fatalf("reminder sent to someone who opted out: %v (res=%+v)", wa.sent, res)
-	}
-}
-
 func TestAfternoonRunHonoursTheWhatsAppWindow(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
 	seedUser(
 		t, s, outWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		pendingExpense("e1", "Folha de pagamento", "", 900000),
 	)
 
@@ -1035,7 +977,7 @@ func TestDigestFeedsTheModelTheWholeInsightsJSON(t *testing.T) {
 	gen := &fakeGen{reply: "Bom dia! Hoje vence uma conta de R$ 2.850,00. 🙂"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -1084,7 +1026,7 @@ func TestDigestWithoutAModelShipsTheDraftAndNotTheJSON(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -1111,7 +1053,7 @@ func TestRunFallsBackToStaticDigestOnGeneratorError(t *testing.T) {
 	gen := &fakeGen{err: errors.New("gemini down")}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true, NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -1139,7 +1081,7 @@ func TestDigestReplacesInventedLinkPlaceholderWithRealURL(t *testing.T) {
 		"Para mais detalhes, acesse seu dashboard aqui: [Link para o dashboard]"}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 10000),
 	)
 
@@ -1179,7 +1121,7 @@ func TestDigestOmitsCallToActionWhenNoDashboardURL(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 10000),
 	)
 	n := New(s.fin, s.sessions, wa, "PHONE_ID", "", time.UTC, orchestrator.StaticClient{})
@@ -1204,7 +1146,7 @@ func TestStaticDigestCarriesLinkExactlyOnce(t *testing.T) {
 	gen := &fakeGen{err: errors.New("gemini down")}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 10000),
 	)
 
@@ -1237,9 +1179,9 @@ func TestRunNotifiesMultipleCognitoUsersFromSharedLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511900000001", NotifyDueToday: true})
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511900000001"})
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u2", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true})
+		domain.NotificationPrefs{UserID: "u2", Phone: "5511900000002"})
 
 	res, err := newNotifier(s, wa).Run(ctx, RunDigest)
 	if err != nil {
@@ -1268,9 +1210,9 @@ func TestRunDedupeIsPerRecipientNotPerLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511900000001", NotifyDueToday: true})
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511900000001"})
 	seedUser(t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u2", WAEnabled: true, Phone: "5511900000002", NotifyDueToday: true})
+		domain.NotificationPrefs{UserID: "u2", Phone: "5511900000002"})
 	if err := s.fin.RecordNotificationSent(ctx, "u1", runDay.Format("2006-01-02"), runDay); err != nil {
 		t.Fatal(err)
 	}
@@ -1300,7 +1242,7 @@ func TestDigestCarriesTheMonthsAnalysis(t *testing.T) {
 	}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000), sale,
 	)
 	if err := s.fin.SaveGoal(ctx, domain.Goal{
@@ -1346,7 +1288,7 @@ func TestDigestStillSendsWhenTheAnalysisIsEmpty(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -1366,7 +1308,7 @@ func TestRunPersistsInsightSnapshot(t *testing.T) {
 	wa := &fakeWA{}
 	seedUser(
 		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		dueExpense("Fornecedor", 285000),
 	)
 
@@ -1429,7 +1371,7 @@ func TestDigestOnTheFirstOfTheMonthTalksOnlyAboutWhatIsAhead(t *testing.T) {
 
 	seedUser(
 		t, s, firstOfMonth.Add(-6*time.Hour),
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyOverdue: true},
+		domain.NotificationPrefs{UserID: "u1", Phone: "5511999999999"},
 		entries...,
 	)
 	if err := s.fin.SaveGoal(ctx, domain.Goal{
