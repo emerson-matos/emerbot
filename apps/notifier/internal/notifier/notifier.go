@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -138,6 +139,17 @@ func (r Result) LogAttrs() []any {
 		"outside_window", r.OutsideWindow,
 		"errors", r.Errors,
 	}
+}
+
+// dayRun is the run-scoped state every recipient in a run shares: the logger
+// already bound to the date and the kind, the delivery-log key for this run, and
+// the instant the run started. They travel together because they are decided
+// together, once, in Run — and because passing them one by one is how a function
+// ends up with seven positional parameters.
+type dayRun struct {
+	log       *slog.Logger
+	dedupeKey string
+	now       time.Time
 }
 
 // RunKind names which of the day's scheduled runs this is. The two do
@@ -284,7 +296,8 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 	// recomputing the analysis at 15h would also overwrite the morning's
 	// snapshot with a second, unnecessary write.
 	if kind == RunOpenBills {
-		return n.remindOpenBills(ctx, res, runLog, candidates, dueBills, nowInstant, dedupeKey)
+		err := n.remindOpenBills(ctx, dayRun{log: runLog, dedupeKey: dedupeKey, now: nowInstant}, &res, candidates, dueBills)
+		return res, err
 	}
 
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
@@ -403,7 +416,7 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 			continue
 		}
 
-		msg := n.buildDigest(content)
+		msg := n.buildDigest(ctx, content)
 		if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, msg); err != nil {
 			fail(log, fmt.Errorf("user %s: send: %w", prefs.UserID, err))
 			continue
@@ -420,16 +433,15 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 		// the back door.
 		if listFollows {
 			parts := billListMessages(dueBills, dueTodayTitle)
-			for i, part := range parts {
-				if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, part); err != nil {
-					// Not a `continue`: the digest did go out, and the delivery
-					// log below has to record that or tomorrow's run repeats it.
-					fail(log, fmt.Errorf("user %s: send bill list (%d/%d): %w", prefs.UserID, i+1, len(parts), err))
-					break
-				}
-				res.BillListsSent++
-			}
-			if len(parts) > 0 {
+			sent, err := n.sendAll(ctx, prefs.Phone, parts)
+			res.BillListsSent += sent
+			if err != nil {
+				// Not a `continue`: the digest did go out, and the delivery log
+				// below has to record that or tomorrow's run repeats it. The
+				// bills themselves get a second chance at 15h, from the afternoon
+				// run's own key.
+				fail(log, fmt.Errorf("user %s: send bill list: %w", prefs.UserID, err))
+			} else {
 				log.Info("notifier bill list sent", "bills", len(dueBills), "messages", len(parts))
 			}
 		}
@@ -568,19 +580,17 @@ func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCo
 // is written: the afternoon has nothing new to say about the month, and a
 // second snapshot a day would only overwrite the morning's with the same
 // figures.
-func (n *Notifier) remindOpenBills(
-	ctx context.Context,
-	res Result,
-	runLog *slog.Logger,
-	candidates []domain.NotificationPrefs,
-	dueBills []notifications.Bill,
-	nowInstant time.Time,
-	dedupeKey string,
-) (Result, error) {
+func (n *Notifier) remindOpenBills(ctx context.Context, run dayRun, res *Result, candidates []domain.NotificationPrefs, dueBills []notifications.Bill) error {
 	var errs []error
+	fail := func(log *slog.Logger, err error) {
+		res.Errors++
+		log.Error("notifier bill reminder failed", "error", err)
+		errs = append(errs, err)
+	}
+
 	for _, prefs := range candidates {
 		res.Evaluated++
-		log := runLog.With("user", prefs.UserID, "phone", maskPhone(prefs.Phone))
+		log := run.log.With("user", prefs.UserID, "phone", maskPhone(prefs.Phone))
 
 		// Same opt-in as the list that follows the digest: this is the detail
 		// behind the due-today alert, in the afternoon instead of the morning.
@@ -594,24 +604,18 @@ func (n *Notifier) remindOpenBills(
 
 		expiry, err := n.sessions.ActiveUntil(ctx, prefs.Phone)
 		if err != nil {
-			res.Errors++
-			err = fmt.Errorf("user %s: session check: %w", prefs.UserID, err)
-			log.Error("notifier bill reminder failed", "error", err)
-			errs = append(errs, err)
+			fail(log, fmt.Errorf("user %s: session check: %w", prefs.UserID, err))
 			continue
 		}
-		if expiry.IsZero() || !expiry.After(nowInstant) {
+		if expiry.IsZero() || !expiry.After(run.now) {
 			res.OutsideWindow++
 			log.Info("notifier bill reminder not sent", "reason", "outside_whatsapp_window")
 			continue
 		}
 
-		already, err := n.store.NotificationSent(ctx, prefs.UserID, dedupeKey)
+		already, err := n.store.NotificationSent(ctx, prefs.UserID, run.dedupeKey)
 		if err != nil {
-			res.Errors++
-			err = fmt.Errorf("user %s: check log: %w", prefs.UserID, err)
-			log.Error("notifier bill reminder failed", "error", err)
-			errs = append(errs, err)
+			fail(log, fmt.Errorf("user %s: check log: %w", prefs.UserID, err))
 			continue
 		}
 		if already {
@@ -629,40 +633,41 @@ func (n *Notifier) remindOpenBills(
 			parts = []string{noOpenBillsMessage}
 		}
 
-		failed := false
-		for i, part := range parts {
-			if err := n.wa.SendText(ctx, n.phoneNumberID, prefs.Phone, part); err != nil {
-				err = fmt.Errorf("user %s: send bill reminder (%d/%d): %w", prefs.UserID, i+1, len(parts), err)
-				res.Errors++
-				log.Error("notifier bill reminder failed", "error", err)
-				errs = append(errs, err)
-				failed = true
-				break
-			}
-			res.BillListsSent++
-		}
-		if failed {
+		sent, err := n.sendAll(ctx, prefs.Phone, parts)
+		res.BillListsSent += sent
+		if err != nil {
 			// Nothing recorded, so the scheduler's retry — or tomorrow — can try
 			// again. There is no half-sent state worth protecting here: the
 			// reminder is one list, and a resend of it is harmless.
+			fail(log, fmt.Errorf("user %s: send bill reminder: %w", prefs.UserID, err))
 			continue
 		}
 		log.Info("notifier bill reminder sent", "open", len(dueBills), "messages", len(parts))
 
-		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, dedupeKey, n.now()); err != nil {
-			res.Errors++
-			err = fmt.Errorf("user %s: record log: %w", prefs.UserID, err)
-			log.Error("notifier bill reminder failed", "error", err)
-			errs = append(errs, err)
+		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, run.dedupeKey, n.now()); err != nil {
+			fail(log, fmt.Errorf("user %s: record log: %w", prefs.UserID, err))
 		}
 	}
 
 	if res.BillListsSent == 0 {
-		runLog.Warn("notifier run finished without sending anything", res.LogAttrs()...)
+		run.log.Warn("notifier run finished without sending anything", res.LogAttrs()...)
 	} else {
-		runLog.Info("notifier run finished", res.LogAttrs()...)
+		run.log.Info("notifier run finished", res.LogAttrs()...)
 	}
-	return res, errors.Join(errs...)
+	return errors.Join(errs...)
+}
+
+// sendAll delivers a message and its continuations in order, returning how many
+// went out before the first failure. It stops there rather than pressing on: the
+// parts are one list cut into pieces, and a gap in the middle of it is harder to
+// read than a list that plainly stops.
+func (n *Notifier) sendAll(ctx context.Context, phone string, parts []string) (int, error) {
+	for i, part := range parts {
+		if err := n.wa.SendText(ctx, n.phoneNumberID, phone, part); err != nil {
+			return i, fmt.Errorf("part %d/%d: %w", i+1, len(parts), err)
+		}
+	}
+	return len(parts), nil
 }
 
 // noOpenBillsMessage is the afternoon of a day with nothing left to pay. It
@@ -690,6 +695,12 @@ const maxWhatsAppText = 3800
 // "e mais 4" (ADR-015), and it splits into further messages rather than losing
 // its tail.
 //
+// Every message it returns fits the budget. That is not a detail: Meta rejects
+// an over-length body whole, and the caller stops sending at the first refusal —
+// so one pathological line would take every bill behind it down with it, on both
+// of the day's runs, and the reader would get a digest quoting a total with
+// nothing itemising it.
+//
 // Returns nil when nothing is due, which is not a case worth a message: the
 // digest already says the day is clear.
 func billListMessages(bills []notifications.Bill, title string) []string {
@@ -698,23 +709,25 @@ func billListMessages(bills []notifications.Bill, title string) []string {
 	}
 
 	var total int64
-	lines := make([]string, 0, len(bills))
 	for _, b := range bills {
 		total += b.Amount
-		lines = append(lines, "• "+b.Text)
 	}
-
 	header := fmt.Sprintf("💸 *%s* (%d) — total R$ %s",
 		title, len(bills), notifications.FormatBRL(total))
 	// Every chunk is measured against the same budget, so the reserve is the
 	// longest header any of them could carry — which is the first one on a day
-	// with a big total, and the continuation on a day with a small one.
+	// with a big total, and the continuation on a day with a small one. The part
+	// numbers are sized at their widest rather than counted, because the count is
+	// not known until the lines have been chunked against this very budget.
 	reserve := max(len(header), len(continuationHeader(title, 999, 999))) + len("\n\n")
-	chunks := chunkLines(lines, maxWhatsAppText-reserve)
-	if len(chunks) == 1 {
-		return []string{header + "\n\n" + strings.Join(chunks[0], "\n")}
+	budget := maxWhatsAppText - reserve
+
+	lines := make([]string, 0, len(bills))
+	for _, b := range bills {
+		lines = append(lines, clipLine("• "+b.Text, budget))
 	}
 
+	chunks := chunkLines(lines, budget)
 	messages := make([]string, 0, len(chunks))
 	for i, chunk := range chunks {
 		head := header
@@ -739,12 +752,37 @@ const (
 	openBillsTitle = "Saídas de hoje ainda em aberto"
 )
 
+// clipLine shortens a single line that could not fit a message on its own, and
+// marks where it was cut.
+//
+// A bill's description is still not ours to shorten, and nothing here does it
+// for tidiness: the budget is thousands of characters, so a line reaching it is
+// a data-entry accident rather than a long supplier name. What changed is the
+// alternative. An over-length line does not merely fail its own message — Meta
+// rejects it, the send loop stops there, and the rest of the day's bills go with
+// it. Losing the tail of one description is the smaller loss, it is visible (…),
+// and the amount leads the line, so the money is never what gets cut.
+func clipLine(line string, budget int) string {
+	if budget <= 0 || len(line) <= budget {
+		return line
+	}
+	const ellipsis = "…"
+	keep := budget - len(ellipsis)
+	// Back off to a rune boundary: cutting mid-sequence would ship replacement
+	// characters, which is a worse way to say "this was cut" than saying it.
+	for keep > 0 && !utf8.RuneStart(line[keep]) {
+		keep--
+	}
+	return line[:keep] + ellipsis
+}
+
 // chunkLines groups lines into runs that fit the budget, counting the newline
-// each one costs. A single line longer than the budget gets a chunk of its own
-// and goes out over-length rather than being cut: a bill's description is not
-// ours to shorten, and Meta rejecting one message is a louder failure — and a
-// more honest one — than a payment silently losing half its name.
+// each one costs. Its caller has already clipped any line that could not fit one
+// on its own (see clipLine), so no chunk it returns can exceed the budget.
 func chunkLines(lines []string, budget int) [][]string {
+	if len(lines) == 0 {
+		return nil
+	}
 	var chunks [][]string
 	var current []string
 	size := 0
@@ -764,9 +802,9 @@ func chunkLines(lines []string, budget int) [][]string {
 // rewrite; the dashboard call-to-action is appended afterwards, so the link that
 // actually ships is always the configured URL and never something the model
 // paraphrased, dropped or invented.
-func (n *Notifier) buildDigest(content digestContent) string {
+func (n *Notifier) buildDigest(ctx context.Context, content digestContent) string {
 	body := buildAlertsBody(content)
-	if humanized, ok := n.humanize(body, content); ok {
+	if humanized, ok := n.humanize(ctx, body, content); ok {
 		body = humanized
 	}
 	return withDashboardLink(body, n.dashboardURL)
@@ -781,8 +819,10 @@ func (n *Notifier) buildDigest(content digestContent) string {
 // to an echo generator when Gemini is not configured, and an echo returns the
 // user message verbatim: keeping the ready-to-send draft there is what makes an
 // unconfigured notifier ship the static message instead of a page of JSON.
-func (n *Notifier) humanize(body string, content digestContent) (string, bool) {
-	genCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+func (n *Notifier) humanize(ctx context.Context, body string, content digestContent) (string, bool) {
+	// Derived from the run's context, not from Background: a Lambda being shut
+	// down should cancel the call it is waiting on, not hold the timeout open.
+	genCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	output, err := n.gen.Generate(genCtx, orchestrator.Input{
@@ -803,6 +843,15 @@ func (n *Notifier) humanize(body string, content digestContent) (string, bool) {
 	}
 	text := stripInventedLinks(output.Text)
 	if text == "" {
+		return "", false
+	}
+	// Meta rejects an over-length body whole, so a model that runs long would
+	// cost the digest entirely rather than its last paragraph. The draft is
+	// bounded by construction (a handful of rendered lines); the rewrite is only
+	// bounded by the generator's token limit, which is close enough to this one
+	// to be worth checking.
+	if len(text)+len(dashboardLink(n.dashboardURL)) > maxWhatsAppText {
+		slog.Warn("notifier digest rewrite too long for WhatsApp, using static draft", "chars", len(text))
 		return "", false
 	}
 	return text, true

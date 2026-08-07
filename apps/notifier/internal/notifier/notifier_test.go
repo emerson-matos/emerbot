@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -49,9 +51,18 @@ func (f *fakeWA) SendReply(context.Context, string, string, string, string) erro
 	return nil
 }
 
+// metaTextLimit is what the Graph API accepts in a text body. The fake enforces
+// it because the real one does: an over-length message is not truncated by Meta,
+// it is refused, and a test double that quietly accepts anything cannot show what
+// that refusal costs the messages queued behind it.
+const metaTextLimit = 4096
+
 func (f *fakeWA) SendText(_ context.Context, _ /*phoneNumberID*/, to, body string) error {
 	if f.err != nil {
 		return f.err
+	}
+	if len(body) > metaTextLimit {
+		return fmt.Errorf("meta: message body of %d bytes exceeds the %d limit", len(body), metaTextLimit)
 	}
 	f.sent = append(f.sent, sentMsg{to, body})
 	return nil
@@ -611,6 +622,61 @@ func TestBillListSplitsRatherThanTruncates(t *testing.T) {
 	}
 }
 
+// TestBillListSurvivesAnAbsurdDescription is the failure the split was supposed
+// to prevent and did not. A description long enough to blow the budget on its
+// own used to ship over-length; Meta rejects such a body whole, the send loop
+// stops at the first refusal, and every bill behind it is lost — on both of the
+// day's runs, since both rebuild the same list from the same ledger.
+//
+// The line is clipped now, visibly, and the amount leads it — so what gets cut
+// is the tail of one description and never a payment.
+func TestBillListSurvivesAnAbsurdDescription(t *testing.T) {
+	s := newStores()
+	wa := &fakeWA{}
+	seedUser(
+		t, s, inWindow,
+		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+		// A paste accident in the description field, and two ordinary bills
+		// behind it that must still arrive.
+		pendingExpense("e1", strings.Repeat("descrição colada por engano ", 300), "", 100000),
+		pendingExpense("e2", "Folha de pagamento", "", 900000),
+		pendingExpense("e3", "Energia", "", 13500),
+	)
+
+	res, err := newNotifier(s, wa).Run(context.Background(), RunDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lists := wa.billLists()
+	if len(lists) == 0 || res.BillListsSent != len(lists) {
+		t.Fatalf("the list did not go out: %d messages, res=%+v", len(lists), res)
+	}
+
+	all := ""
+	for i, m := range lists {
+		if len(m.body) > maxWhatsAppText {
+			t.Errorf("message %d is %d bytes — Meta would reject it whole", i+1, len(m.body))
+		}
+		if !utf8.ValidString(m.body) {
+			t.Errorf("message %d was cut mid-rune", i+1)
+		}
+		all += m.body
+	}
+	// The bills behind the absurd one are what this is about.
+	for _, want := range []string{"R$ 9.000,00 — Folha de pagamento", "R$ 135,00 — Energia"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("a bill was lost behind the over-long line: %q missing from\n%s", want, all)
+		}
+	}
+	// The clipped one keeps its amount and says it was cut.
+	if !strings.Contains(all, "R$ 1.000,00 — descrição colada") {
+		t.Errorf("the clipped line lost its amount:\n%s", all)
+	}
+	if !strings.Contains(all, "…") {
+		t.Errorf("the line was cut without saying so:\n%s", all)
+	}
+}
+
 // TestBillListRespectsTheDueTodayOptOut: the list is the detail behind the
 // due-today alert. Someone who switched that alert off must not receive it by
 // another route.
@@ -930,6 +996,27 @@ func TestParseRunKind(t *testing.T) {
 		}
 		if err != nil || got != tc.want {
 			t.Errorf("ParseRunKind(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+}
+
+// TestScheduleInputsMatchTheRunKinds ties the Terraform literals to the Go
+// constants. Nothing else does: ParseRunKind is tested against strings this
+// package writes itself, so renaming the JSON field or editing the scheduler's
+// input would leave every test green while the afternoon schedule silently
+// invoked a second morning digest — the exact failure RunKind exists to prevent,
+// and one that would only show up as a duplicate message on a real phone.
+func TestScheduleInputsMatchTheRunKinds(t *testing.T) {
+	const scheduleTF = "../../../../infra/modules/api_gateway_lambda/main.tf"
+
+	tf, err := os.ReadFile(scheduleTF)
+	if err != nil {
+		t.Fatalf("cannot read the schedule definitions (%s): %v", scheduleTF, err)
+	}
+	for _, kind := range []RunKind{RunDigest, RunOpenBills} {
+		want := fmt.Sprintf("jsonencode({ run = %q })", string(kind))
+		if !strings.Contains(string(tf), want) {
+			t.Errorf("no schedule sends %s — expected %s in %s", kind, want, scheduleTF)
 		}
 	}
 }

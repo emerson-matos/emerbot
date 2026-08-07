@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -165,9 +166,6 @@ func TestBillsCountsTheLedgerAndNotThePreferences(t *testing.T) {
 	if got != want {
 		t.Fatalf("Bills = %+v, want %+v", got, want)
 	}
-	if got.Quiet() {
-		t.Error("Quiet() on a day with two bills due and one late")
-	}
 }
 
 func TestBillsQuietDay(t *testing.T) {
@@ -179,8 +177,67 @@ func TestBillsQuietDay(t *testing.T) {
 		{EntryID: "venda", Amount: 100000, Type: domain.EntryTypeIncome, PaymentStatus: domain.PaymentStatusPending, DueDate: ptrCD(day("2026-07-19"))},
 	}
 
-	got := Bills(entries, today)
-	if !got.Quiet() {
-		t.Fatalf("Bills = %+v, want a quiet day", got)
+	if got := Bills(entries, today); got != (BillStatus{}) {
+		t.Fatalf("Bills = %+v, want an empty status: neither entry is an unpaid bill of today's", got)
+	}
+}
+
+// TestDueTodayWordsAndOrdersTheList covers the copy directly rather than through
+// the notifier, where a regression here reports as a WhatsApp-message failure
+// three packages away.
+func TestDueTodayWordsAndOrdersTheList(t *testing.T) {
+	today := day("2026-07-20")
+	withSupplier := func(desc, supplier string, amount int64) domain.FinancialEntry {
+		e := expense(desc, amount, "2026-07-20", domain.PaymentStatusPending)
+		e.Supplier = supplier
+		return e
+	}
+	entries := []domain.FinancialEntry{
+		withSupplier("Energia", "", 13500),
+		withSupplier("Distribuidora", "Santa Cruz LTDA", 285000),
+		// A supplier that only repeats the description adds nothing to the line.
+		withSupplier("Folha de pagamento", "folha de PAGAMENTO", 900000),
+		// No description at all still has to name something payable.
+		withSupplier("", "", 4200),
+		// Not today's, and not unpaid: neither belongs on the list.
+		expense("Vencida", 20000, "2026-07-01", domain.PaymentStatusPending),
+		expense("Ja pago", 99900, "2026-07-20", domain.PaymentStatusPaid),
+	}
+
+	got := DueToday(entries, today)
+
+	want := []Bill{
+		{Amount: 900000, Text: "R$ 9.000,00 — Folha de pagamento"},
+		{Amount: 285000, Text: "R$ 2.850,00 — Distribuidora (Santa Cruz LTDA)"},
+		{Amount: 13500, Text: "R$ 135,00 — Energia"},
+		{Amount: 4200, Text: "R$ 42,00 — Conta"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DueToday returned %d bills, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("bill %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestDueTodayKeepsLedgerOrderOnTies: the sort is by amount, and equal amounts
+// have no second key worth inventing — so they must come back in the order they
+// arrived, not in whatever order an unstable sort leaves them.
+func TestDueTodayKeepsLedgerOrderOnTies(t *testing.T) {
+	today := day("2026-07-20")
+	entries := []domain.FinancialEntry{
+		expense("Primeira", 50000, "2026-07-20", domain.PaymentStatusPending),
+		expense("Segunda", 50000, "2026-07-20", domain.PaymentStatusPending),
+		expense("Terceira", 50000, "2026-07-20", domain.PaymentStatusPending),
+	}
+
+	got := DueToday(entries, today)
+
+	for i, want := range []string{"Primeira", "Segunda", "Terceira"} {
+		if !strings.Contains(got[i].Text, want) {
+			t.Errorf("bill %d = %q, want %q — ties must keep ledger order", i, got[i].Text, want)
+		}
 	}
 }
