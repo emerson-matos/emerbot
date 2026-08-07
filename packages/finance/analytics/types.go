@@ -203,8 +203,15 @@ type CashOutDay struct {
 	Items []CashOutItem `json:"items"`
 }
 
-// ExpenseComposition is one category's share of the month's expenses.
-type ExpenseComposition struct {
+// CategoryComposition is one category's share of a total — of the month's
+// expenses in Analysis.ExpenseComposition, of its faturamento in
+// Analysis.RevenueComposition.
+//
+// One type for both because it is one shape and one rendering: a name, an
+// amount and a percentage of whatever it decomposes. What differs is which
+// entries went into the fold, and that is the fold's business (see
+// composition.go), not the row's.
+type CategoryComposition struct {
 	CategoryID   string `json:"categoryId"`
 	CategoryName string `json:"categoryName"`
 	Amount       int64  `json:"amount"`
@@ -884,27 +891,47 @@ type KPIs struct {
 //
 // This one *is* a step of its own: unlike the run up to 8, v8 shipped and
 // snapshots were written under it.
-const SchemaVersion = 9
+//
+// 10: added revenueComposition — the month's faturamento split by category —
+// and the category names in both compositions now come from the user's own
+// catalog instead of the default definitions alone, because the catalog became
+// theirs to extend from WhatsApp (ADR-024). cashOutDays still carries raw
+// slugs; naming those is a separate change, and its consumers already know it.
+//
+// An addition alone would not move this number, and the rename would not either
+// — ExpenseComposition became CategoryComposition in Go, with the JSON field
+// untouched. What moves it is that a v9 snapshot read into this struct has no
+// revenueComposition at all, and an empty composition is how this package says
+// "nothing was sold this month". The dashboard serves the stored snapshot, so
+// without the bump a month of atacado and balcão would render as a month with
+// no sales in it — the exact reading the section was added to prevent.
+const SchemaVersion = 10
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.
 type Analysis struct {
 	// Schema is SchemaVersion at the time this Analysis was built. Zero means
 	// a snapshot stored before versioning existed, which is never comparable.
-	Schema             int                  `json:"schemaVersion"`
-	Month              string               `json:"month"`
-	Period             Period               `json:"period"`
-	KPIs               KPIs                 `json:"kpis"`
-	Health             Health               `json:"health"`
-	Trends             Trends               `json:"trends"`
-	Weekdays           []WeekdayStat        `json:"weekdays"`
-	WeekComparison     WeekComparison       `json:"weekComparison"`
-	Highlights         Highlights           `json:"highlights"`
-	CashOutDays        []CashOutDay         `json:"cashOutDays"`
-	ExpenseComposition []ExpenseComposition `json:"expenseComposition"`
-	Goals              GoalProgress         `json:"goals"`
-	Projection         Projection           `json:"projection"`
-	History            []MonthlySnapshot    `json:"history"`
-	CashPosition       CashPosition         `json:"cashPosition"`
-	Recommendations    []Recommendation     `json:"recommendations"`
+	Schema             int                   `json:"schemaVersion"`
+	Month              string                `json:"month"`
+	Period             Period                `json:"period"`
+	KPIs               KPIs                  `json:"kpis"`
+	Health             Health                `json:"health"`
+	Trends             Trends                `json:"trends"`
+	Weekdays           []WeekdayStat         `json:"weekdays"`
+	WeekComparison     WeekComparison        `json:"weekComparison"`
+	Highlights         Highlights            `json:"highlights"`
+	CashOutDays        []CashOutDay          `json:"cashOutDays"`
+	ExpenseComposition []CategoryComposition `json:"expenseComposition"`
+	// RevenueComposition splits the month's faturamento by category — which
+	// kinds of sale it was made of. It is the answer to the question a single
+	// faturamento figure cannot take: a pharmacy that sells at atacado and at
+	// balcão wants to know which of the two moved, and until this existed the
+	// only breakdown in the analysis was of the money going out. See ADR-024.
+	RevenueComposition []CategoryComposition `json:"revenueComposition"`
+	Goals              GoalProgress          `json:"goals"`
+	Projection         Projection            `json:"projection"`
+	History            []MonthlySnapshot     `json:"history"`
+	CashPosition       CashPosition          `json:"cashPosition"`
+	Recommendations    []Recommendation      `json:"recommendations"`
 }

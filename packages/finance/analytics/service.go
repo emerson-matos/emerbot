@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -11,12 +12,18 @@ import (
 
 // LedgerReader is the slice of the finance store the analysis reads. The
 // assembly writes nothing, and saying so here keeps it independent of the
-// 18-method Store — and lets a test double implement four methods.
+// 18-method Store — and lets a test double implement five methods.
 type LedgerReader interface {
 	ListEntries(ctx context.Context, userID string, filter pkgfinance.EntryFilter) ([]domain.FinancialEntry, error)
 	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
 	GetGoal(ctx context.Context, userID, month string) (domain.Goal, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
+	// ListCategories names the categories the breakdowns split into. It joined
+	// this interface when the catalog stopped being a constant: a category the
+	// user created from WhatsApp is not in domain.DefaultCategories, so a
+	// composition built without it would print "venda_varejo" at the person who
+	// named it "Venda Varejo".
+	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
 }
 
 // Assemble fetches everything the analysis needs and builds it. This is the
@@ -99,6 +106,16 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		return Analysis{}, fmt.Errorf("cash flow forecast: %w", err)
 	}
 
+	// The catalog is read for its labels only, so a failure here is not a failure
+	// of the analysis: every rendering falls back to the default definitions and
+	// then to the slug. Losing an accent is not worth losing the month over.
+	var labels map[string]string
+	if cats, err := store.ListCategories(ctx, userID); err == nil {
+		labels = domain.CategoryLabels(cats)
+	} else {
+		log.Printf("analytics: category labels for user %s: %v", userID, err)
+	}
+
 	return Build(Input{
 		Month:                  month,
 		Entries:                entries,
@@ -110,6 +127,7 @@ func Assemble(ctx context.Context, store LedgerReader, userID, month string, now
 		Summaries:              summaries,
 		Goals:                  goals,
 		CashFlowPoints:         points,
+		CategoryLabels:         labels,
 		Now:                    now,
 	}), nil
 }

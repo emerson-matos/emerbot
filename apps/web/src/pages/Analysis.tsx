@@ -612,12 +612,24 @@ function compositionColor(index: number, total: number): string {
   return `color-mix(in oklch, var(--primary) ${100 - step}%, transparent)`
 }
 
-function CompositionSection({ data }: { data: Analysis['expenseComposition'] }) {
+// One composition, rendered once. Faturamento and despesa are different
+// quantities and the same picture — a total split into named parts — and giving
+// each its own component is how the two would drift into looking like different
+// kinds of fact.
+function CompositionSection({
+  title,
+  data,
+  empty,
+}: {
+  title: string
+  data: Analysis['expenseComposition']
+  empty: string
+}) {
   return (
     <Section
-      title="Composição de despesas"
+      title={title}
       icon={PieChart}
-      empty={data.length === 0 ? 'Nenhuma despesa registrada neste mês.' : undefined}
+      empty={data.length === 0 ? empty : undefined}
     >
       <>
         {data.map((item, i) => (
@@ -764,7 +776,19 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         <CashPositionSection data={analysis.cashPosition} />
         <WeekComparisonSection data={analysis.weekComparison} />
         <CashOutSection data={analysis.cashOutDays} />
-        <CompositionSection data={analysis.expenseComposition} />
+        {/* Both sides of the month, side by side. The faturamento split is what
+            answers "vendi mais no atacado ou no balcão?" — until it existed the
+            only breakdown on this page was of the money leaving. */}
+        <CompositionSection
+          title="Composição do faturamento"
+          data={analysis.revenueComposition}
+          empty="Nenhuma venda registrada neste mês."
+        />
+        <CompositionSection
+          title="Composição de despesas"
+          data={analysis.expenseComposition}
+          empty="Nenhuma despesa registrada neste mês."
+        />
       </div>
     </>
   )

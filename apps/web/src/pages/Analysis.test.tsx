@@ -65,6 +65,7 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
     },
     cashOutDays: [],
     expenseComposition: [],
+    revenueComposition: [],
     goals: {
       revenueTarget: 3600000,
       revenueActual: 2777500,
@@ -327,6 +328,7 @@ describe("Analysis page", () => {
      };
     data.recommendations = [];
     data.expenseComposition = [];
+    data.revenueComposition = [];
     data.cashOutDays = [];
     data.weekdays = [];
 
@@ -339,6 +341,7 @@ describe("Analysis page", () => {
       "Projeção do mês",
       "Insights do mês",
       "Composição de despesas",
+      "Composição do faturamento",
       "Dias com maior saída de caixa",
       "A semana da farmácia",
     ]) {

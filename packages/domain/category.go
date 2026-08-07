@@ -1,12 +1,153 @@
 package domain
 
+import (
+	"errors"
+	"strings"
+	"unicode"
+)
+
 // Category represents a financial category for organizing entries.
+//
+// There is one kind of category and one shape for all of them, whoever asked
+// for it: the defaults below, the dashboard's form and the WhatsApp agent all
+// produce the same Slug/Label/Type triple through NewCategory. Default says
+// only *where the definition lives* — true means it is written in this file and
+// is reconciled onto every user (see ReconcileDefaultCategories), false means
+// this user asked for it. It is not a second class of category, and nothing
+// downstream may treat it as one.
 type Category struct {
 	UserID  string
 	Slug    string    // e.g. "aluguel" — used as DynamoDB key
 	Label   string    // e.g. "Aluguel" — displayed in UI
 	Type    EntryType // which entry types this category applies to
-	Default bool      // true = predefined pharmacy category
+	Default bool      // true = defined in this codebase (DefaultCategories)
+}
+
+// maxCategorySlugLen bounds a generated slug. It is a DynamoDB sort key
+// component, and a label pasted from a supplier's invoice can be a paragraph.
+const maxCategorySlugLen = 48
+
+// ErrInvalidCategory is returned by NewCategory when the label or the type
+// cannot produce a usable category.
+var ErrInvalidCategory = errors.New("invalid category")
+
+// NewCategory builds a user-defined category from a human label, in the exact
+// shape the defaults have: a snake_case ASCII slug, the label as typed, and an
+// entry type.
+//
+// It exists so a category created from WhatsApp is indistinguishable from one
+// created in the dashboard. The two paths used to build the struct by hand —
+// the dashboard took the slug straight from the request body — so nothing
+// stopped "Venda Atacado", "venda-atacado" and "vendaAtacado" from becoming
+// three categories of the same thing, and every reader downstream would have had
+// to cope with all three spellings. The slug is derived here, once, from the
+// label; a caller may propose one (slug), but it goes through the same
+// normalization.
+func NewCategory(userID, label, slug string, entryType EntryType) (Category, error) {
+	label = strings.Join(strings.Fields(label), " ")
+	if label == "" {
+		return Category{}, ErrInvalidCategory
+	}
+	if entryType != EntryTypeExpense && entryType != EntryTypeIncome {
+		return Category{}, ErrInvalidCategory
+	}
+	if strings.TrimSpace(slug) == "" {
+		slug = label
+	}
+	normalized := NormalizeCategorySlug(slug)
+	if normalized == "" {
+		return Category{}, ErrInvalidCategory
+	}
+	return Category{
+		UserID: userID,
+		Slug:   normalized,
+		Label:  label,
+		Type:   entryType,
+		// Not a default: the defaults are the ones written in this file. A
+		// category someone asked for is still an ordinary category — see the
+		// type's doc — but it is not reconciled onto anybody else.
+		Default: false,
+	}, nil
+}
+
+// NormalizeCategorySlug renders any text as a category slug in the one form
+// this codebase uses: lowercase ASCII words joined by underscores, accents
+// folded ("Empréstimo" → "emprestimo"), everything else dropped.
+//
+// It is the single definition of "the same pattern as today". Empty output
+// means the input had nothing usable in it (punctuation or emoji alone), which
+// callers must reject rather than store.
+func NormalizeCategorySlug(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastUnderscore := true // leading underscores never get written
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		r = foldAccent(r)
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		}
+		if b.Len() >= maxCategorySlugLen {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+// accentFolds is pt-BR's diacritics, written out rather than pulled from
+// golang.org/x/text: the whole need here is a handful of vowels plus ç, and a
+// Unicode normalization dependency for that is more surface than the problem.
+var accentFolds = map[rune]rune{
+	'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a',
+	'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+	'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+	'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o',
+	'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+	'ç': 'c', 'ñ': 'n',
+}
+
+func foldAccent(r rune) rune {
+	if folded, ok := accentFolds[r]; ok {
+		return folded
+	}
+	return r
+}
+
+// CategoryLabelFromSlug is the label to show when the real one is not at hand:
+// the slug title-cased, "venda_atacado" → "Venda Atacado".
+//
+// It is a fallback and never the first choice. A category's label is whatever
+// the user typed, accents and all, and it lives in their catalog — this only
+// keeps a rendering from printing a raw slug at somebody when the catalog could
+// not be read or the entry names a category that no longer exists.
+func CategoryLabelFromSlug(slug string) string {
+	words := strings.Split(strings.ReplaceAll(slug, "_", " "), " ")
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
+	}
+	return strings.Join(words, " ")
+}
+
+// CategoryLabels indexes a catalog by slug, so a rendering can name a category
+// the way its owner named it. Missing slugs are the caller's to fall back on —
+// see CategoryLabelFromSlug.
+func CategoryLabels(cats []Category) map[string]string {
+	labels := make(map[string]string, len(cats))
+	for _, c := range cats {
+		labels[c.Slug] = c.Label
+	}
+	return labels
 }
 
 // needsCategoryUpdate reports whether a stored default category diverged from

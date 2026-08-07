@@ -86,25 +86,26 @@ func (h *CategoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Slug = strings.TrimSpace(req.Slug)
-	req.Label = strings.TrimSpace(req.Label)
-	if req.Slug == "" || req.Label == "" {
-		httpx.Error(w, "slug and label are required", http.StatusBadRequest)
+	if strings.TrimSpace(req.Label) == "" {
+		httpx.Error(w, "label is required", http.StatusBadRequest)
 		return
 	}
-
 	entryType := domain.EntryType(req.Type)
 	if entryType != domain.EntryTypeExpense && entryType != domain.EntryTypeIncome {
 		httpx.Error(w, "type must be 'expense' or 'income'", http.StatusBadRequest)
 		return
 	}
 
-	cat := domain.Category{
-		UserID:  claims.UserID,
-		Slug:    req.Slug,
-		Label:   req.Label,
-		Type:    entryType,
-		Default: false,
+	// Through the same constructor the WhatsApp agent uses, so a category created
+	// here and one created there are the same thing. The slug used to be taken
+	// from the request body verbatim: "Venda Atacado", "venda-atacado" and
+	// "vendaAtacado" were three categories of one, and every breakdown downstream
+	// would have had to know that. A slug in the body is now a suggestion — it
+	// goes through the same normalization as the label.
+	cat, err := domain.NewCategory(claims.UserID, req.Label, req.Slug, entryType)
+	if err != nil {
+		httpx.Error(w, "label must contain letters or numbers", http.StatusBadRequest)
+		return
 	}
 	if err := h.store.SaveCategory(r.Context(), cat); err != nil {
 		httpx.Error(w, "failed to save category", http.StatusInternalServerError)
