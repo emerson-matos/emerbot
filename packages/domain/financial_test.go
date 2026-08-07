@@ -268,29 +268,6 @@ func TestNewFinancialEntryDefaults(t *testing.T) {
 	})
 }
 
-func TestAmountReais(t *testing.T) {
-	tests := []struct {
-		amount int64
-		want   string
-	}{
-		{0, "0,00"},
-		{1, "0,01"},
-		{10, "0,10"},
-		{100, "1,00"},
-		{101, "1,01"},
-		{1500, "15,00"},
-		{99999, "999,99"},
-		{100000, "1000,00"},
-		{123456, "1234,56"},
-	}
-	for _, tt := range tests {
-		e := FinancialEntry{Amount: tt.amount}
-		if got := e.AmountReais(); got != tt.want {
-			t.Errorf("AmountReais(%d) = %q, want %q", tt.amount, got, tt.want)
-		}
-	}
-}
-
 func TestDefaultCategories(t *testing.T) {
 	cats := DefaultCategories("u1")
 	if len(cats) != 18 {

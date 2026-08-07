@@ -31,7 +31,7 @@ export interface Entry {
    */
   Origin?: IncomeOrigin | "";
   /**
-   * Set on the occurrences /recorrente generated together, empty on a one-off
+   * Set on occurrences created together as one series, empty on a one-off
    * entry. Editing one instalment of a series edits the whole agreement — see
    * the scope option on api.entries.update.
    */

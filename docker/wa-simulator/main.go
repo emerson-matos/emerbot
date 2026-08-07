@@ -329,15 +329,15 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       </div>
 
       <div class="chips">
-        <span class="chip" onclick="fill('/resumo')">/resumo</span>
-        <span class="chip" onclick="fill('/despesa 500 aluguel')">/despesa 500 aluguel</span>
-        <span class="chip" onclick="fill('/despesa 500 aluguel 10/07')">/despesa 500 aluguel 10/07</span>
-        <span class="chip" onclick="fill('/receita 1200 venda_balcao')">/receita 1200 venda_balcao</span>
-        <span class="chip" onclick="fill('/pagar 300 energia_agua 20/07')">/pagar 300 energia_agua 20/07</span>
-        <span class="chip" onclick="fill('/receber 800 convenio')">/receber 800 convenio</span>
-        <span class="chip" onclick="fill('/recorrente pagar 350 aluguel mensal 12')">/recorrente pagar 350 aluguel mensal 12</span>
-        <span class="chip" onclick="fill('/goal')">/goal</span>
-        <span class="chip" onclick="fill('/meta 80000 60000')">/meta 80000 60000</span>
+        <span class="chip" onclick="fill('como foi o mês?')">como foi o mês?</span>
+        <span class="chip" onclick="fill('paguei 500 de aluguel')">paguei 500 de aluguel</span>
+        <span class="chip" onclick="fill('paguei 1.500 de aluguel dia 10/07')">paguei 1.500 de aluguel dia 10/07</span>
+        <span class="chip" onclick="fill('vendi 1200 no balcão hoje')">vendi 1200 no balcão hoje</span>
+        <span class="chip" onclick="fill('conta de luz de 300 vence dia 20/07')">conta de luz de 300 vence 20/07</span>
+        <span class="chip" onclick="fill('o convênio me deve 800')">o convênio me deve 800</span>
+        <span class="chip" onclick="fill('quanto ainda tenho a pagar esse mês?')">quanto tenho a pagar?</span>
+        <span class="chip" onclick="fill('como está a meta do mês?')">como está a meta?</span>
+        <span class="chip" onclick="fill('minha meta desse mês é 80.000 de faturamento')">meta de 80.000</span>
       </div>
 
       <div class="input-row">

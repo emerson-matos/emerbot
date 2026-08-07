@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/emerson/emerbot/apps/webhook/internal/financial"
 	"github.com/emerson/emerbot/packages/conversation"
 	"github.com/emerson/emerbot/packages/domain"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
@@ -92,42 +90,18 @@ type waStatus struct {
 	Status string `json:"status"`
 }
 
-// financialCommands are prefixes that route to the financial handler instead
-// of the AI orchestrator.
-var financialCommands = []string{"/despesa", "/receita", "/pagar", "/receber", "/recorrente", "/resumo", "/goal", "/meta"}
-
-// commandHelp is the user-facing catalog shown by /help. Kept next to
-// financialCommands so the two stay in sync.
-var commandHelp = []struct{ usage, desc string }{
-	{"/despesa <valor> <categoria> [data] [descrição]", "registra uma despesa já paga"},
-	{"/receita <valor> <categoria> [data] [descrição]", "registra uma receita já recebida"},
-	{"/pagar <valor> <categoria> [data] [descrição]", "agenda uma despesa a pagar"},
-	{"/receber <valor> <categoria> [data] [descrição]", "agenda uma receita a receber"},
-	{"/recorrente <pagar|receber> <valor> <categoria> <periodo> <n> [data] [descrição]", "cria uma série de N lançamentos pendentes (ex: aluguel mensal por 12 meses)"},
-	{"/resumo", "resumo financeiro do mês"},
-	{"/goal", "progresso das metas do mês"},
-	{"/meta <faturamento> <despesa>", "define as metas do mês"},
-	{"/help", "mostra esta ajuda"},
-}
-
-func helpText() string {
-	var b strings.Builder
-	b.WriteString("🤖 *Comandos disponíveis:*\n\n")
-	for _, c := range commandHelp {
-		fmt.Fprintf(&b, "*%s*\n%s\n\n", c.usage, c.desc)
-	}
-	b.WriteString("Ex: /despesa 500 aluguel Aluguel da loja\n\n")
-	b.WriteString("💡 Envie um comando sozinho (ex: /despesa) para ver o passo a passo.")
-	return b.String()
-}
-
-// firstToken returns the text up to the first space (the command word).
-func firstToken(s string) string {
-	if i := strings.IndexByte(s, ' '); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
+// There is deliberately no slash-command layer here. Every message goes to the
+// agent, which writes the ledger through the finance tools
+// (packages/finance.FinanceTools) with typed arguments.
+//
+// The commands it replaced parsed amounts out of free text with a regex, and
+// that regex read a pt-BR thousands separator as a decimal point: "/despesa
+// 1.500 aluguel" saved R$ 1,50 under a category called "0", with no error. A
+// second parser behind /meta stripped both separators and multiplied by 100, so
+// "/meta 80.000,00" set a goal of R$ 8.000.000,00. Both failures were silent and
+// both landed in the ledger, which is why the layer is gone rather than fixed:
+// the tools take an amount as a number the model has already read, so there is
+// no text left to misparse.
 
 // SessionStore records when a phone last messaged us, so the scheduled
 // notifier can respect WhatsApp's 24h customer-service window (free-form
@@ -143,30 +117,27 @@ type SessionStore interface {
 }
 
 type App struct {
-	service          *orchestrator.Service
-	financialHandler *financial.Handler
-	whatsappClient   whatsapp.Client
-	sessions         SessionStore
-	secret           string
-	verifyToken      string
+	service        *orchestrator.Service
+	whatsappClient whatsapp.Client
+	sessions       SessionStore
+	secret         string
+	verifyToken    string
 }
 
-func New(service *orchestrator.Service, finHandler *financial.Handler, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
+func New(service *orchestrator.Service, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
 	if verifyToken == "" {
 		verifyToken = secret
 	}
 	return &App{
-		service:          service,
-		financialHandler: finHandler,
-		whatsappClient:   waClient,
-		sessions:         sessions,
-		secret:           secret,
-		verifyToken:      verifyToken,
+		service:        service,
+		whatsappClient: waClient,
+		sessions:       sessions,
+		secret:         secret,
+		verifyToken:    verifyToken,
 	}
 }
 
 func NewFromEnv(secret, graphAPIToken string) *App {
-	var finHandler *financial.Handler
 	var sessions SessionStore
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
 
@@ -178,8 +149,6 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		if err != nil {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
-		regex := whatsapp.NewRegexParser()
-		finHandler = financial.NewHandler(regex, store, shared.PharmacyLocation())
 		cfg.FinanceStore = store
 		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
 		// LLM_PROVIDER=ollama runs a local open-source model for dev (ADR-012);
@@ -217,7 +186,7 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
 	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, finHandler, waClient, secret, verifyToken, sessions)
+	return New(svc, waClient, secret, verifyToken, sessions)
 }
 
 func (a *App) Handle(ctx context.Context, req Request) (resp Response, status int, err error) {
@@ -268,43 +237,11 @@ func (a *App) Handle(ctx context.Context, req Request) (resp Response, status in
 		}
 	}
 
-	text := strings.TrimSpace(message.Text)
-
-	// /help (and pt-BR alias /ajuda) — handled before financial routing so it
-	// works even when no financial handler is wired.
-	if cmd := firstToken(text); strings.EqualFold(cmd, "/help") || strings.EqualFold(cmd, "/ajuda") {
-		reply := helpText()
-		a.sendReply(ctx, req, reply)
-		return Response{Message: reply}, http.StatusOK, nil
-	}
-
-	// Route financial commands to the financial handler.
-	if a.financialHandler != nil && isFinancialCommand(text) {
-		var reply string
-		var err error
-		// TODO(mock): all senders write/read one shared finance ledger until
-		// phone→account linking exists. Replies still route to req.UserID.
-		ledgerID := shared.FinanceLedgerID
-		if strings.HasPrefix(strings.ToLower(text), "/resumo") {
-			reply, err = a.financialHandler.Resumo(ctx, ledgerID)
-		} else if strings.HasPrefix(strings.ToLower(text), "/goal") {
-			reply, err = a.financialHandler.Goal(ctx, ledgerID)
-		} else if strings.HasPrefix(strings.ToLower(text), "/meta") {
-			reply, err = a.financialHandler.SetGoal(ctx, ledgerID, text)
-		} else if strings.HasPrefix(strings.ToLower(text), "/recorrente") {
-			reply, err = a.financialHandler.Recorrente(ctx, ledgerID, text)
-		} else {
-			reply, err = a.financialHandler.Handle(ctx, ledgerID, text, message.Timestamp)
-		}
-		if err != nil {
-			log.Printf("financial handler error: %v", err)
-		}
-		if reply != "" {
-			a.sendReply(ctx, req, reply)
-		}
-		return Response{Message: reply}, http.StatusOK, nil
-	}
-
+	// Every message — including one that starts with a slash — goes to the
+	// agent. It reaches the ledger through the finance tools, which is also
+	// where the sender's phone stops mattering: the tools are called with
+	// shared.FinanceLedgerID (see orchestrator.agentGenerator), so the pharmacy
+	// has one set of books no matter which of its two phones wrote to it.
 	response, err := a.service.HandleMessage(ctx, message)
 	if err != nil {
 		return Response{}, http.StatusInternalServerError, err
@@ -324,16 +261,6 @@ func (a *App) sendReply(ctx context.Context, req Request, reply string) {
 	if err := a.whatsappClient.SendReply(ctx, req.PhoneNumberID, req.UserID, reply, req.MessageID); err != nil {
 		log.Printf("send reply: %v", err)
 	}
-}
-
-func isFinancialCommand(text string) bool {
-	lower := strings.ToLower(text)
-	for _, cmd := range financialCommands {
-		if strings.HasPrefix(lower, cmd) {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) HandleVerification(mode, token, challenge string) events.APIGatewayV2HTTPResponse {

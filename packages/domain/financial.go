@@ -142,8 +142,10 @@ type FinancialEntry struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	// RecurrenceID groups occurrences generated together by /recorrente.
-	// Empty for one-off entries.
+	// RecurrenceID groups occurrences created together as one series. Empty
+	// for one-off entries, which is every entry written since the /recorrente
+	// command was removed — the fields stay so the series already in the
+	// ledger keep rendering as series.
 	RecurrenceID    string
 	RecurrenceIndex int // 1-based position within the series
 	RecurrenceTotal int // total occurrences in the series
@@ -272,27 +274,9 @@ type Goal struct {
 	ExpenseTarget int64
 }
 
-// AmountReais returns the amount formatted as a Brazilian real string.
-func (e FinancialEntry) AmountReais() string {
-	reais := e.Amount / 100
-	centavos := e.Amount % 100
-	if centavos == 0 {
-		return formatInt(reais) + ",00"
-	}
-	if centavos < 10 {
-		return formatInt(reais) + ",0" + formatInt(centavos)
-	}
-	return formatInt(reais) + "," + formatInt(centavos)
-}
-
-func formatInt(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	result := ""
-	for n > 0 {
-		result = string(rune('0'+n%10)) + result
-		n /= 10
-	}
-	return result
-}
+// There is deliberately no money formatter on the domain type. The one that
+// lived here rendered R$ 1.000,00 as "1000,00" — no thousands separator at all
+// — and was used only by the slash-command confirmations, beside a second
+// formatter that wrote the same amount a different way. Rendering is the edge's
+// job: analytics.formatBRL for anything the backend writes, Intl.NumberFormat
+// in the browser (apps/web/src/lib/format.ts).

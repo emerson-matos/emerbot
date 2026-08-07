@@ -2,57 +2,19 @@ package app
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
-	"github.com/emerson/emerbot/apps/webhook/internal/financial"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
-	"github.com/emerson/emerbot/packages/shared"
+	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/wasession"
-	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
-func TestFinanceLedgerIgnoresSenderPhone(t *testing.T) {
-	t.Parallel()
-
-	store := pkgfinance.NewInMemoryStore()
-	finHandler := financial.NewHandler(whatsapp.NewRegexParser(), store, shared.PharmacyLocation())
-	app := New(nil, finHandler, &fakeWhatsAppClient{}, "secret", "verify", wasession.NewInMemoryStore())
-
-	_, status, err := app.Handle(context.Background(), Request{
-		UserID:        "phone-A",
-		MessageID:     "m1",
-		PhoneNumberID: "p1",
-		Text:          "/despesa 100 luz",
-	})
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("expected 200, got %d", status)
-	}
-
-	month := time.Now().UTC().Format("2006-01")
-
-	// The entry must land on the shared ledger (R$100 = 10000 centavos)...
-	got, err := store.MonthlySummary(context.Background(), shared.FinanceLedgerID, month)
-	if err != nil {
-		t.Fatalf("summary(ledger): %v", err)
-	}
-	if got.TotalExpense != 10000 {
-		t.Fatalf("expected 10000 centavos on shared ledger, got %d", got.TotalExpense)
-	}
-
-	// ...and NOT under the raw phone number.
-	byPhone, err := store.MonthlySummary(context.Background(), "phone-A", month)
-	if err != nil {
-		t.Fatalf("summary(phone): %v", err)
-	}
-	if byPhone.TotalExpense != 0 {
-		t.Fatalf("entry leaked under phone key: got %d", byPhone.TotalExpense)
-	}
-}
+// The sender's phone never becomes a ledger key: every message reaches the
+// finance tools through the agent, which is called with shared.FinanceLedgerID.
+// That invariant is asserted where it now lives, in
+// packages/orchestrator.TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender —
+// the webhook used to enforce it separately for slash commands, and those are
+// gone.
 
 // TestHandleRecordsInboundMessage proves every inbound message opens the
 // WhatsApp 24h window: after handling one, the sender's phone has a recorded
@@ -61,15 +23,15 @@ func TestHandleRecordsInboundMessage(t *testing.T) {
 	t.Parallel()
 
 	sessions := wasession.NewInMemoryStore()
-	// Inbound recording happens before any routing, so /help (which needs
-	// neither a financial handler nor the orchestrator service) is enough.
-	app := New(nil, nil, &fakeWhatsAppClient{}, "secret", "verify", sessions)
+	// Every message now reaches the orchestrator — there is no command branch
+	// left that answers without it — so this wires the static one.
+	app := New(orchestrator.NewService(orchestrator.Config{}), &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
 	when := time.Now().UTC().Add(-time.Hour)
 	if _, _, err := app.Handle(context.Background(), Request{
 		UserID:    "5511999999999",
 		MessageID: "m1",
-		Text:      "/help",
+		Text:      "bom dia",
 		Timestamp: when.Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("handle: %v", err)

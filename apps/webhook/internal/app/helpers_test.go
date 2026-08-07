@@ -18,12 +18,12 @@ import (
 func TestNewFallsBackToTheSecretAsVerifyToken(t *testing.T) {
 	// Meta's handshake token defaults to the app secret when unset, so a
 	// deployment that only configures one value still verifies.
-	app := New(nil, nil, nil, "shhh", "", nil)
+	app := New(nil, nil, "shhh", "", nil)
 	if app.verifyToken != "shhh" {
 		t.Fatalf("verifyToken = %q, want it defaulted to the secret", app.verifyToken)
 	}
 
-	explicit := New(nil, nil, nil, "shhh", "outro", nil)
+	explicit := New(nil, nil, "shhh", "outro", nil)
 	if explicit.verifyToken != "outro" {
 		t.Fatalf("verifyToken = %q, want the explicit token to win", explicit.verifyToken)
 	}
@@ -44,9 +44,6 @@ func TestNewFromEnvWithNoTablesConfigured(t *testing.T) {
 	}
 	if app.service == nil {
 		t.Fatal("the orchestrator service must always be wired")
-	}
-	if app.financialHandler != nil {
-		t.Fatal("no finance table means no financial handler")
 	}
 	if app.sessions != nil {
 		t.Fatal("no sessions table means no session store")
@@ -72,7 +69,7 @@ func TestNewFromEnvHonoursTheVerifyToken(t *testing.T) {
 }
 
 func TestHandleVerification(t *testing.T) {
-	app := New(nil, nil, nil, "secret", "verify-me", nil)
+	app := New(nil, nil, "secret", "verify-me", nil)
 
 	t.Run("a correct handshake echoes the challenge", func(t *testing.T) {
 		resp := app.HandleVerification("subscribe", "verify-me", "challenge-123")
@@ -109,7 +106,7 @@ func TestHandleVerification(t *testing.T) {
 
 func TestSendReplyIsSkippedWhenThereIsNothingToReplyTo(t *testing.T) {
 	client := &fakeWhatsAppClient{}
-	app := New(nil, nil, client, "secret", "verify", nil)
+	app := New(nil, client, "secret", "verify", nil)
 
 	// No message id: there is no inbound message to attach a reply to.
 	app.sendReply(context.Background(), Request{UserID: "u1"}, "olá")
@@ -118,13 +115,13 @@ func TestSendReplyIsSkippedWhenThereIsNothingToReplyTo(t *testing.T) {
 	}
 
 	// No client configured at all must not panic.
-	New(nil, nil, nil, "secret", "verify", nil).
+	New(nil, nil, "secret", "verify", nil).
 		sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá")
 }
 
 func TestSendReplySwallowsATransportError(t *testing.T) {
 	client := &erroringWhatsAppClient{}
-	app := New(nil, nil, client, "secret", "verify", nil)
+	app := New(nil, client, "secret", "verify", nil)
 
 	// A failed send is logged, not propagated: the turn already succeeded and
 	// returning an error would make WhatsApp retry the whole message.
@@ -184,24 +181,6 @@ func TestNormalize(t *testing.T) {
 			t.Fatal("expected an error for an unparseable timestamp")
 		}
 	})
-}
-
-func TestIsFinancialCommand(t *testing.T) {
-	cases := map[string]bool{
-		"/despesa 50 mercado": true,
-		"/DESPESA 50":         true, // case-insensitive
-		"/resumo":             true,
-		"/recorrente pagar":   true,
-		"quanto gastei?":      false,
-		"":                    false,
-		"despesa sem barra":   false,
-		"/desconhecido":       false,
-	}
-	for in, want := range cases {
-		if got := isFinancialCommand(in); got != want {
-			t.Fatalf("isFinancialCommand(%q) = %v, want %v", in, got, want)
-		}
-	}
 }
 
 func TestHeaderValueIsCaseInsensitive(t *testing.T) {
@@ -298,7 +277,7 @@ func TestValidSignature(t *testing.T) {
 func TestHandleMarksInboundSessionAndRepliesOnSuccess(t *testing.T) {
 	client := &fakeWhatsAppClient{}
 	sessions := wasession.NewInMemoryStore()
-	app := New(orchestrator.NewService(orchestrator.Config{}), nil, client, "secret", "verify", sessions)
+	app := New(orchestrator.NewService(orchestrator.Config{}), client, "secret", "verify", sessions)
 
 	req := Request{UserID: "5511999", MessageID: "wamid.OK", PhoneNumberID: "phone-1", Text: "oi"}
 	_, status, err := app.Handle(context.Background(), req)
@@ -323,7 +302,7 @@ func TestHandleMarksInboundSessionAndRepliesOnSuccess(t *testing.T) {
 }
 
 func TestHandleRejectsAMalformedTimestamp(t *testing.T) {
-	app := New(orchestrator.NewService(orchestrator.Config{}), nil, &fakeWhatsAppClient{}, "secret", "verify", nil)
+	app := New(orchestrator.NewService(orchestrator.Config{}), &fakeWhatsAppClient{}, "secret", "verify", nil)
 
 	_, status, err := app.Handle(context.Background(), Request{
 		UserID: "u1", MessageID: "m1", Text: "oi", Timestamp: "ontem",
