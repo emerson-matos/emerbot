@@ -1,5 +1,17 @@
 # GeminiAgent — implementação
 
+> **Documento histórico.** É o plano das Fases 1 e 2, escrito antes delas. As
+> duas foram implementadas, e o código andou depois: a camada de slash commands
+> que este plano preserva como *fast path* (`RegexParser`, `ParsedEntry`,
+> `ParseAmount`, `financial.Handler`, `isFinancialCommand`, `/help`) **não existe
+> mais** — foi removida junto com os dois bugs de parsing de valor que ela
+> carregava, e hoje toda mensagem vai direto ao agente.
+>
+> Leia como registro de *por que* o agente ficou assim, não como descrição do
+> que está no repositório. Para o estado atual: [`whatsapp.md`](./whatsapp.md),
+> `packages/orchestrator/internal/gemini`, `packages/finance/tools.go` e
+> `packages/orchestrator/internal/agentprompt`.
+
 | Fase | Status |
 |------|--------|
 | 1 — Prompt dinâmico + validação de data | ✅ Implementada (PR #21) |

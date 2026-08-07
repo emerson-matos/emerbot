@@ -16,12 +16,12 @@ Assistente IA via WhatsApp + painel financeiro para farmácia, construído para 
 ```text
 .
 ├── apps
-│   ├── cli
+│   ├── cli                # Exercita o orchestrator sem WhatsApp
 │   ├── dashboard-api      # API REST do painel financeiro
+│   ├── notifier           # Lambda agendada: resumo diário + contas do dia
 │   ├── payment-importer   # Lambda de import de adquirentes (S3 → DynamoDB)
 │   ├── web                # Frontend React + shadcn/ui
-│   ├── webhook            # Handler Lambda do WhatsApp
-│   └── worker
+│   └── webhook            # Handler Lambda do WhatsApp
 ├── cenarios               # Extratos EDI do PagBank gravados (fixtures)
 ├── docs
 │   ├── adr
@@ -31,25 +31,26 @@ Assistente IA via WhatsApp + painel financeiro para farmácia, construído para 
 │   ├── modules
 │   └── opentofu
 ├── packages
-│   ├── auth               # JWT, login, refresh tokens
-│   ├── domain
-│   ├── finance            # Entries, goals, summaries, categories
+│   ├── conversation       # Histórico curto da conversa (TTL)
+│   ├── domain             # Contratos e regras centrais
+│   ├── dynamostore        # Seam do DynamoDB + tabela fake para testes
+│   ├── finance            # Entries, goals, summaries, categories, tools do agente
+│   │   └── analytics      # Saúde, tendências, projeção, posição de caixa
+│   ├── notifications      # Regras de alerta (contas vencendo / vencidas / meta)
+│   ├── orchestrator       # Coordena memória, tools e o provider de IA
 │   ├── payments           # Domínio de adquirentes + parser PagBank + importer
-│   ├── llm
-│   ├── memory
-│   ├── orchestrator
-│   ├── shared
-│   └── tools
+│   ├── shared             # Config, fuso da farmácia, id do ledger
+│   ├── wasession          # Janela de 24h do WhatsApp (TTL)
+│   └── whatsapp           # Cliente da Meta Cloud API
 └── docker-compose.yml      # Stack local com 7 containers
 ```
 
 ## WhatsApp
 
 ```text
-WhatsApp -> API Gateway -> Lambda Webhook -> Orchestrator
-                                        |-> Memory
-                                        |-> Tool Registry
-                                        |-> LLM Client
+WhatsApp -> API Gateway -> Lambda Webhook -> Orchestrator -> Agente (Gemini)
+                                                         |-> Histórico da conversa
+                                                         |-> Finance tools
 ```
 
 ## Farmácia Financeira (PoC local)
@@ -81,22 +82,28 @@ make import-pagbank DIR=~/extratos/hoje  # extratos reais → S3 → Lambda
 É o mesmo script nos dois casos — só o transporte muda.
 Detalhes em [`docs/payments-import.md`](docs/payments-import.md).
 
-### Comandos do WhatsApp
+### Conversa no WhatsApp
+
+Não há comandos. Escreva em português normal e o agente resolve pelas tools:
 
 ```
-/despesa 500 aluguel 10/07   → registrar despesa paga (data opcional)
-/receita 3000 cliente        → registrar venda já recebida (data opcional)
-/pagar 1500 fornecedor       → registrar despesa pendente
-/receber 2000                → registrar venda a receber
-/recorrente pagar 350 aluguel mensal 12  → série de N lançamentos pendentes
-/resumo                      → balanço do mês + pendências
-/meta 80000 60000            → definir meta (faturamento / teto despesas)
-/goal                        → ver progresso das metas
+paguei 1.500 de aluguel hoje          → despesa paga
+vendi 3200 no balcão                  → venda (faturamento)
+conta de luz de 300 vence dia 20      → despesa pendente
+o convênio me deve 2000               → venda a receber
+como foi o mês?                       → balanço + pendências
+minha meta é 80.000 de faturamento    → define a meta do mês
+como está a meta?                     → progresso
 ```
 
-`/receita` e `/receber` registram **vendas**. Dinheiro que entrou sem venda —
-empréstimo, aporte de sócio, rendimento, restituição — vai por texto livre (o
-agente escolhe a origem) ou pelo formulário do dashboard.
+Cada entrada carrega uma **origem** e o agente a escolhe pela frase: uma venda
+é venda, e dinheiro que entrou sem venda — empréstimo, aporte de sócio,
+rendimento, restituição — entra com a origem certa e fica fora do faturamento.
+
+Os comandos de barra que existiam aqui foram removidos: a regex que lia o valor
+tratava o ponto de milhar como decimal, então `/despesa 1.500 aluguel` gravava
+R$ 1,50 em silêncio. Detalhes e o que se perdeu com eles (séries recorrentes)
+em [`docs/whatsapp.md`](docs/whatsapp.md).
 
 ### Faturamento × Entradas de caixa
 
@@ -153,14 +160,20 @@ make tofu-apply
 
 ## Pacotes
 
-- `packages/domain`: contratos e regras centrais do domínio.
-- `packages/finance`: entradas financeiras, metas mensais, summaries, categorias.
-- `packages/orchestrator`: coordena memória, tools e LLM.
-- `packages/llm`: abstrações do provider e adapter local.
-- `packages/memory`: contratos e implementações de memória.
-- `packages/tools`: registry e contratos de tools.
+- `packages/domain`: contratos e regras centrais do domínio (entry, origem, meta, datas).
+- `packages/finance`: entradas financeiras, metas mensais, summaries, categorias e as tools do agente.
+- `packages/finance/analytics`: saúde do mês, tendências, média por dia da semana, projeção e posição de caixa.
+- `packages/notifications`: regras de alerta (vence hoje, vencidas, meta batida).
+- `packages/orchestrator`: coordena histórico, tools e o provider de IA (Gemini ou Ollama).
+- `packages/whatsapp`: cliente da Meta Cloud API (+ cliente local do simulador).
+- `packages/wasession`: janela de 24h do WhatsApp e dedupe de mensagens (TTL).
+- `packages/conversation`: histórico curto da conversa (TTL).
+- `packages/payments`: domínio de adquirentes, parser do PagBank e importer.
+- `packages/dynamostore`: seam do DynamoDB + tabela fake usada nos testes (ADR-014).
+- `packages/shared`: config, fuso da farmácia e o id do ledger compartilhado.
 - `apps/webhook`: handler Lambda e runner local para webhook do WhatsApp.
 - `apps/dashboard-api`: API REST do painel financeiro (Lambda + local).
+- `apps/notifier`: Lambda agendada — resumo diário e a lista de contas do dia (ADR-023).
+- `apps/payment-importer`: Lambda que importa extratos de adquirentes do S3.
 - `apps/web`: frontend React + shadcn/ui + Recharts.
-- `apps/worker`: entrypoint para processamento assíncrono futuro.
 - `apps/cli`: fluxo local para exercitar o orchestrator sem WhatsApp.

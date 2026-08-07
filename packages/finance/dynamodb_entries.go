@@ -398,7 +398,7 @@ func (s *DynamoDBStore) listEntriesInput(userID string, filter EntryFilter) *dyn
 // ListEntries queries the GSI2-Status index (hash: GSI2PK, range: GSI2SK —
 // see gsi2IndexName), which orders entries by effectiveDate rather than
 // registration Date. filter.From/To push down directly into a GSI2SK range
-// condition: a /recorrente installment registered in July but due in
+// condition: an instalment registered in July but due in
 // December is stored with GSI2SK="2026-12-.../..." and so is only returned
 // when querying December, not July.
 func (s *DynamoDBStore) ListEntries(ctx context.Context, userID string, filter EntryFilter) ([]domain.FinancialEntry, error) {

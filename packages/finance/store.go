@@ -200,7 +200,9 @@ type Store interface {
 	SaveEntry(ctx context.Context, entry domain.FinancialEntry) error
 	// SaveEntries persists multiple entries as one or more atomic writes (see
 	// DynamoDBStore.SaveEntries for the chunking caveat above 100 entries).
-	// Used by /recorrente to create a whole recurrence series together.
+	// Written for the recurrence series the removed /recorrente command
+	// created. Nothing calls it today — the importer writes one entry at a
+	// time — so it is the seam a "lançar 12 parcelas" feature would use.
 	SaveEntries(ctx context.Context, entries []domain.FinancialEntry) error
 	// GetEntry reads one entry by its full address. The transaction date is
 	// not decoration: the base table's sort key is ENTRY#<date>#<id>, which is

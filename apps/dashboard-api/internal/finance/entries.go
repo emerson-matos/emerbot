@@ -371,9 +371,9 @@ type updateEntryRequest struct {
 // has all four, so an explicitly empty one is a client bug and answers 400
 // rather than quietly changing nothing.
 //
-// It edits exactly the entry it is given. An occurrence of a /recorrente series
+// It edits exactly the entry it is given. An occurrence of a recurrence series
 // is edited on its own like any other lançamento; applying a change across a
-// whole series is deliberately not offered yet.
+// whole series is deliberately not offered.
 func (req updateEntryRequest) apply(e *domain.FinancialEntry, loc *time.Location) error {
 	if req.Amount != nil {
 		if *req.Amount <= 0 {

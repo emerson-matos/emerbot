@@ -78,34 +78,6 @@ func TestHandleWebhookHTTPProcessesBatchedMessages(t *testing.T) {
 	}
 }
 
-func TestHandleWebhookHTTPHelpCommand(t *testing.T) {
-	t.Parallel()
-
-	for _, cmd := range []string{"/help", "/ajuda"} {
-		client := &fakeWhatsAppClient{}
-		app := newTestApp(client) // nil financial handler — /help must still work
-		body := []byte(testWebhookWithTexts(cmd))
-
-		response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
-			Method: http.MethodPost,
-			Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
-			Body:   body,
-		})
-		if err != nil {
-			t.Fatalf("%s: HandleWebhookHTTP returned error: %v", cmd, err)
-		}
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("%s: expected status 200, got %d", cmd, response.StatusCode)
-		}
-		if client.sendReplyCalls != 1 {
-			t.Fatalf("%s: expected one help reply, got %d", cmd, client.sendReplyCalls)
-		}
-		if !strings.Contains(client.lastReply, "/despesa") || !strings.Contains(client.lastReply, "/resumo") {
-			t.Fatalf("%s: expected reply to list commands, got %q", cmd, client.lastReply)
-		}
-	}
-}
-
 func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 	t.Parallel()
 
@@ -342,7 +314,6 @@ func newTestApp(client *fakeWhatsAppClient) *App {
 
 	return New(
 		orchestrator.NewService(orchestrator.Config{}),
-		nil,
 		client,
 		"test-secret",
 		"test-verify-token",
@@ -359,7 +330,6 @@ func (failingLLM) Generate(context.Context, orchestrator.Input) (orchestrator.Ou
 func newFailingApp(client *fakeWhatsAppClient) *App {
 	return New(
 		orchestrator.NewServiceWithGenerator(failingLLM{}),
-		nil,
 		client,
 		"test-secret",
 		"test-verify-token",
@@ -375,7 +345,7 @@ func TestHandleReprocessesAfterFailedTurn(t *testing.T) {
 	t.Parallel()
 
 	sessions := wasession.NewInMemoryStore()
-	app := New(orchestrator.NewServiceWithGenerator(failingLLM{}), nil, &fakeWhatsAppClient{}, "secret", "verify", sessions)
+	app := New(orchestrator.NewServiceWithGenerator(failingLLM{}), &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
 	req := Request{UserID: "u1", MessageID: "wamid.FAIL", Text: "olá"}
 
