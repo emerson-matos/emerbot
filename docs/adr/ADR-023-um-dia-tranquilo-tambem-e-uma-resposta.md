@@ -109,12 +109,21 @@ Três consequências dessa segunda execução:
   snapshot: a tarde não tem nada de novo a dizer sobre o mês, e um segundo
   snapshot por dia só sobrescreveria o da manhã com os mesmos números.
 
-Quando o dia tinha contas e **todas foram pagas**, a tarde manda uma linha
-dizendo isso, em vez de silêncio — pelo mesmo motivo do resumo diário: um
-lembrete que não chegou e um lembrete desnecessário são indistinguíveis do lado
-de fora. Quando o dia **não tinha conta nenhuma**, não sai nada: o resumo da
-manhã já disse que o dia estava limpo, e a execução para antes de qualquer
-leitura por usuário (o ledger é compartilhado, a resposta é a mesma para todos).
+**A tarde não tem ramo silencioso.** São três frases para a mesma pergunta —
+"o que ainda tenho para pagar hoje?" — e as três são resposta:
+
+| Situação | Mensagem |
+|---|---|
+| Contas em aberto | a lista, com contagem e total |
+| Tinha contas, todas pagas | "tudo baixado: as N contas que venciam hoje já foram pagas" |
+| Não tinha conta nenhuma | "nenhuma conta venceu hoje" |
+
+As duas últimas são frases distintas de propósito: "não havia nada" e "estava
+tudo pago" são fatos diferentes sobre o dia, e quem lançou contas de manhã
+precisa conseguir dizer qual das duas recebeu. E nenhuma delas é silêncio,
+porque um lembrete que não chegou e um lembrete desnecessário são
+indistinguíveis do lado de fora — foi a farmácia mesmo que pediu a mensagem nos
+dias vazios.
 
 A lista segue o mesmo opt-in do alerta que ela detalha (`NotifyDueToday`) — não
 é uma porta dos fundos para reportar um tipo que a pessoa desligou. E o prompt
@@ -132,8 +141,9 @@ diagnosticável só pelos logs.
 
 ## Consequências
 
-- O volume sobe para ~2–3 mensagens por usuário por dia (resumo, lista da manhã,
-  lembrete da tarde), cada uma com dedupe próprio. Com 2 usuários e a janela de
+- O volume sobe para 2 ou 3 mensagens por usuário por dia (resumo + lembrete da
+  tarde, mais a lista da manhã nos dias com conta a vencer), cada uma com dedupe
+  próprio. Com 2 usuários e a janela de
   20h, o custo segue irrelevante — e nenhuma delas pode sair duas vezes.
 - O Lambda do notifier passa a ser invocado por dois agendamentos
   (`notifier-daily` e `notifier-open-bills`). O horário da tarde é a variável

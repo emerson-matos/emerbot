@@ -797,10 +797,15 @@ func TestAfternoonRunConfirmsWhenEverythingIsPaid(t *testing.T) {
 	}
 }
 
-// TestAfternoonRunStaysQuietWithoutOutflows: a day that never had a bill needs
-// no afternoon message — the morning digest already said the day was clear, and
-// this run has nothing to add to it.
-func TestAfternoonRunStaysQuietWithoutOutflows(t *testing.T) {
+// TestAfternoonRunSendsOnADayWithNoBills: the pharmacy asked for the afternoon
+// message on quiet days too. A reminder that only arrives on busy days is one
+// whose absence has to be interpreted — and "nada venceu hoje" is not something
+// anyone should have to work out from a silence.
+//
+// It is also a distinct sentence from the "everything is paid" one below: a day
+// that owed nothing and a day that paid everything are different facts, and
+// someone who entered bills that morning has to be able to tell which they got.
+func TestAfternoonRunSendsOnADayWithNoBills(t *testing.T) {
 	s := newStores()
 	wa := &fakeWA{}
 	seedUser(
@@ -812,13 +817,15 @@ func TestAfternoonRunStaysQuietWithoutOutflows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wa.sent) != 0 || res.BillListsSent != 0 {
-		t.Fatalf("nothing was due today, so nothing to remind: %v", wa.sent)
+	if len(wa.sent) != 1 || res.BillListsSent != 1 {
+		t.Fatalf("want the quiet-day message, got %d messages (res=%+v)", len(wa.sent), res)
 	}
-	// Not even the session or delivery-log reads: the ledger is shared, so the
-	// answer is the same for everyone and is settled once.
-	if res.Evaluated != 0 {
-		t.Errorf("Evaluated = %d, want 0 — the run stops before the per-user work", res.Evaluated)
+	body := wa.sent[0].body
+	if !strings.Contains(body, "nenhuma conta venceu hoje") {
+		t.Errorf("quiet-day message does not say the day had nothing:\n%s", body)
+	}
+	if strings.Contains(body, "pagas") || strings.Contains(body, "baixado") {
+		t.Errorf("a day with no bills is being reported as a day that paid them:\n%s", body)
 	}
 }
 
