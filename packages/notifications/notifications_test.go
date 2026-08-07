@@ -159,10 +159,9 @@ func TestBillsCountsTheLedgerAndNotThePreferences(t *testing.T) {
 	}
 	// ...and the bills are there all the same.
 	got := Bills(entries, today)
-	// "Ja pago" fell due today and is settled: it is in neither of the pending
-	// counts and in SettledTodayCount, which is what the afternoon reminder needs
-	// to tell "nothing was due" from "it is all paid".
-	want := BillStatus{DueTodayCount: 2, DueToday: 300000, OverdueCount: 1, OverdueTotal: 20000, SettledTodayCount: 1}
+	// "Ja pago" fell due today and is settled, so it counts nowhere: what is
+	// already paid is not what anyone has left to do.
+	want := BillStatus{DueTodayCount: 2, DueToday: 300000, OverdueCount: 1, OverdueTotal: 20000}
 	if got != want {
 		t.Fatalf("Bills = %+v, want %+v", got, want)
 	}
