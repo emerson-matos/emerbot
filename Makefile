@@ -49,9 +49,15 @@ build:
 # Each zip lists $(GO_SOURCES) as a prerequisite, so `make build-lambdas` (and
 # therefore tofu-plan/tofu-apply, which depend on it) rebuilds a zip whenever a
 # Go source is newer than it — no more deleting zips by hand to force a fresh
-# build. Builds are reproducible (-trimpath, CGO off, zeroed mtime, `zip -X`),
-# so a rebuild that produces a byte-identical binary keeps the same
-# source_code_hash and Tofu shows no diff for that Lambda.
+# build. Builds are reproducible (-trimpath, -buildvcs=false, CGO off, zeroed
+# mtime, `zip -X`), so a rebuild that produces a byte-identical binary keeps the
+# same source_code_hash and Tofu shows no diff for that Lambda.
+#
+# -buildvcs=false is load-bearing, not cosmetic: by default `go build` stamps
+# vcs.revision/vcs.time/vcs.modified into every main package, so each commit (and
+# merely having a dirty tree) changed all four binaries and Tofu redeployed all
+# four Lambdas on every apply, no matter which app was touched. Nothing here
+# reads debug.ReadBuildInfo, so the stamps only cost us false diffs.
 #
 # Staged in a per-Lambda .build dir (never the shared $(LAMBDA_DIR)) so parallel
 # `make -j` runs don't fight over one `bootstrap` file.
@@ -59,7 +65,7 @@ build:
 #   $(2) = Go package to compile
 define build_lambda
 @mkdir -p $(LAMBDA_DIR)/$(1).build
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -o $(LAMBDA_DIR)/$(1).build/bootstrap $(2)
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -o $(LAMBDA_DIR)/$(1).build/bootstrap $(2)
 cd $(LAMBDA_DIR)/$(1).build && touch -d @0 bootstrap && rm -f ../$(1).zip && zip -X -q ../$(1).zip bootstrap
 @rm -rf $(LAMBDA_DIR)/$(1).build
 endef
