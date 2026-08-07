@@ -187,3 +187,23 @@ make tofu-apply
 Uses your local AWS profile via `aws configure export-credentials`, and the
 `TF_VAR_*` secrets from your shell/`.env`. `make build-lambdas` runs
 automatically as a prerequisite.
+
+### Um apply local redeploya todos os Lambdas
+
+Esperado, e vale saber antes de assustar com o plan. O build é determinístico
+**na mesma máquina**: `make clean-lambdas && go clean -cache && make
+build-lambdas` duas vezes seguidas produz zips byte a byte idênticos. Entre
+máquinas diferentes, não: os zips gerados aqui para o commit `3e4a6b6`, com o
+mesmo Go 1.25.0 que o runner usa, têm sha256 diferente dos quatro que o CI
+aplicou para esse mesmo commit.
+
+A diferença é quase certamente do contêiner zip (modo do arquivo, versão do
+Info-ZIP) e não do binário — o `-trimpath` e o `CGO_ENABLED=0` cuidam do
+binário, e a data já é zerada com `touch -d @0`. Consequência prática: um
+`make tofu-apply` de emergência mostra os quatro Lambdas com
+`source_code_hash` mudando mesmo sem nenhuma linha de Go ter mudado. É barulho,
+não risco: o código é o mesmo, só publica uma versão nova de cada função.
+
+A propriedade que o CLAUDE.md descreve — "só redeploya o que mudou de verdade"
+— é portanto entre execuções do CI, que sempre usam a mesma imagem de runner.
+É a que importa, porque é de lá que os deploys saem.
