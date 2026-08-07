@@ -2290,6 +2290,49 @@ func TestDigestPayloadIsTheAnalysisMinusItsToolAffordances(t *testing.T) {
 	}
 }
 
+// TestDigestPayloadTellsTheWriterToDoNothingItCannotDo checks the payload's
+// *content*, not its key list, and that distinction is the whole test.
+//
+// Iterating toolOnlyPayloadKeys — as the test above does — can only confirm that
+// the keys someone remembered to list are gone. It passes just as happily when a
+// new instruction is added to ToolPayload under a key nobody added to the list,
+// which is exactly how "Peça a seção despesas_completas" reached a WhatsApp
+// message whose reader has no seções to ask for.
+func TestDigestPayloadTellsTheWriterToDoNothingItCannotDo(t *testing.T) {
+	// Six categories, so the ranking is cut and the truncation warning fires.
+	composition := make([]ExpenseComposition, 0, maxToolCategories+1)
+	for i := range maxToolCategories + 1 {
+		composition = append(composition, ExpenseComposition{
+			CategoryID:   fmt.Sprintf("cat-%d", i),
+			CategoryName: fmt.Sprintf("Categoria %d", i),
+			Amount:       int64(1000 * (i + 1)),
+			Percentage:   10,
+		})
+	}
+	analysis := Analysis{Month: "2026-07", ExpenseComposition: composition}
+
+	encoded, err := json.Marshal(analysis.DigestPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := string(encoded)
+
+	// Anything that asks the reader — or the writer — to make another call.
+	for _, forbidden := range []string{"Peça", "peça", "chame", "seção", "secoes", dayTargetToolName} {
+		if strings.Contains(payload, forbidden) {
+			t.Errorf("digest payload contains %q, an instruction a one-shot writer cannot follow:\n%s", forbidden, payload)
+		}
+	}
+	// The cut itself still has to be announced: five of six categories presented
+	// as the whole ranking is what ADR-015 exists to prevent.
+	if !strings.Contains(payload, "maiores_despesas_warning") {
+		t.Errorf("digest payload drops the truncation warning entirely:\n%s", payload)
+	}
+	if !strings.Contains(payload, "Mostrando as 5 maiores de 6 categorias") {
+		t.Errorf("digest payload does not say how much of the ranking it is showing:\n%s", payload)
+	}
+}
+
 // The whole point of ADR-019: the model is handed the weekday-scaled ask, so it
 // never has to derive a per-day figure from the gap and the days left.
 func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {

@@ -412,6 +412,16 @@ func (a Analysis) DigestPayload() map[string]any {
 	for _, k := range toolOnlyPayloadKeys {
 		delete(payload, k)
 	}
+	// The truncation warning stays — a ranking that was cut has to say so, and
+	// that rule does not stop applying because the reader is on WhatsApp
+	// (ADR-015) — but it is reworded without the half of it that tells the
+	// reader to ask for a section. Deleting it outright would leave five of
+	// twelve categories presented as the whole list; leaving it whole put "peça
+	// a seção despesas_completas" in front of someone with no way to do that.
+	if len(a.ExpenseComposition) > maxToolCategories {
+		payload["maiores_despesas_warning"] = fmt.Sprintf(
+			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.ExpenseComposition))
+	}
 	return payload
 }
 

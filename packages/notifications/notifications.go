@@ -6,7 +6,9 @@
 package notifications
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,11 +50,6 @@ type BillStatus struct {
 	OverdueCount  int
 	OverdueTotal  int64
 }
-
-// Quiet reports a day with no bill asking for anything: nothing falling due and
-// nothing already late. It is the only condition under which a digest may tell
-// someone their bills are in order.
-func (s BillStatus) Quiet() bool { return s.DueTodayCount == 0 && s.OverdueCount == 0 }
 
 // Bills summarizes the unpaid expenses in `entries` as of `today`. Same window
 // requirement as Evaluate: entries should cover at least the overdue look-back
@@ -216,23 +213,19 @@ func Evaluate(
 	return alerts
 }
 
-// sortByAmountDesc is an insertion sort like sortByEffectiveDateDesc above:
-// these lists are a day's bills, so they are short, and a stable sort keeps
-// equal amounts in the order the ledger returned them.
+// sortByAmountDesc puts the biggest bill first; sortByEffectiveDateDesc the most
+// recent. Both are stable, so bills that tie keep the order the ledger returned
+// them in — which is the only order left to preserve once the key is equal.
 func sortByAmountDesc(entries []domain.FinancialEntry) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && entries[j].Amount > entries[j-1].Amount; j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
+	slices.SortStableFunc(entries, func(a, b domain.FinancialEntry) int {
+		return cmp.Compare(b.Amount, a.Amount)
+	})
 }
 
 func sortByEffectiveDateDesc(entries []domain.FinancialEntry) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && effectiveDate(entries[j]).After(effectiveDate(entries[j-1])); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
+	slices.SortStableFunc(entries, func(a, b domain.FinancialEntry) int {
+		return effectiveDate(b).Compare(effectiveDate(a))
+	})
 }
 
 // FormatBRL renders centavos as Brazilian currency digits ("2850000" ->
