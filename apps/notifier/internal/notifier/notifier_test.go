@@ -29,7 +29,7 @@ func (f *fakeWA) digests() []sentMsg   { return f.byKind(false) }
 func (f *fakeWA) billLists() []sentMsg { return f.byKind(true) }
 
 // isBillList matches both shapes the outflow message takes: the list itself and
-// the afternoon's "everything is paid" confirmation.
+// the afternoon's "nothing pending" line.
 func isBillList(body string) bool {
 	return strings.HasPrefix(body, "💸") || strings.HasPrefix(body, "✅ *Saídas")
 }
@@ -769,63 +769,45 @@ func TestAfternoonRunSendsOnlyWhatIsStillOpen(t *testing.T) {
 	}
 }
 
-// TestAfternoonRunConfirmsWhenEverythingIsPaid: a day whose bills were all
-// settled gets the confirmation instead of the list. Silence here would be
-// indistinguishable from a reminder that failed to send.
-func TestAfternoonRunConfirmsWhenEverythingIsPaid(t *testing.T) {
-	s := newStores()
-	wa := &fakeWA{}
-	seedUser(
-		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
-		paidExpense("e1", "Folha de pagamento", 900000),
-		paidExpense("e2", "Energia", 13500),
-	)
-
-	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(wa.sent) != 1 {
-		t.Fatalf("want the confirmation alone, got %d messages", len(wa.sent))
-	}
-	if body := wa.sent[0].body; !strings.Contains(body, "as 2 contas que venciam hoje já foram pagas") {
-		t.Errorf("confirmation does not name what was settled:\n%s", body)
-	}
-	if res.BillListsSent != 1 {
-		t.Errorf("BillListsSent = %d, want 1", res.BillListsSent)
-	}
-}
-
-// TestAfternoonRunSendsOnADayWithNoBills: the pharmacy asked for the afternoon
-// message on quiet days too. A reminder that only arrives on busy days is one
-// whose absence has to be interpreted — and "nada venceu hoje" is not something
-// anyone should have to work out from a silence.
+// TestAfternoonRunSendsWithNothingPending: the message is about the day's
+// pending commitments, so a day with none still gets it — the pharmacy asked
+// for that, and a reminder that only arrives on busy days is one whose absence
+// has to be interpreted.
 //
-// It is also a distinct sentence from the "everything is paid" one below: a day
-// that owed nothing and a day that paid everything are different facts, and
-// someone who entered bills that morning has to be able to tell which they got.
-func TestAfternoonRunSendsOnADayWithNoBills(t *testing.T) {
-	s := newStores()
-	wa := &fakeWA{}
-	seedUser(
-		t, s, inWindow,
-		domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
-	)
+// Both ways a day gets there — every bill paid, or no bill at all — read the
+// same, because "pending" is empty either way and that is the whole subject of
+// the message.
+func TestAfternoonRunSendsWithNothingPending(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []domain.FinancialEntry
+	}{
+		{"nenhuma conta no dia", nil},
+		{"todas já pagas", []domain.FinancialEntry{
+			paidExpense("e1", "Folha de pagamento", 900000),
+			paidExpense("e2", "Energia", 13500),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStores()
+			wa := &fakeWA{}
+			seedUser(
+				t, s, inWindow,
+				domain.NotificationPrefs{UserID: "u1", WAEnabled: true, Phone: "5511999999999", NotifyDueToday: true},
+				tc.entries...,
+			)
 
-	res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(wa.sent) != 1 || res.BillListsSent != 1 {
-		t.Fatalf("want the quiet-day message, got %d messages (res=%+v)", len(wa.sent), res)
-	}
-	body := wa.sent[0].body
-	if !strings.Contains(body, "nenhuma conta venceu hoje") {
-		t.Errorf("quiet-day message does not say the day had nothing:\n%s", body)
-	}
-	if strings.Contains(body, "pagas") || strings.Contains(body, "baixado") {
-		t.Errorf("a day with no bills is being reported as a day that paid them:\n%s", body)
+			res, err := newNotifier(s, wa).Run(context.Background(), RunOpenBills)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wa.sent) != 1 || res.BillListsSent != 1 {
+				t.Fatalf("want one message, got %d (res=%+v)", len(wa.sent), res)
+			}
+			if body := wa.sent[0].body; body != noOpenBillsMessage {
+				t.Errorf("message = %q, want %q", body, noOpenBillsMessage)
+			}
+		})
 	}
 }
 

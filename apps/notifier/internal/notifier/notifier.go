@@ -284,7 +284,7 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 	// recomputing the analysis at 15h would also overwrite the morning's
 	// snapshot with a second, unnecessary write.
 	if kind == RunOpenBills {
-		return n.remindOpenBills(ctx, res, runLog, candidates, dueBills, bills, nowInstant, dedupeKey)
+		return n.remindOpenBills(ctx, res, runLog, candidates, dueBills, nowInstant, dedupeKey)
 	}
 
 	// A missing goal is fine — Evaluate treats a zero target as "no goal".
@@ -574,7 +574,6 @@ func (n *Notifier) remindOpenBills(
 	runLog *slog.Logger,
 	candidates []domain.NotificationPrefs,
 	dueBills []notifications.Bill,
-	bills notifications.BillStatus,
 	nowInstant time.Time,
 	dedupeKey string,
 ) (Result, error) {
@@ -621,22 +620,13 @@ func (n *Notifier) remindOpenBills(
 			continue
 		}
 
-		// Three shapes, one question — "o que ainda tenho para pagar hoje?" — and
-		// every one of them is an answer worth sending. The run has no silent
-		// branch: a reminder that did not arrive and a day that needed none look
-		// exactly alike on a phone, and only one of them is a working schedule.
-		var parts []string
-		switch {
-		case len(dueBills) > 0:
-			parts = billListMessages(dueBills, openBillsTitle)
-		case bills.SettledTodayCount > 0:
-			// Everything the day owed is paid.
-			parts = []string{settledMessage(bills.SettledTodayCount)}
-		default:
-			// Nothing was ever due. The morning digest said so too, but a day is
-			// long and bills get entered during it — this is the same statement
-			// made after the day happened rather than before it.
-			parts = []string{noOutflowsMessage}
+		// One question — "o que ainda tenho para pagar hoje?" — and two answers:
+		// the list, or the line saying there is nothing on it. Never silence: a
+		// reminder that did not arrive and a day that needed none look exactly
+		// alike on a phone, and only one of them is a working schedule.
+		parts := billListMessages(dueBills, openBillsTitle)
+		if len(parts) == 0 {
+			parts = []string{noOpenBillsMessage}
 		}
 
 		failed := false
@@ -657,8 +647,7 @@ func (n *Notifier) remindOpenBills(
 			// reminder is one list, and a resend of it is harmless.
 			continue
 		}
-		log.Info("notifier bill reminder sent",
-			"open", len(dueBills), "settled", bills.SettledTodayCount, "messages", len(parts))
+		log.Info("notifier bill reminder sent", "open", len(dueBills), "messages", len(parts))
 
 		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, dedupeKey, n.now()); err != nil {
 			res.Errors++
@@ -676,23 +665,11 @@ func (n *Notifier) remindOpenBills(
 	return res, errors.Join(errs...)
 }
 
-// noOutflowsMessage is the afternoon of a day that owed nothing. It is a
-// separate sentence from settledMessage, not a shorter version of it: "não
-// havia nada" and "estava tudo pago" are different facts about the day, and
-// collapsing them would leave the reader unsure whether the bills they entered
-// this morning were seen at all.
-const noOutflowsMessage = "✅ *Saídas de hoje* — nenhuma conta venceu hoje."
-
-// settledMessage is the afternoon of a day that had bills and paid them. It
-// names how many, so the reader can tell it apart from the sentence above
-// without counting.
-func settledMessage(settled int) string {
-	if settled == 1 {
-		return "✅ *Saídas de hoje* — tudo baixado: a única conta que vencia hoje já foi paga."
-	}
-	return fmt.Sprintf(
-		"✅ *Saídas de hoje* — tudo baixado: as %d contas que venciam hoje já foram pagas.", settled)
-}
+// noOpenBillsMessage is the afternoon of a day with nothing left to pay. It
+// covers both ways a day gets there — bills that were all settled, and a day
+// that never had any — because the message is about what is *pending*, and
+// pending is empty either way.
+const noOpenBillsMessage = "✅ *Saídas de hoje* — nenhum compromisso pendente."
 
 // maxWhatsAppText is the budget one outgoing message gets. Meta's limit for a
 // text body is 4096 characters and it rejects the whole message past it, so the

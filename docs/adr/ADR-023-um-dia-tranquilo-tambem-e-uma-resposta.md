@@ -109,21 +109,16 @@ Três consequências dessa segunda execução:
   snapshot: a tarde não tem nada de novo a dizer sobre o mês, e um segundo
   snapshot por dia só sobrescreveria o da manhã com os mesmos números.
 
-**A tarde não tem ramo silencioso.** São três frases para a mesma pergunta —
-"o que ainda tenho para pagar hoje?" — e as três são resposta:
+**A tarde é só sobre os compromissos pendentes do dia, e não tem ramo
+silencioso.** Uma pergunta — "o que ainda tenho para pagar hoje?" — e duas
+respostas: a lista, ou a linha dizendo que não há nada nela ("nenhum
+compromisso pendente"). Um dia em que tudo foi pago e um dia que não tinha
+conta nenhuma recebem a mesma frase, porque *pendente* está vazio nos dois e é
+disso que a mensagem trata; o que já foi pago não é assunto dela.
 
-| Situação | Mensagem |
-|---|---|
-| Contas em aberto | a lista, com contagem e total |
-| Tinha contas, todas pagas | "tudo baixado: as N contas que venciam hoje já foram pagas" |
-| Não tinha conta nenhuma | "nenhuma conta venceu hoje" |
-
-As duas últimas são frases distintas de propósito: "não havia nada" e "estava
-tudo pago" são fatos diferentes sobre o dia, e quem lançou contas de manhã
-precisa conseguir dizer qual das duas recebeu. E nenhuma delas é silêncio,
-porque um lembrete que não chegou e um lembrete desnecessário são
-indistinguíveis do lado de fora — foi a farmácia mesmo que pediu a mensagem nos
-dias vazios.
+Nenhuma das duas é silêncio: um lembrete que não chegou e um lembrete
+desnecessário são indistinguíveis do lado de fora, e foi a farmácia mesmo que
+pediu a mensagem nos dias vazios.
 
 A lista segue o mesmo opt-in do alerta que ela detalha (`NotifyDueToday`) — não
 é uma porta dos fundos para reportar um tipo que a pessoa desligou. E o prompt
