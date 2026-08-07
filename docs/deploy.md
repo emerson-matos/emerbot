@@ -206,4 +206,8 @@ não risco: o código é o mesmo, só publica uma versão nova de cada função.
 
 A propriedade que o CLAUDE.md descreve — "só redeploya o que mudou de verdade"
 — é portanto entre execuções do CI, que sempre usam a mesma imagem de runner.
-É a que importa, porque é de lá que os deploys saem.
+É a que importa, porque é de lá que os deploys saem, e está verificada: o plan
+do PR #92, cujo único arquivo Go é um `_test.go` (fora do `GO_SOURCES`, logo
+fora dos binários), rodou `make build-lambdas` num runner limpo e respondeu
+`No changes` — os zips reconstruídos do zero bateram com os implantados no dia
+anterior por outro runner.
