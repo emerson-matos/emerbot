@@ -151,9 +151,9 @@ const (
 	// RunDigest is the morning run: the day's message, plus the list of what is
 	// due, plus the analysis snapshot the dashboard serves.
 	RunDigest RunKind = "digest"
-	// RunOpenBills is the afternoon run. It sends one thing — the bills that
-	// fell due today and are *still* unpaid — and computes no analysis, writes
-	// no snapshot and rewrites nothing through the model.
+	// RunOpenBills is the afternoon run: what is left of the day's outflows —
+	// the ones still unpaid, or the sentence saying there are none. It computes
+	// no analysis, writes no snapshot and rewrites nothing through the model.
 	RunOpenBills RunKind = "saidas_tarde"
 )
 
@@ -557,6 +557,12 @@ func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCo
 // all — a morning list is read before the day starts and forgotten by the
 // afternoon, and the shorter the second one is, the more it is worth reading.
 //
+// It goes out every day, including the days with nothing in it. That is the
+// same rule the digest follows (ADR-023) and it was asked for by the pharmacy
+// itself: a message that only arrives on busy days is one whose absence has to
+// be interpreted, and "nada vence hoje" is exactly the thing nobody wants to
+// find out by guessing.
+//
 // Everything the digest run does beyond this is deliberately absent. No model
 // rewrites it (see billListMessages), no analysis is assembled and no snapshot
 // is written: the afternoon has nothing new to say about the month, and a
@@ -572,16 +578,6 @@ func (n *Notifier) remindOpenBills(
 	nowInstant time.Time,
 	dedupeKey string,
 ) (Result, error) {
-	// A day with no outflows at all needs no afternoon message: the morning
-	// digest already said the day was clear, and "nothing is open" about a day
-	// that never had anything is a message whose only content is that it exists.
-	// Checked once, before any per-user work, because the ledger is shared.
-	if len(dueBills) == 0 && bills.SettledTodayCount == 0 {
-		runLog.Info("notifier run finished with nothing to remind",
-			"reason", "no_outflows_today", "prefs", res.Prefs, "evaluated", 0)
-		return res, nil
-	}
-
 	var errs []error
 	for _, prefs := range candidates {
 		res.Evaluated++
@@ -625,15 +621,22 @@ func (n *Notifier) remindOpenBills(
 			continue
 		}
 
+		// Three shapes, one question — "o que ainda tenho para pagar hoje?" — and
+		// every one of them is an answer worth sending. The run has no silent
+		// branch: a reminder that did not arrive and a day that needed none look
+		// exactly alike on a phone, and only one of them is a working schedule.
 		var parts []string
-		if len(dueBills) > 0 {
+		switch {
+		case len(dueBills) > 0:
 			parts = billListMessages(dueBills, openBillsTitle)
-		} else {
-			// Everything the day owed is paid. That is the answer to the same
-			// question the list answers, and the reason this run does not just go
-			// quiet: silence here would be indistinguishable from a reminder that
-			// failed to send.
+		case bills.SettledTodayCount > 0:
+			// Everything the day owed is paid.
 			parts = []string{settledMessage(bills.SettledTodayCount)}
+		default:
+			// Nothing was ever due. The morning digest said so too, but a day is
+			// long and bills get entered during it — this is the same statement
+			// made after the day happened rather than before it.
+			parts = []string{noOutflowsMessage}
 		}
 
 		failed := false
@@ -654,7 +657,8 @@ func (n *Notifier) remindOpenBills(
 			// reminder is one list, and a resend of it is harmless.
 			continue
 		}
-		log.Info("notifier bill reminder sent", "bills", len(dueBills), "messages", len(parts))
+		log.Info("notifier bill reminder sent",
+			"open", len(dueBills), "settled", bills.SettledTodayCount, "messages", len(parts))
 
 		if err := n.store.RecordNotificationSent(ctx, prefs.UserID, dedupeKey, n.now()); err != nil {
 			res.Errors++
@@ -672,9 +676,16 @@ func (n *Notifier) remindOpenBills(
 	return res, errors.Join(errs...)
 }
 
-// settledMessage is the afternoon's other outcome: the day had bills and they
-// are all paid. It names how many so the reader can tell it apart from a day
-// that never had any — the case this run stays quiet about.
+// noOutflowsMessage is the afternoon of a day that owed nothing. It is a
+// separate sentence from settledMessage, not a shorter version of it: "não
+// havia nada" and "estava tudo pago" are different facts about the day, and
+// collapsing them would leave the reader unsure whether the bills they entered
+// this morning were seen at all.
+const noOutflowsMessage = "✅ *Saídas de hoje* — nenhuma conta venceu hoje."
+
+// settledMessage is the afternoon of a day that had bills and paid them. It
+// names how many, so the reader can tell it apart from the sentence above
+// without counting.
 func settledMessage(settled int) string {
 	if settled == 1 {
 		return "✅ *Saídas de hoje* — tudo baixado: a única conta que vencia hoje já foi paga."
