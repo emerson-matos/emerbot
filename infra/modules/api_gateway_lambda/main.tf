@@ -414,7 +414,10 @@ locals {
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
     "GET /analysis/monthly", "GET /analysis", "POST /analysis",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
-    "GET /notifications/preferences", "PUT /notifications/preferences",
+    # Só leitura: não há preferência para gravar (ADR-023), e é esse GET que
+    # cadastra o destinatário. Sem a rota do PUT, um cliente antigo que ainda
+    # tente salvar leva 404 do gateway em vez de acordar a Lambda.
+    "GET /notifications/preferences",
     "GET /payments/sales", "GET /payments/receivables", "GET /payments/forecast",
   ])
   # An explicit OPTIONS route is still required: API Gateway's automatic CORS
