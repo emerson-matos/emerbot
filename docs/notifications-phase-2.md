@@ -8,14 +8,14 @@ follow-up opcional (expor o log de entrega como histórico real na UI).
 
 | Camada | Onde |
 |--------|------|
-| Preferências (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`), chaveado pelo `sub` real do Cognito (`claims.Subject`, nunca sobrescrito pelo mock do ledger compartilhado — ver `GatewayMiddleware`). Cada usuário Cognito tem suas próprias preferências, todas lendo o mesmo ledger financeiro compartilhado. |
+| Destinatários (persistência) | `NotificationPrefs` em `packages/domain`; `Save/Get/ListNotificationPrefs` na `finance.Store` (item `SK=NOTIFPREFS`), chaveado pelo `sub` real do Cognito (`claims.Subject`, nunca sobrescrito pelo mock do ledger compartilhado — ver `GatewayMiddleware`). Cada usuário Cognito tem suas próprias preferências, todas lendo o mesmo ledger financeiro compartilhado. |
 | Telefone | Vem do atributo `phone_number` do usuário no Cognito (claim do JWT), nunca digitado no formulário — `apps/dashboard-api/internal/finance/notifications.go` normaliza para dígitos E.164 ao salvar/ler. |
-| API | `GET`/`PUT /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go`. |
+| API | `GET /notifications/preferences` em `apps/dashboard-api/internal/finance/notifications.go` — só leitura, e é ela que cadastra o usuário + telefone do Cognito como destinatário. O PUT foi removido (405). |
 | Regras de alerta | `packages/notifications` — função pura `Evaluate`, gêmea Go do hook `useNotifications` do web (uma fonte de verdade). |
 | Job agendado | `apps/notifier` (Lambda), **dois agendamentos por dia** — de manhã o **resumo diário** (que sai todo dia, mesmo tranquilo) mais a lista das saídas do dia; pouco depois das 15h, as saídas **ainda em aberto** — e essa também sai todo dia: sem nada pendente, é uma linha dizendo isso. Qual execução é vem no `input` do EventBridge (`{"run": …}` → `notifier.ParseRunKind`), nunca do relógio. Cada uma deduplica por dia com chave própria (log `SK=NOTIFLOG#<data>` e `…#saidas-tarde`). Ver ADR-023. |
 | Janela de 24h | `packages/wasession` — tabela DynamoDB própria (`whatsapp-sessions`, on-demand, **TTL de 20h**). O webhook grava uma sessão por telefone a cada inbound; o notifier só envia se a sessão estiver ativa. |
 | Envio | `whatsapp.Client.SendText` (mensagem proativa, sem `context` de resposta). |
-| Frontend | form real em `apps/web/src/pages/Notificacoes.tsx` (`useNotificationPrefs` / `useSaveNotificationPrefsMutation`). |
+| Frontend | `apps/web/src/pages/Notificacoes.tsx` — painel informativo (para qual número vão as mensagens, o que chega todo dia, a janela de 20h). Sem controles: não há o que configurar. O `useNotificationPrefs` que ele dispara é o que cadastra o destinatário. |
 | Infra | notifier Lambda + IAM + dois `aws_scheduler_schedule` (EventBridge Scheduler: `notifier-daily` e `notifier-open-bills`, horários em `notifier_schedule` / `notifier_open_bills_schedule`) no módulo `api_gateway_lambda`; zip novo no `Makefile`. |
 
 ### Janela de atendimento de 24h (evita cobrança)
@@ -170,17 +170,17 @@ EventBridge).
 
 ### 4. Frontend
 
-Trocar o card placeholder em `apps/web/src/pages/Notificacoes.tsx` pelo form real
-de preferências (toggle "Ativar alertas", telefone, checkboxes) — o mock em
-`Dashboard.dc.html` já tem o layout. Adicionar os hooks/queries
-(`useNotificationPrefs`, `useSaveNotificationPrefsMutation`) espelhando `useGoal`
-/ `useSaveGoalMutation`. Quando houver log persistido, apontar o _Histórico de
-Alertas_ para ele.
+`apps/web/src/pages/Notificacoes.tsx` mostra para qual número as mensagens vão,
+o que chega todo dia e a regra da janela de 20h. Não tem controle nenhum — não
+há o que configurar (ADR-023) — e o `useNotificationPrefs` que ele dispara é o
+que cadastra o destinatário. Quando houver log persistido, apontar o _Histórico
+de Alertas_ para ele.
 
 ## Custo (cost cap ~R$20/mês)
 
 - Uma execução diária por usuário é desprezível em Lambda/DynamoDB.
 - O custo relevante é a **Meta Cloud API**: mensagens iniciadas pelo negócio são
   cobradas por conversa. Manter frequência baixa (agregar num único resumo
-  diário em vez de uma mensagem por alerta) e respeitar o opt-in via
-  `waEnabled`.
+  diário em vez de uma mensagem por alerta). Hoje são até três por dia por
+  destinatário — resumo, lista da manhã e lembrete da tarde — todas dentro da
+  janela de 20h, que é gratuita.

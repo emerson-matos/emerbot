@@ -89,6 +89,14 @@ func mintTokenWithOverrides(t *testing.T, key *rsa.PrivateKey, kid, sub, email, 
 // private key so tests can mint tokens for it via mintToken.
 func newTestApp(t *testing.T) (*App, *rsa.PrivateKey) {
 	t.Helper()
+	app, _, key := newTestAppWithStore(t)
+	return app, key
+}
+
+// newTestAppWithStore also hands back the store, for the tests that assert on
+// what a request wrote rather than on what it answered.
+func newTestAppWithStore(t *testing.T) (*App, *pkgfinance.InMemoryStore, *rsa.PrivateKey) {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -98,7 +106,8 @@ func newTestApp(t *testing.T) (*App, *rsa.PrivateKey) {
 	if err != nil {
 		t.Fatalf("build local cognito middleware: %v", err)
 	}
-	return NewLocal(pkgfinance.NewInMemoryStore(), pkgpayments.NewInMemoryRepository(), authMw), key
+	store := pkgfinance.NewInMemoryStore()
+	return NewLocal(store, pkgpayments.NewInMemoryRepository(), authMw), store, key
 }
 
 func do(t *testing.T, app *App, method, path, token string, body any) *httptest.ResponseRecorder {

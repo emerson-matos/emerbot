@@ -8,8 +8,10 @@
 // the same insights the /analise page renders — and a morning with nothing to
 // flag is one of its answers, not a reason to withhold it. See ADR-023.
 //
-// Opting out is the WhatsApp toggle in NotificationPrefs. The per-kind toggles
-// below it decide what the message may claim, not whether it is sent.
+// There is nothing to opt into and nothing to switch off. The pharmacy wants
+// these messages, so every registered recipient with a phone gets all of them —
+// see domain.NotificationPrefs, which is now an address book and not a set of
+// preferences.
 package notifier
 
 import (
@@ -92,36 +94,33 @@ func New(store LedgerReader, sessions wasession.Store, wa whatsapp.Client, phone
 func (n *Notifier) SetClock(now func() time.Time) { n.now = now }
 
 // Result summarizes one run for logging/telemetry. Every counter is a distinct
-// reason a digest did or did not go out, because "skipped" on its own is not an
-// answer to "why didn't I get a message today?" — the fixes for "you already
-// got it", "your WhatsApp window is shut" and "nothing could be checked" have
-// nothing in common.
+// reason a message did or did not go out, because "skipped" on its own is not an
+// answer to "why didn't I get a message today?" — the fixes for "you already got
+// it", "your WhatsApp window is shut" and "your account has no phone number"
+// have nothing in common.
 type Result struct {
-	Prefs      int // notification-preference rows found
-	NotOptedIn int // rows with WhatsApp off or no phone — never evaluated
-	Evaluated  int // users with WhatsApp enabled + a phone
-	Sent       int // digests actually delivered
+	Prefs int // recipient rows found
+	// Unreachable is a registered user with no phone on their Cognito profile.
+	// It is the only way left to not be sent to, and unlike the switch it
+	// replaced it is nobody's choice — so it keeps a counter and a log line of
+	// its own rather than being left to infer from Prefs and Sent disagreeing.
+	Unreachable int
+	Evaluated   int // recipients with a phone to send to
+	Sent        int // digests actually delivered
 	// BillListsSent counts the messages carrying the day's outflows, which follow
 	// the digest and can be more than one per recipient on a heavy day. Counted
 	// apart from Sent because they are a different message with a different
 	// failure mode: a digest that arrives without its list is a real outcome, and
 	// "sent=2" would hide it.
-	BillListsSent int
-	// SkippedNothingToSend is "evaluated, and this run had nothing for this
-	// recipient". On the digest run it is the one remaining silence: the analysis
-	// failed *and* the day's bills could not be reported (the user unsubscribed
-	// from them), so there is nothing the message could truthfully say — it
-	// replaced "no alerts", which is no longer a reason to stay quiet. On the
-	// afternoon run it is a recipient who does not hear about bills due today.
-	SkippedNothingToSend int
-	SkippedAlreadySent   int // today's digest already went out (dedupe hit)
-	OutsideWindow        int // enabled, but WhatsApp's 24h window is closed
-	Errors               int // per-user failures; the run continues past them
+	BillListsSent      int
+	SkippedAlreadySent int // today's digest already went out (dedupe hit)
+	OutsideWindow      int // enabled, but WhatsApp's 24h window is closed
+	Errors             int // per-user failures; the run continues past them
 }
 
 // Skipped is the total of every "evaluated but not sent, without an error"
 // outcome. Kept as a derived value so the summary can still be read at a glance.
-func (r Result) Skipped() int { return r.SkippedNothingToSend + r.SkippedAlreadySent }
+func (r Result) Skipped() int { return r.SkippedAlreadySent }
 
 // LogAttrs renders the counters as flat log fields. It lives next to the struct
 // so a new counter is named for the log in the same place it is declared —
@@ -130,11 +129,10 @@ func (r Result) Skipped() int { return r.SkippedNothingToSend + r.SkippedAlready
 func (r Result) LogAttrs() []any {
 	return []any{
 		"prefs", r.Prefs,
-		"not_opted_in", r.NotOptedIn,
+		"unreachable", r.Unreachable,
 		"evaluated", r.Evaluated,
 		"sent", r.Sent,
 		"bill_lists_sent", r.BillListsSent,
-		"skipped_nothing_to_send", r.SkippedNothingToSend,
 		"skipped_already_sent", r.SkippedAlreadySent,
 		"outside_window", r.OutsideWindow,
 		"errors", r.Errors,
@@ -246,27 +244,22 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 
 	// Every prefs row names a real Cognito user (who to notify, and on which
 	// phone), but they all read the same shared financial ledger — filter down
-	// to opted-in recipients first so a fresh install with nobody enabled
+	// to reachable recipients first so a fresh install with nobody registered
 	// skips the ledger reads below entirely.
 	var candidates []domain.NotificationPrefs
 	for _, prefs := range prefsList {
-		if !prefs.WAEnabled || prefs.Phone == "" {
-			res.NotOptedIn++
-			// The two halves of this condition are different user-facing
-			// problems: one is a setting they can flip, the other is a missing
-			// phone on their Cognito profile.
-			reason := "whatsapp_disabled"
-			if prefs.Phone == "" {
-				reason = "no_phone"
-			}
-			userLog(prefs).Info("notifier digest not sent", "reason", reason)
+		if prefs.Phone == "" {
+			res.Unreachable++
+			userLog(prefs).Info("notifier message not sent",
+				"reason", "no_phone",
+				"detail", "no phone number on this user's Cognito profile")
 			continue
 		}
 		candidates = append(candidates, prefs)
 	}
 	if len(candidates) == 0 {
 		runLog.Warn("notifier run finished with no eligible recipients",
-			"prefs", res.Prefs, "not_opted_in", res.NotOptedIn)
+			"prefs", res.Prefs, "unreachable", res.Unreachable)
 		return res, nil
 	}
 
@@ -380,7 +373,7 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 			continue
 		}
 
-		alerts := notifications.Evaluate(prefs, entries, revenue, goal, today)
+		alerts := notifications.Evaluate(entries, revenue, goal, today)
 
 		already, err := n.store.NotificationSent(ctx, prefs.UserID, dedupeKey)
 		if err != nil {
@@ -393,27 +386,19 @@ func (n *Notifier) Run(ctx context.Context, kind RunKind) (Result, error) {
 			continue
 		}
 
-		// The digest goes out every day now, quiet ones included: a morning with
+		// The digest goes out every day, quiet ones included: a morning with
 		// nothing to flag is an answer to "como estamos?", and a silence is not —
-		// it reads the same as a broken cron. What replaced the old "no alerts"
-		// skip is a much narrower one, below: nothing *verified* to say.
-		listFollows := prefs.NotifyDueToday && len(dueBills) > 0
+		// it reads the same as a broken cron. No branch can hold it back now, and
+		// none can leave it empty either: a day with bills has alerts, and a day
+		// without them has the calm line.
+		listFollows := len(dueBills) > 0
 		content := digestContent{
-			Calm:        calmLine(bills, commitments, prefs),
+			Calm:        calmLine(bills, commitments),
 			Alerts:      alerts,
 			Ahead:       digestAhead,
 			Insights:    digestInsights,
 			Payload:     digestPayload,
 			ListFollows: listFollows,
-		}
-		if content.empty() {
-			res.SkippedNothingToSend++
-			log.Info("notifier digest not sent",
-				"reason", "nothing_verified",
-				"detail", "the month's analysis is unavailable and this user hears about no bill kind — "+
-					"a digest would have nothing in it that was actually checked",
-				"window_closes_at", expiry.In(n.loc).Format(time.RFC3339))
-			continue
 		}
 
 		msg := n.buildDigest(ctx, content)
@@ -506,50 +491,21 @@ type digestContent struct {
 	ListFollows bool
 }
 
-// empty reports a message with nothing in it but its own header. It is the last
-// guard on the "send every day" rule: a digest that says nothing is worse than
-// no digest, because it teaches the reader that the message carries no
-// information.
-func (c digestContent) empty() bool {
-	return c.Calm == "" && len(c.Alerts) == 0 && len(c.Ahead) == 0 && len(c.Insights) == 0
-}
-
-// calmLine states that the day is quiet — and states it only for the bill kinds
-// this recipient subscribed to, because that is the extent of what the digest
-// may claim on their behalf. Someone who turned overdue alerts off is not told
-// "não há contas vencidas": they asked not to be tracked on that, and a
-// reassurance is still a report.
+// calmLine states that the day is quiet, and says nothing at all when it is
+// not: a bill that needs attention has an alert of its own two lines down, and
+// a ✅ above it would be the message disagreeing with itself.
 //
-// The claims themselves come from the ledger (notifications.BillStatus), never
-// from an empty alert list — the two differ exactly when a kind is switched off,
-// and that is the case where "nada vence hoje" would be false.
-func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCoverage, prefs domain.NotificationPrefs) string {
-	// Clear means "nothing to raise here" — either because there is nothing, or
-	// because this recipient does not hear about it. A kind they hear about that
-	// is *not* clear has an alert of its own two lines down, and a ✅ above it
-	// would be the message disagreeing with itself.
-	dueClear := !prefs.NotifyDueToday || bills.DueTodayCount == 0
-	overdueClear := !prefs.NotifyOverdue || bills.OverdueCount == 0
-	if !dueClear || !overdueClear {
+// The claim comes from the ledger (notifications.BillStatus) rather than from an
+// empty alert list. Those two agree now that nothing filters the alerts — but
+// they agree because of how Evaluate happens to be written today, and this is
+// the sentence in the message that has to be true whatever anyone does to that
+// function next.
+func calmLine(bills notifications.BillStatus, commitments analytics.CommitmentCoverage) string {
+	if !bills.Quiet() {
 		return ""
 	}
 
-	var claim string
-	switch {
-	case prefs.NotifyDueToday && prefs.NotifyOverdue:
-		claim = "Nada vence hoje e não há contas vencidas."
-	case prefs.NotifyDueToday:
-		claim = "Nada vence hoje."
-	case prefs.NotifyOverdue:
-		claim = "Não há contas vencidas."
-	default:
-		// Subscribed to no bill kind: there is no claim this digest may make on
-		// their behalf, and "tudo tranquilo" over an unread ledger is exactly the
-		// reassurance nobody checked.
-		return ""
-	}
-
-	line := "✅ " + claim
+	line := "✅ Nada vence hoje e não há contas vencidas."
 	// The cash clause is added only where the projected balance says so. An
 	// uncovered month has its own line in the analysis half, and a ledger with no
 	// trading history cannot answer the question at all — neither may be dressed
@@ -591,16 +547,6 @@ func (n *Notifier) remindOpenBills(ctx context.Context, run dayRun, res *Result,
 	for _, prefs := range candidates {
 		res.Evaluated++
 		log := run.log.With("user", prefs.UserID, "phone", maskPhone(prefs.Phone))
-
-		// Same opt-in as the list that follows the digest: this is the detail
-		// behind the due-today alert, in the afternoon instead of the morning.
-		if !prefs.NotifyDueToday {
-			res.SkippedNothingToSend++
-			log.Info("notifier bill reminder not sent",
-				"reason", "due_today_alerts_off",
-				"detail", "this recipient does not hear about bills due today")
-			continue
-		}
 
 		expiry, err := n.sessions.ActiveUntil(ctx, prefs.Phone)
 		if err != nil {

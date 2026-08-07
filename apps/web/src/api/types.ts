@@ -130,12 +130,10 @@ export interface Goal {
   ExpenseTarget: number;
 }
 
+// Where the daily WhatsApp messages go. There is nothing to configure — they
+// always go out — so this is the delivery address and not a set of preferences.
 export interface NotificationPrefs {
-  waEnabled: boolean;
   phone: string;
-  notifyDueToday: boolean;
-  notifyOverdue: boolean;
-  notifyGoal: boolean;
 }
 
 export interface Category {

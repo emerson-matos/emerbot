@@ -12,7 +12,6 @@ import { CognitoAuthError } from "./types";
 import type {
   CreateEntryInput,
   Entry,
-  NotificationPrefs,
   UpdateEntryInput,
 } from "./types";
 import { api } from "./http";
@@ -204,27 +203,14 @@ export function useSaveGoalMutation(month: string) {
   });
 }
 
+// Also the registration call: the API writes the caller into the recipient
+// table when it answers, so rendering the Notificações page is what makes an
+// account reachable. Nothing else in the app hits this endpoint.
 export function useNotificationPrefs() {
   return useQuery({
     queryKey: queryKeys.notificationPrefs(),
     queryFn: () => api.notifications.getPreferences(),
     select: (data) => data.preferences,
-  });
-}
-
-export function useSaveNotificationPrefsMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: Partial<NotificationPrefs>) =>
-      api.notifications.savePreferences(data),
-    onError: () => {
-      toast.error("Não foi possível salvar as preferências.");
-    },
-    onSuccess: (result) => {
-      queryClient.setQueryData(queryKeys.notificationPrefs(), result);
-      toast.success("Preferências salvas.");
-    },
   });
 }
 

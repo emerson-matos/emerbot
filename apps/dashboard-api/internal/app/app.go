@@ -103,7 +103,6 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	notifHandler := apifinance.NewNotificationsHandler(finStore)
 
 	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
-	mux.Handle("PUT /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Save)))
 
 	// Imported payment-processor data (read-only; writes go through the
 	// payment-importer Lambda triggered by S3).

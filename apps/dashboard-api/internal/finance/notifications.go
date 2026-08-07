@@ -2,7 +2,6 @@ package finance
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -13,7 +12,7 @@ import (
 )
 
 // NotificationPrefsStore is the slice of the finance store the notification
-// preference endpoints use.
+// endpoint uses.
 type NotificationPrefsStore interface {
 	GetNotificationPrefs(ctx context.Context, userID string) (domain.NotificationPrefs, error)
 	SaveNotificationPrefs(ctx context.Context, prefs domain.NotificationPrefs) error
@@ -27,27 +26,27 @@ func NewNotificationsHandler(store NotificationPrefsStore) *NotificationsHandler
 	return &NotificationsHandler{store: store}
 }
 
-// notifPrefsResponse is the JSON shape shared by GET and PUT. Phone is echoed
-// back normalized so the client can display exactly what was stored.
+// notifPrefsResponse is what the Notificações page renders. There is nothing to
+// choose any more — the messages always go out — so the only thing worth showing
+// is where they go, and the only thing that can go wrong is this being empty.
 type notifPrefsResponse struct {
-	WAEnabled      bool   `json:"waEnabled"`
-	Phone          string `json:"phone"`
-	NotifyDueToday bool   `json:"notifyDueToday"`
-	NotifyOverdue  bool   `json:"notifyOverdue"`
-	NotifyGoal     bool   `json:"notifyGoal"`
+	Phone string `json:"phone"`
 }
 
-func toResponse(p domain.NotificationPrefs) notifPrefsResponse {
-	return notifPrefsResponse{
-		WAEnabled:      p.WAEnabled,
-		Phone:          p.Phone,
-		NotifyDueToday: p.NotifyDueToday,
-		NotifyOverdue:  p.NotifyOverdue,
-		NotifyGoal:     p.NotifyGoal,
-	}
-}
-
-// Get handles GET /notifications/preferences
+// Get handles GET /notifications/preferences, and registers the caller as a
+// recipient on the way.
+//
+// The registration used to be the PUT: the page saved your switches, and saving
+// them is what put your user and phone in the table the notifier reads. With the
+// switches gone there is nothing left to save — but the notifier still needs an
+// address book, and this is the only moment the system sees a real Cognito user
+// and their phone number together.
+//
+// So the read writes, when and only when the stored row does not already say
+// this. That also fixes something the PUT never did: a phone changed on the
+// Cognito account used to leave the old number in the table until the user
+// happened to re-save the form, which meant the messages kept going to a number
+// they had already replaced.
 func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims, ok := apiauth.ClaimsFromContext(r.Context())
 	if !ok {
@@ -55,72 +54,22 @@ func (h *NotificationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
-	if err != nil {
-		// No saved prefs yet — hand back the defaults rather than an error so
-		// the form has something to render.
-		prefs = domain.DefaultNotificationPrefs(claims.Subject)
-	}
-	prefs.Phone = normalizePhone(claims.Phone)
-	httpx.OK(w, map[string]any{"preferences": toResponse(prefs)})
-}
-
-// Save handles PUT /notifications/preferences
-func (h *NotificationsHandler) Save(w http.ResponseWriter, r *http.Request) {
-	claims, ok := apiauth.ClaimsFromContext(r.Context())
-	if !ok {
-		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	prefs := domain.NotificationPrefs{UserID: claims.Subject, Phone: normalizePhone(claims.Phone)}
+	stored, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
+	if err != nil || stored != prefs {
+		// A failed read is treated as "not registered yet" rather than an error:
+		// the page's job is to say where the messages go, and it can do that from
+		// the claims alone. Writing on that path costs one PutItem and makes the
+		// registry self-healing.
+		if serr := h.store.SaveNotificationPrefs(r.Context(), prefs); serr != nil {
+			// Not fatal either. The number is still correct on screen; it is the
+			// next run of the notifier that would use a stale one, and that is
+			// worth a log rather than an error page.
+			log.Printf("register notification recipient: %v", serr)
+		}
 	}
 
-	var body struct {
-		WAEnabled      *bool `json:"waEnabled"`
-		NotifyDueToday *bool `json:"notifyDueToday"`
-		NotifyOverdue  *bool `json:"notifyOverdue"`
-		NotifyGoal     *bool `json:"notifyGoal"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Start from what's stored (or defaults) so a partial PUT only changes the
-	// fields it sends.
-	prefs, err := h.store.GetNotificationPrefs(r.Context(), claims.Subject)
-	if err != nil {
-		prefs = domain.DefaultNotificationPrefs(claims.Subject)
-	}
-
-	if body.WAEnabled != nil {
-		prefs.WAEnabled = *body.WAEnabled
-	}
-	if body.NotifyDueToday != nil {
-		prefs.NotifyDueToday = *body.NotifyDueToday
-	}
-	if body.NotifyOverdue != nil {
-		prefs.NotifyOverdue = *body.NotifyOverdue
-	}
-	if body.NotifyGoal != nil {
-		prefs.NotifyGoal = *body.NotifyGoal
-	}
-
-	// The phone is never client-supplied — it's always the Cognito account's
-	// registered number, so alerts can't be redirected to an arbitrary number.
-	prefs.Phone = normalizePhone(claims.Phone)
-
-	// Can't enable WhatsApp delivery without a phone number to deliver to.
-	if prefs.WAEnabled && prefs.Phone == "" {
-		httpx.Error(w, "cadastre um número de telefone na sua conta para ativar os alertas", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.store.SaveNotificationPrefs(r.Context(), prefs); err != nil {
-		log.Printf("save notif prefs error: %v", err)
-		httpx.Error(w, "failed to save preferences", http.StatusInternalServerError)
-		return
-	}
-
-	httpx.OK(w, map[string]any{"preferences": toResponse(prefs)})
+	httpx.OK(w, map[string]any{"preferences": notifPrefsResponse{Phone: prefs.Phone}})
 }
 
 // normalizePhone reduces a Cognito phone_number attribute (E.164, e.g.

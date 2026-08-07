@@ -187,14 +187,6 @@ export const api = {
       httpClient<{ preferences: NotificationPrefs }>(
         "/notifications/preferences",
       ),
-    savePreferences: (data: Partial<NotificationPrefs>) =>
-      httpClient<{ preferences: NotificationPrefs }>(
-        "/notifications/preferences",
-        {
-          method: "PUT",
-          body: JSON.stringify(data),
-        },
-      ),
   },
 
   // Imported payment-processor data (read-only; ingestion is out-of-band via S3).

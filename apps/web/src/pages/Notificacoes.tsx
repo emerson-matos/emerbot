@@ -1,13 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Bell, CheckCircle2, History, MessageCircle } from 'lucide-react'
+import { Bell, History, MessageCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
-import { useAuth } from '@/lib/auth'
 import EmptyState from '../components/EmptyState'
 import NotificationList from '../components/NotificationList'
 import { useNotifications } from '@/lib/notifications'
-import { useNotificationPrefs, useSaveNotificationPrefsMutation } from '../api/queries'
+import { useNotificationPrefs } from '../api/queries'
 
 // Renders the Cognito phone (E.164) as "(11) 98765-4321". Drops the BR
 // country code and caps at 11 local digits.
@@ -20,158 +16,78 @@ function formatPhoneBR(raw: string): string {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
 }
 
-function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-        checked ? 'bg-success' : 'bg-muted',
-      )}
-    >
-      <span
-        className={cn(
-          'absolute top-0.5 size-5 rounded-full bg-white transition-[left]',
-          checked ? 'left-5.5' : 'left-0.5',
-        )}
-      />
-    </button>
-  )
-}
+// What the notifier sends, in the order the day sends it. Written out because
+// this card is now the only place someone can find out what to expect on their
+// phone — there is nothing to configure, so the page's job is to say what
+// arrives and where.
+const DAILY_MESSAGES = [
+  'Resumo do dia, de manhã',
+  'As saídas previstas para hoje, logo em seguida',
+  'As saídas ainda em aberto, depois das 15h',
+]
 
-const ALERT_CHECKS = [
-  { key: 'notifyDueToday', label: 'Uma conta vence hoje' },
-  { key: 'notifyOverdue', label: 'Uma conta está vencida' },
-  { key: 'notifyGoal', label: 'A meta do mês for atingida' },
-] as const
-
-function WhatsAppPreferences() {
-  const { user } = useAuth()
+function WhatsAppDelivery() {
+  // Read from the API rather than from the auth claims, and not only because
+  // the API normalizes the number: this request is what registers the account
+  // as a recipient (see the Get handler in the dashboard-api). Nobody is
+  // messaged until someone has opened this page once.
   const prefsQuery = useNotificationPrefs()
-  const save = useSaveNotificationPrefsMutation()
-
-  const [waEnabled, setWaEnabled] = useState(false)
-  const [checks, setChecks] = useState({
-    notifyDueToday: true,
-    notifyOverdue: true,
-    notifyGoal: false,
-  })
-  const [saved, setSaved] = useState(false)
-
-  // Seed the form once prefs load.
-  useEffect(() => {
-    const p = prefsQuery.data
-    if (!p) return
-    setWaEnabled(p.waEnabled)
-    setChecks({
-      notifyDueToday: p.notifyDueToday,
-      notifyOverdue: p.notifyOverdue,
-      notifyGoal: p.notifyGoal,
-    })
-  }, [prefsQuery.data])
-
-  // The delivery number is always the phone registered on the Cognito
-  // account — there's nothing to type here, only to enable/disable.
-  const phone = user?.phone ?? ''
-  const missingPhone = waEnabled && phone.replace(/\D/g, '').length < 10
-
-  function submit() {
-    save.mutate(
-      { waEnabled, ...checks },
-      { onSuccess: () => setSaved(true) },
-    )
-  }
+  const phone = prefsQuery.data?.phone ?? ''
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           <MessageCircle className="size-4 text-primary" aria-hidden />
-          Alertas por WhatsApp
+          Avisos por WhatsApp
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between border-b border-border pb-4">
-          <div>
-            <p className="text-sm font-medium">Ativar alertas</p>
-            <p className="text-xs text-muted-foreground">Receba avisos no seu WhatsApp</p>
-          </div>
-          <Toggle
-            checked={waEnabled}
-            onChange={v => { setWaEnabled(v); setSaved(false) }}
-            label="Ativar alertas por WhatsApp"
-          />
+        <div className="border-b border-border pb-4">
+          <p className="text-xs font-medium text-muted-foreground">
+            As mensagens vão para
+          </p>
+          {prefsQuery.isLoading ? (
+            <p className="mt-1 text-sm text-muted-foreground">Carregando…</p>
+          ) : phone ? (
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {formatPhoneBR(phone)}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-warning">
+              Nenhum número cadastrado na sua conta — sem ele os avisos não têm
+              para onde ir.
+            </p>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            É o número da sua conta. Para trocar, altere o cadastro.
+          </p>
         </div>
 
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-muted-foreground">
-            Número de WhatsApp
+            Você recebe todo dia
           </p>
-          <p className={cn('text-sm', !phone && 'text-muted-foreground italic')}>
-            {phone ? formatPhoneBR(phone) : 'Nenhum número cadastrado na sua conta'}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Os alertas são enviados para o telefone da sua conta. Para
-            trocá-lo, atualize seu cadastro.
-          </p>
-          {missingPhone && (
-            <p className="text-xs text-destructive">
-              Cadastre um número na sua conta para ativar os alertas.
-            </p>
-          )}
+          <ul className="space-y-1.5">
+            {DAILY_MESSAGES.map(message => (
+              <li key={message} className="flex gap-2 text-sm">
+                <span className="text-muted-foreground" aria-hidden>
+                  •
+                </span>
+                {message}
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          Por regra do WhatsApp, os alertas só são enviados por um período após
-          você mandar uma mensagem ao bot. Se pararem de chegar, mande qualquer
-          mensagem (ex.:{' '}
-          <span className="rounded bg-background px-1 py-0.5 font-mono font-medium text-foreground">/resumo</span>
-          ) para reativar.
+        {/* The 20h window is the one thing that can silence a day, and it is
+            fixed by the reader rather than by us — so it is stated here instead
+            of leaving an unexplained gap on the phone. */}
+        <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+          Os avisos só saem se você tiver conversado com o bot nas últimas 20
+          horas — é uma regra do WhatsApp. Mande qualquer mensagem para ele e a
+          janela reabre.
         </p>
-
-        <div className="space-y-2.5">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            Enviar alerta quando
-          </p>
-          {ALERT_CHECKS.map(({ key, label }) => (
-            <label key={key} className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-primary"
-                checked={checks[key]}
-                onChange={e => {
-                  setChecks(c => ({ ...c, [key]: e.target.checked }))
-                  setSaved(false)
-                }}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-3 pt-1">
-          <Button onClick={submit} disabled={save.isPending || missingPhone}>
-            Salvar Preferências
-          </Button>
-          {saved && !save.isPending && (
-            <span className="flex items-center gap-1.5 text-sm text-success">
-              <CheckCircle2 className="size-4" aria-hidden />
-              Preferências salvas
-            </span>
-          )}
-        </div>
       </CardContent>
     </Card>
   )
@@ -190,7 +106,7 @@ export default function Notificacoes() {
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
-        <WhatsAppPreferences />
+        <WhatsAppDelivery />
 
         <Card>
           <CardHeader className="pb-2">

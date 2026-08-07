@@ -16,8 +16,7 @@ func TestInMemoryNotificationPrefsRoundTrip(t *testing.T) {
 	s := NewInMemoryStore()
 	ctx := context.Background()
 	prefs := domain.NotificationPrefs{
-		UserID: "u1", WAEnabled: true, Phone: "5511999",
-		NotifyDueToday: true, NotifyGoal: true,
+		UserID: "u1", Phone: "5511999",
 	}
 
 	if err := s.SaveNotificationPrefs(ctx, prefs); err != nil {
@@ -32,11 +31,11 @@ func TestInMemoryNotificationPrefsRoundTrip(t *testing.T) {
 	}
 
 	// Saving again replaces rather than accumulating.
-	prefs.WAEnabled = false
+	prefs.Phone = "5511888"
 	if err := s.SaveNotificationPrefs(ctx, prefs); err != nil {
 		t.Fatalf("re-save prefs: %v", err)
 	}
-	if got, _ = s.GetNotificationPrefs(ctx, "u1"); got.WAEnabled {
+	if got, _ = s.GetNotificationPrefs(ctx, "u1"); got.Phone != "5511888" {
 		t.Fatal("the second save must overwrite the first")
 	}
 

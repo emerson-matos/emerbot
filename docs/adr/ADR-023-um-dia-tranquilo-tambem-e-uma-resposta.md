@@ -33,9 +33,15 @@ o épico #33; o resumo diário lia uma fatia dele.
 ## Decisão
 
 **O resumo sai todo dia**, dentro da janela de 20h do WhatsApp (sem template
-pago — ADR do épico #33), e o opt-out continua sendo o toggle de WhatsApp em
-`NotificationPrefs`. Os toggles por tipo de alerta decidem **o que a mensagem
-pode afirmar**, não se ela é enviada.
+pago — ADR do épico #33), para todo destinatário cadastrado.
+
+**E não há opt-in nenhum.** O toggle de WhatsApp e os três toggles por tipo de
+alerta foram removidos: a farmácia quer as mensagens, todas, todo dia, e um
+interruptor que ninguém ia mexer é um ramo no notifier, um campo no store, um
+controle numa página e um jeito de a manhã ficar muda por um motivo que ninguém
+lembra ter escolhido. `NotificationPrefs` virou lista de endereços — usuário e
+telefone — e a única coisa que ainda impede uma mensagem é não haver número
+para onde mandá-la.
 
 **Um dia tranquilo é dito, não subentendido.** A linha de calmaria
 (`calmLine`) abre a metade "a partir de agora" com o que foi verificado —
@@ -43,11 +49,13 @@ pode afirmar**, não se ela é enviada.
 caixa quando o `CashPosition.Commitments` é `coberto`.
 
 **A afirmação de calmaria vem do ledger, nunca da lista de alertas vazia.**
-`notifications.Bills` conta as contas pendentes independentemente de qualquer
-preferência, e cada frase só é escrita para quem assinou aquele tipo. Uma lista
-de alertas vazia não é prova de que nada vence: quem desligou o alerta de
-vencimento não recebe alerta nenhum no dia mais cheio do mês, e escrever "nada
-vence hoje" para essa pessoa seria a única frase falsa da mensagem.
+`notifications.Bills` conta as contas pendentes por conta própria. Com os
+toggles fora, as duas fontes concordam — mas concordam por como o `Evaluate`
+está escrito hoje, e essa é a frase da mensagem que precisa ser verdadeira
+independentemente do que façam com aquela função depois. Foi exatamente esse o
+buraco enquanto os toggles existiam: quem desligava o alerta de vencimento não
+recebia alerta nenhum no dia mais cheio do mês, e "nada vence hoje" teria sido
+dito para ele.
 
 **O modelo escreve a partir do JSON de insights inteiro.**
 `Analysis.DigestPayload()` é o mesmo payload que o bot recebe, menos as chaves
@@ -120,19 +128,18 @@ Nenhuma das duas é silêncio: um lembrete que não chegou e um lembrete
 desnecessário são indistinguíveis do lado de fora, e foi a farmácia mesmo que
 pediu a mensagem nos dias vazios.
 
-A lista segue o mesmo opt-in do alerta que ela detalha (`NotifyDueToday`) — não
-é uma porta dos fundos para reportar um tipo que a pessoa desligou. E o prompt
-avisa o modelo de que ela vem, só quando vem, para que o digest fique no total
+O prompt avisa o modelo de que a lista vem, só quando vem, para que o digest fique no total
 em vez de escrever de memória uma lista que chega completa logo abaixo. As duas
 mensagens falham de forma independente: uma lista que não foi entregue é erro
 registrado, mas não desfaz o digest nem faz a execução de amanhã repeti-lo.
 
-**Sobra um silêncio, e só um:** quando a análise do mês falha *e* o usuário não
-assina nenhum tipo de conta, não há nada verificado para dizer. A mensagem
-seria um "resumo do dia" que, pela própria existência, afirma que alguém olhou.
-Esse caso tem contador próprio (`SkippedNothingToSend`) e linha de log
-própria, pela mesma razão que os outros têm: um dia sem mensagem precisa ser
-diagnosticável só pelos logs.
+**Não sobra silêncio nenhum.** Enquanto havia toggles, sobrava um: análise do
+mês quebrada *e* usuário sem nenhum tipo de conta assinado deixavam a mensagem
+sem nada verificado para dizer. Sem os toggles isso não existe — as contas do
+dia são sempre reportáveis, então uma análise quebrada custa à mensagem a
+metade retrospectiva e mais nada. A única forma de não receber é não ter
+telefone na conta do Cognito, que não é escolha de ninguém e por isso tem
+contador (`Unreachable`) e linha de log próprios.
 
 ## Consequências
 
@@ -145,10 +152,21 @@ diagnosticável só pelos logs.
   `notifier_open_bills_schedule` (padrão `cron(10 15 * * ? *)`, no fuso de
   `app_timezone`), com janela flexível de 10 minutos em vez dos 30 da manhã —
   meia hora de folga empurraria "pouco depois das 15h" para perto das 16h.
-- O `SkippedNoAlerts` saiu do `Result`. Quem grepava `skipped_no_alerts` no
-  CloudWatch passa a grepar `skipped_nothing_to_send`, que quer dizer outra
-  coisa — bem mais rara. E toda linha de log carrega `run` (`digest` ou
-  `saidas_tarde`): duas execuções por dia sem isso viram um log ambíguo.
+- Os contadores do `Result` mudaram de nome junto com o que descrevem:
+  `skipped_no_alerts` e `not_opted_in` saíram, entrou `unreachable`. Toda linha
+  de log carrega `run` (`digest` ou `saidas_tarde`): duas execuções por dia sem
+  isso viram um log ambíguo.
+- **O cadastro de destinatário mudou de dono.** Era o PUT da página de
+  preferências que gravava usuário + telefone na tabela que o notifier lê; sem
+  formulário, ninguém gravaria nada. Agora quem grava é o `GET
+  /notifications/preferences`, quando (e só quando) o que está salvo difere do
+  que o Cognito diz. Isso conserta de quebra um telefone trocado na conta, que
+  antes ficava desatualizado na tabela até alguém reabrir o formulário e salvar
+  — mas passa a depender de alguém abrir a página de Notificações ao menos uma
+  vez.
+- O PUT saiu; a rota responde 405. A página `/notificacoes` continua existindo,
+  sem controles: mostra para qual número as mensagens vão, o que chega todo dia
+  e a regra da janela de 20h.
 - O prompt do digest cresceu com o JSON (~1,5 KB por execução, uma vez por
   dia). Irrelevante contra o cap de custo, e é o mesmo dado que o bot já manda
   a cada pergunta aberta.

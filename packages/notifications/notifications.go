@@ -34,22 +34,26 @@ type Alert struct {
 	Text string // pt-BR, ready to render or send
 }
 
-// BillStatus is what the ledger's unpaid bills look like on one day, before any
-// preference is applied to them.
+// BillStatus is what the ledger's unpaid bills look like on one day, counted
+// rather than listed.
 //
-// Evaluate answers a different question — "what is this user subscribed to
-// hearing about" — and is deliberately silent about the kinds they turned off.
-// A digest that goes out every day, quiet days included, needs this one too: to
-// write "nada vence hoje" it has to know that nothing is due, not merely that
-// nothing was reported. The two coincide only for a user with every alert
-// enabled, and saying the first while meaning the second is the one sentence in
-// the message that would be a lie.
+// It is what lets the digest say "nada vence hoje" from the ledger itself
+// instead of inferring it from an empty alert list. The two agree now that
+// nothing filters the alerts, but they agree by construction of code that could
+// drift apart again, and the claim is the kind that has to be true: a morning
+// message telling a pharmacy its bills are in order is not a place to reason
+// from an absence.
 type BillStatus struct {
 	DueTodayCount int
 	DueToday      int64
 	OverdueCount  int
 	OverdueTotal  int64
 }
+
+// Quiet reports a day with no bill asking for anything: nothing falling due and
+// nothing already late. It is the condition under which the digest may tell
+// someone their bills are in order — see calmLine in apps/notifier.
+func (s BillStatus) Quiet() bool { return s.DueTodayCount == 0 && s.OverdueCount == 0 }
 
 // Bills summarizes the unpaid expenses in `entries` as of `today`. Same window
 // requirement as Evaluate: entries should cover at least the overdue look-back
@@ -154,56 +158,52 @@ func sameDay(a, b time.Time) bool {
 	return ay == by && am == bm && ad == bd
 }
 
-// Evaluate returns the alerts that apply for `today`, filtered by `prefs` — a
-// disabled alert type is skipped. `entries` should cover at least the overdue
-// look-back window through today; `revenue` is the current month's faturamento
-// (sales only — see domain.IsRevenue) and `goal` its target (a zero
-// RevenueTarget disables the goal alert).
+// Evaluate returns every alert that applies for `today`. `entries` should cover
+// at least the overdue look-back window through today; `revenue` is the current
+// month's faturamento (sales only — see domain.IsRevenue) and `goal` its target
+// (a zero RevenueTarget is "no goal set", and yields no goal alert).
+//
+// It used to take the recipient's preferences and drop the kinds they had
+// switched off. Nothing filters now: the alerts a pharmacy asked to be told
+// about are all of them, and a rule that fires for one reader and not another
+// meant the digest could truthfully say "nada vence hoje" to someone with four
+// bills due — see the calm line in apps/notifier, which existed to work around
+// exactly that.
 //
 // The goal alert must fire on faturamento and never on entradas de caixa: a
 // loan landing in the account is not a month's target being met, and telling
 // someone otherwise is worse than saying nothing.
-func Evaluate(
-	prefs domain.NotificationPrefs,
-	entries []domain.FinancialEntry,
-	revenue int64,
-	goal domain.Goal,
-	today time.Time,
-) []Alert {
+func Evaluate(entries []domain.FinancialEntry, revenue int64, goal domain.Goal, today time.Time) []Alert {
 	var alerts []Alert
 
 	dueTodayBills, overdue := pendingBills(entries, today)
 
-	if prefs.NotifyDueToday {
-		var dueToday int64
-		for _, e := range dueTodayBills {
-			dueToday += e.Amount
-		}
-		if dueToday > 0 {
-			alerts = append(alerts, Alert{
-				Kind: KindDueToday,
-				Text: fmt.Sprintf("Pagamento de R$ %s vence hoje", FormatBRL(dueToday)),
-			})
-		}
+	var dueToday int64
+	for _, e := range dueTodayBills {
+		dueToday += e.Amount
+	}
+	if dueToday > 0 {
+		alerts = append(alerts, Alert{
+			Kind: KindDueToday,
+			Text: fmt.Sprintf("Pagamento de R$ %s vence hoje", FormatBRL(dueToday)),
+		})
 	}
 
-	if prefs.NotifyOverdue {
-		for i, e := range overdue {
-			if i >= MaxOverdue {
-				break
-			}
-			desc := e.Description
-			if desc == "" {
-				desc = "Conta"
-			}
-			alerts = append(alerts, Alert{
-				Kind: KindOverdue,
-				Text: fmt.Sprintf("%s está vencida (venceu em %s)", desc, effectiveDate(e).Format("02/01")),
-			})
+	for i, e := range overdue {
+		if i >= MaxOverdue {
+			break
 		}
+		desc := e.Description
+		if desc == "" {
+			desc = "Conta"
+		}
+		alerts = append(alerts, Alert{
+			Kind: KindOverdue,
+			Text: fmt.Sprintf("%s está vencida (venceu em %s)", desc, effectiveDate(e).Format("02/01")),
+		})
 	}
 
-	if prefs.NotifyGoal && goal.RevenueTarget > 0 && revenue >= goal.RevenueTarget {
+	if goal.RevenueTarget > 0 && revenue >= goal.RevenueTarget {
 		alerts = append(alerts, Alert{
 			Kind: KindGoal,
 			Text: "Meta de faturamento atingida!",
