@@ -146,6 +146,11 @@ const (
 	// SectionExpensesFull is the whole expense composition. The base payload
 	// carries the five largest categories and says so; this is the rest.
 	SectionExpensesFull Section = "despesas_completas"
+	// SectionRevenueFull is the whole faturamento composition, on the same terms:
+	// the base payload carries the five largest kinds of sale, this is the rest.
+	// A pharmacy with a category per convênio has more of them than fit in a
+	// reply, and a ranking that was cut has to be completable (ADR-015).
+	SectionRevenueFull Section = "faturamento_completo"
 	// SectionHistory is the trailing three months with their targets — the bar
 	// chart at the bottom of the page.
 	SectionHistory Section = "historico"
@@ -164,6 +169,7 @@ var sectionCatalog = []struct {
 }{
 	{SectionCashOutDays, "dias de maior saída de caixa, com as categorias de cada um"},
 	{SectionExpensesFull, "composição completa das despesas por categoria"},
+	{SectionRevenueFull, "composição completa do faturamento por categoria (tipos de venda)"},
 	{SectionHistory, "os três meses anteriores com faturamento, despesa e metas"},
 	{SectionHighlights, "melhor e pior dia por saldo (o payload já traz por faturamento)"},
 }
@@ -177,7 +183,8 @@ func AllSections() []Section {
 	return out
 }
 
-// maxToolCategories is how many expense categories the base payload quotes.
+// maxToolCategories is how many categories the base payload quotes of each
+// composition — expenses and faturamento alike.
 // Beyond it the list is cut — and says it was cut, with the section to ask for,
 // because a partial ranking presented as the whole one is exactly what ADR-015
 // exists to prevent.
@@ -280,11 +287,19 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 			// like any other and reads exactly like the "zero days left" the
 			// comment set out to avoid.
 		},
-		"recomendacoes":           recommendationTexts(a.Recommendations),
-		"maiores_despesas":        topExpenses(a.ExpenseComposition),
-		"melhor_dia":              dayText(a.Highlights.BestIncome),
-		"pior_dia":                dayText(a.Highlights.WorstIncome),
-		"media_por_dia_da_semana": weekdayToolPayload(a.Weekdays),
+		"recomendacoes":    recommendationTexts(a.Recommendations),
+		"maiores_despesas": topCategories(a.ExpenseComposition),
+		// The faturamento above, split into the kinds of sale it was made of.
+		// Asked "como foi o mês?", the model had one number for everything the
+		// pharmacy sold and no way to answer the question that always follows it —
+		// atacado or balcão? — so it either went quiet or reached for
+		// maiores_despesas, which is the money going the other way. Origin decides
+		// what is in here (ADR-016); the category only says which kind of sale it
+		// was. See ADR-024.
+		"faturamento_por_categoria": topCategories(a.RevenueComposition),
+		"melhor_dia":                dayText(a.Highlights.BestIncome),
+		"pior_dia":                  dayText(a.Highlights.WorstIncome),
+		"media_por_dia_da_semana":   weekdayToolPayload(a.Weekdays),
 	}
 
 	// Spelled out rather than left for the model to infer from
@@ -363,6 +378,16 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 			"Mostrando as %d maiores de %d categorias. Peça a seção %q para a lista completa.",
 			maxToolCategories, len(a.ExpenseComposition), SectionExpensesFull)
 	}
+	// The same rule on the way in. A pharmacy whose faturamento is spread over
+	// seven kinds of sale must not have five of them presented as all of it —
+	// least of all here, where the whole point of the split is that the parts add
+	// up to the faturamento quoted above.
+	if len(a.RevenueComposition) > maxToolCategories {
+		payload["faturamento_por_categoria_truncado"] = true
+		payload["faturamento_por_categoria_warning"] = fmt.Sprintf(
+			"Mostrando as %d maiores de %d categorias. Peça a seção %q para a lista completa.",
+			maxToolCategories, len(a.RevenueComposition), SectionRevenueFull)
+	}
 
 	// What else exists, named so the model can ask for it by name rather than
 	// concluding the analysis does not have it.
@@ -377,7 +402,9 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		case SectionCashOutDays:
 			payload[string(s)] = cashOutToolPayload(a.CashOutDays)
 		case SectionExpensesFull:
-			payload[string(s)] = expenseToolPayload(a.ExpenseComposition)
+			payload[string(s)] = categoryToolPayload(a.ExpenseComposition)
+		case SectionRevenueFull:
+			payload[string(s)] = categoryToolPayload(a.RevenueComposition)
 		case SectionHistory:
 			payload[string(s)] = historyToolPayload(a.History)
 		case SectionHighlights:
@@ -421,6 +448,10 @@ func (a Analysis) DigestPayload() map[string]any {
 	if len(a.ExpenseComposition) > maxToolCategories {
 		payload["maiores_despesas_warning"] = fmt.Sprintf(
 			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.ExpenseComposition))
+	}
+	if len(a.RevenueComposition) > maxToolCategories {
+		payload["faturamento_por_categoria_warning"] = fmt.Sprintf(
+			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.RevenueComposition))
 	}
 	return payload
 }
@@ -519,7 +550,7 @@ func cashOutToolPayload(days []CashOutDay) []map[string]any {
 	return out
 }
 
-func expenseToolPayload(composition []ExpenseComposition) []map[string]any {
+func categoryToolPayload(composition []CategoryComposition) []map[string]any {
 	out := make([]map[string]any, 0, len(composition))
 	for _, c := range composition {
 		out = append(out, map[string]any{
@@ -569,13 +600,13 @@ func recommendationTexts(recs []Recommendation) []string {
 	return out
 }
 
-// topExpenses keeps the composition short enough to be quoted in a reply. The
+// topCategories keeps a composition short enough to be quoted in a reply. The
 // caller warns when it cut — see ToolPayload.
-func topExpenses(composition []ExpenseComposition) []map[string]any {
+func topCategories(composition []CategoryComposition) []map[string]any {
 	if len(composition) > maxToolCategories {
 		composition = composition[:maxToolCategories]
 	}
-	return expenseToolPayload(composition)
+	return categoryToolPayload(composition)
 }
 
 func dayText(h DayHighlight) string {

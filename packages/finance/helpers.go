@@ -1,15 +1,171 @@
 package finance
 
 import (
+	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
 )
 
-// categorySlugs returns the set of known category slugs, derived from the
-// domain definitions so the two never drift.
-func categorySlugs() []string {
+// CategoryReader is the slice of the store the category-aware tools need. The
+// catalog is per user — the defaults are the same for everyone, but the
+// categories somebody added are theirs — so every one of them reads it rather
+// than deriving the valid set from the domain definitions alone.
+type CategoryReader interface {
+	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
+}
+
+// CategoryStore is what create_category needs: the catalog to check against,
+// and somewhere to put the new one.
+type CategoryStore interface {
+	CategoryReader
+	SaveCategory(ctx context.Context, cat domain.Category) error
+}
+
+// catalog is the set of categories a user may file an entry under: the
+// defaults defined in the codebase, plus whatever that user has created, with
+// the user's own definition winning on a shared slug.
+//
+// The defaults are merged in rather than assumed to be stored, because they are
+// seeded lazily — a user who has only ever talked to the bot has an empty
+// CAT# partition, and validating against the store alone would reject
+// "aluguel" for them.
+type catalog struct {
+	bySlug map[string]domain.Category
+}
+
+// loadCatalog reads the user's categories and merges them over the defaults.
+func loadCatalog(ctx context.Context, r CategoryReader, userID string) (catalog, error) {
+	stored, err := r.ListCategories(ctx, userID)
+	if err != nil {
+		return catalog{}, fmt.Errorf("list categories: %w", err)
+	}
+	c := catalog{bySlug: make(map[string]domain.Category, len(stored)+18)}
+	for _, cat := range domain.DefaultCategories(userID) {
+		c.bySlug[cat.Slug] = cat
+	}
+	for _, cat := range stored {
+		c.bySlug[cat.Slug] = cat
+	}
+	return c, nil
+}
+
+// has reports whether slug names a category this user can file under.
+func (c catalog) has(slug string) bool {
+	_, ok := c.bySlug[slug]
+	return ok
+}
+
+// slugs lists the categories of one entry type, alphabetically. It is what a
+// rejected tool call hands back, so the model can pick a real one instead of
+// guessing again.
+func (c catalog) slugs(t domain.EntryType) []string {
+	out := make([]string, 0, len(c.bySlug))
+	for slug, cat := range c.bySlug {
+		if cat.Type == t {
+			out = append(out, slug)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// labels indexes the catalog by slug, for the breakdowns that name a category
+// to the user. A category the user renamed is named the way they renamed it.
+func (c catalog) labels() map[string]string {
+	labels := make(map[string]string, len(c.bySlug))
+	for slug, cat := range c.bySlug {
+		labels[slug] = cat.Label
+	}
+	return labels
+}
+
+// list returns every category, expenses first and alphabetical within each
+// type — the order list_categories reports them in.
+func (c catalog) list() []domain.Category {
+	out := make([]domain.Category, 0, len(c.bySlug))
+	for _, cat := range c.bySlug {
+		out = append(out, cat)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type == domain.EntryTypeExpense
+		}
+		return out[i].Slug < out[j].Slug
+	})
+	return out
+}
+
+// validate resolves the category a tool argument names against what the user
+// actually has, refusing anything they cannot file this kind of entry under.
+//
+// The type has to match, not just the slug: "aluguel" is a real category and an
+// income entry filed under it is still wrong, and it is wrong in a way that
+// shows up later as an expense category with sales in it.
+func (c catalog) validate(slug string, t domain.EntryType) error {
+	cat, ok := c.bySlug[slug]
+	if !ok {
+		return errUnknownCategory(slug, t, c)
+	}
+	if cat.Type != t {
+		return fmt.Errorf(
+			"categoria %q é de %s e este lançamento é de %s. Use uma destas: %s",
+			slug, entryTypeLabel(cat.Type), entryTypeLabel(t), strings.Join(c.slugs(t), ", "),
+		)
+	}
+	return nil
+}
+
+// entryTypeLabel names an entry type in the language the error is written in.
+func entryTypeLabel(t domain.EntryType) string {
+	if t == domain.EntryTypeIncome {
+		return "receita"
+	}
+	return "despesa"
+}
+
+// errUnknownCategory refuses an entry whose category does not exist, naming the
+// ones that do.
+//
+// It used to be a silent coercion to "outros_despesas"/"outros_receitas": the
+// category enum in the tool schema listed the defaults, so anything else was a
+// hallucination and filing it under Outros lost nothing. That stopped being
+// true when the categories became the user's to extend — the slug the model
+// sends is now just as likely to be the "venda_varejo" somebody asked for one
+// message ago, and answering "lançado" while filing it under Outros is how a
+// pharmacy's wholesale and retail sales end up in the same bucket with nothing
+// to show for it. The error goes back to the model, which picks a real category
+// or creates the one it meant (see createCategoryTool) and retries.
+func errUnknownCategory(slug string, t domain.EntryType, c catalog) error {
+	return fmt.Errorf(
+		"categoria %q não existe. Use uma destas: %s. Se o usuário quis mesmo uma categoria nova, crie com %s antes de lançar",
+		slug, strings.Join(c.slugs(t), ", "), createCategoryToolName,
+	)
+}
+
+// categoryArgDescription is what replaced the category enum in the entry tool
+// schemas.
+//
+// The enum could only ever list the defaults — a schema is built once, at
+// startup, and the categories are per user — so keeping it would have meant the
+// model was structurally unable to send the "venda_varejo" the user asked for
+// one message earlier. What takes its place is the default list (still the
+// answer to most calls), plus the two tools that reach the rest.
+var categoryArgDescription = fmt.Sprintf(
+	"Slug da categoria, sempre uma que exista. As padrão são: %s. "+
+		"O usuário pode ter outras — chame %s para ver a lista dele. "+
+		"Se ele pedir um tipo que não existe (por exemplo separar venda atacado de "+
+		"venda varejo), crie com %s antes de lançar. Nunca invente um slug: "+
+		"um slug desconhecido faz o lançamento ser recusado.",
+	strings.Join(defaultCategorySlugs(), ", "), listCategoriesToolName, createCategoryToolName,
+)
+
+// defaultCategorySlugs is the codebase's own category list, in the order it is
+// defined.
+func defaultCategorySlugs() []string {
 	cats := domain.DefaultCategories("")
 	slugs := make([]string, len(cats))
 	for i, c := range cats {
@@ -18,17 +174,11 @@ func categorySlugs() []string {
 	return slugs
 }
 
-// knownCategory reports whether c is one of categorySlugs. Tool args come
-// from LLM output, so a hallucinated category is coerced to a default rather
-// than persisted verbatim.
-func knownCategory(c string) bool {
-	for _, known := range categorySlugs() {
-		if c == known {
-			return true
-		}
-	}
-	return false
-}
+// maxUserCategories bounds how big one user's catalog can get, defaults
+// included. A model that misreads "vendi 200 reais no atacado" as a request for
+// a category creates one; the cap is high enough that nobody organising a
+// pharmacy ever meets it, and low enough that a loop cannot fill a partition.
+const maxUserCategories = 80
 
 // maxEntryAmountReais bounds a single entry's value. Tool args are LLM-generated
 // from user text; a hallucinated absurd amount is rejected rather than saved.
@@ -146,6 +296,22 @@ func RevenueTotal(entries []domain.FinancialEntry) int64 {
 	return total
 }
 
+// RevenueByCategory breaks faturamento down by category, largest first: which
+// *kinds* of sale a period's sales were.
+//
+// Origin still decides what counts as a sale (domain.IsRevenue, ADR-016) — the
+// category never does, and a category called "Empréstimos" would no more make
+// an entry faturamento here than anywhere else. What the category answers is
+// the question after that one: of what the pharmacy sold, how much was atacado
+// and how much was balcão.
+//
+// Like RevenueTotal it does not filter by date: callers pass the entries of the
+// period they mean, read on the transaction basis, or the split will disagree
+// with the total it is meant to decompose.
+func RevenueByCategory(entries []domain.FinancialEntry, labels map[string]string) []CategorySummary {
+	return foldByCategory(entries, labels, domain.IsRevenue)
+}
+
 // CashInTotal sums entradas de caixa: every inflow that has actually been
 // received, whatever its origin. Pending entries are excluded — money that has
 // not arrived is not cash.
@@ -179,29 +345,41 @@ func clampLimit(n int) int {
 	return n
 }
 
-// categoryLabels maps category slug → human label, so a tool result can name
-// "fornecedor_medicamentos" as "Fornecedor de Medicamentos" instead of leaving
-// the model to invent a translation.
-func categoryLabels() map[string]string {
-	cats := domain.DefaultCategories("")
-	labels := make(map[string]string, len(cats))
-	for _, c := range cats {
-		labels[c.Slug] = c.Label
+// CategoryLabel names a category the way its owner named it, falling back to
+// the default definitions and then to the slug title-cased. Nil labels is the
+// caller saying it has no catalog at hand, not that the user has no categories.
+//
+// The fallback matters more than it used to: every category beyond the
+// defaults is one somebody typed a label for, and printing "venda_atacado" at
+// them where the catalog could not be read is worse than printing "Venda
+// Atacado".
+func CategoryLabel(labels map[string]string, slug string) string {
+	if label, ok := labels[slug]; ok && label != "" {
+		return label
 	}
-	return labels
+	for _, c := range domain.DefaultCategories("") {
+		if c.Slug == slug {
+			return c.Label
+		}
+	}
+	return domain.CategoryLabelFromSlug(slug)
 }
 
 // foldByCategory totals entries per category, largest total first. It is the
-// one definition of "agrupado por categoria", shared by CategorySummary and by
-// the listing tools' by_category block.
-func foldByCategory(entries []domain.FinancialEntry) []CategorySummary {
-	labels := categoryLabels()
+// one definition of "agrupado por categoria", shared by CategorySummary, by the
+// listing tools' by_category block and by RevenueByCategory.
+//
+// keep decides which entries are in the fold; nil counts every one of them.
+func foldByCategory(entries []domain.FinancialEntry, labels map[string]string, keep func(domain.FinancialEntry) bool) []CategorySummary {
 	totals := make(map[string]*CategorySummary)
 	for _, e := range entries {
+		if keep != nil && !keep(e) {
+			continue
+		}
 		if _, ok := totals[e.Category]; !ok {
 			totals[e.Category] = &CategorySummary{
 				Category: e.Category,
-				Label:    labels[e.Category],
+				Label:    CategoryLabel(labels, e.Category),
 				Type:     e.Type,
 			}
 		}
@@ -233,6 +411,23 @@ func reaisToCentavos(reais float64) int64 {
 
 func centavosToReais(centavos int64) float64 {
 	return float64(centavos) / 100
+}
+
+// categoryToolPayload renders a per-category fold for the model: amounts in
+// reais, and the label beside the slug so a reply can name the category instead
+// of reading "venda_atacado" out loud.
+func categoryToolPayload(cats []CategorySummary) []map[string]any {
+	out := make([]map[string]any, 0, len(cats))
+	for _, c := range cats {
+		out = append(out, map[string]any{
+			"category": c.Category,
+			"label":    c.Label,
+			"type":     string(c.Type),
+			"total":    centavosToReais(c.Total),
+			"count":    c.Count,
+		})
+	}
+	return out
 }
 
 func entriesToMaps(entries []domain.FinancialEntry) []map[string]any {

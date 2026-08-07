@@ -318,7 +318,7 @@ func TestExpenseComposition(t *testing.T) {
 		sale(t, "2026-07-03", 999999),
 	}
 
-	got := expenseComposition(entries)
+	got := expenseComposition(entries, nil)
 
 	if len(got) != 2 {
 		t.Fatalf("got %d categories, want 2", len(got))
@@ -329,13 +329,154 @@ func TestExpenseComposition(t *testing.T) {
 	if got[1].CategoryName != "Folha de Pagamento" {
 		t.Errorf("CategoryName = %q, want the domain label", got[1].CategoryName)
 	}
-	if len(expenseComposition(nil)) != 0 {
+	if len(expenseComposition(nil, nil)) != 0 {
 		t.Error("no expenses should yield no composition, not a division by zero")
 	}
 }
 
+// Faturamento split into the kinds of sale behind it. What counts as a sale is
+// still the origin and never the category (ADR-016) — a category called
+// "Empréstimos" would not make one, and a loan filed under "Venda Balcão" is
+// still not one.
+func TestRevenueComposition(t *testing.T) {
+	atacado := func(date string, amount int64) domain.FinancialEntry {
+		e := sale(t, date, amount)
+		e.Category = "venda_atacado"
+		return e
+	}
+	loan := sale(t, "2026-07-04", 900000)
+	loan.Origin = domain.OriginEmprestimo
+
+	entries := []domain.FinancialEntry{
+		atacado("2026-07-01", 60000),
+		atacado("2026-07-02", 20000),
+		sale(t, "2026-07-03", 20000), // venda_balcao
+		loan,
+		expense(t, "2026-07-03", "aluguel", 500000),
+	}
+
+	got := revenueComposition(entries, map[string]string{"venda_atacado": "Venda Atacado"})
+
+	if len(got) != 2 {
+		t.Fatalf("got %d categories (%+v), want atacado and balcão", len(got), got)
+	}
+	if got[0].CategoryID != "venda_atacado" || got[0].Amount != 80000 || got[0].Percentage != 80 {
+		t.Errorf("first = %+v, want venda_atacado at 80000 and 80%%", got[0])
+	}
+	// The user's own label, not the slug: they named this category.
+	if got[0].CategoryName != "Venda Atacado" {
+		t.Errorf("CategoryName = %q, want the label from the catalog", got[0].CategoryName)
+	}
+	if got[1].CategoryID != "venda_balcao" || got[1].Percentage != 20 {
+		t.Errorf("second = %+v, want venda_balcao at 20%% — the empréstimo excluded", got[1])
+	}
+	if len(revenueComposition(nil, nil)) != 0 {
+		t.Error("no sales should yield no composition, not a division by zero")
+	}
+}
+
+// A breakdown decomposes a total: the parts have to add up to the faturamento
+// printed above them, or the page contradicts itself.
+func TestRevenueCompositionDecomposesFaturamento(t *testing.T) {
+	varejo := sale(t, "2026-07-10", 150000)
+	varejo.Category = "venda_varejo"
+	entries := []domain.FinancialEntry{
+		sale(t, "2026-07-02", 250000),
+		varejo,
+	}
+
+	got := Build(Input{
+		Month:          "2026-07",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(400000, 0)},
+		CategoryLabels: map[string]string{"venda_varejo": "Venda Varejo"},
+		Now:            at12(t, "2026-07-15"),
+	})
+
+	var composed int64
+	for _, c := range got.RevenueComposition {
+		composed += c.Amount
+	}
+	if composed != got.KPIs.Faturamento {
+		t.Errorf("RevenueComposition totals %d, want it to decompose KPIs.Faturamento (%d)",
+			composed, got.KPIs.Faturamento)
+	}
+	if len(got.RevenueComposition) != 2 {
+		t.Fatalf("composition = %+v, want both kinds of sale", got.RevenueComposition)
+	}
+	if got.RevenueComposition[1].CategoryName != "Venda Varejo" {
+		t.Errorf("CategoryName = %q, want the user's label for a category they created",
+			got.RevenueComposition[1].CategoryName)
+	}
+}
+
+// Without a catalog nothing breaks and nothing prints a raw slug: the defaults
+// answer for the defaults, and anything else is title-cased.
+func TestCompositionNamesCategoriesWithoutACatalog(t *testing.T) {
+	varejo := sale(t, "2026-07-10", 100000)
+	varejo.Category = "venda_varejo"
+	entries := []domain.FinancialEntry{varejo, expense(t, "2026-07-05", "aluguel", 50000)}
+
+	got := Build(Input{
+		Month:          "2026-07",
+		Entries:        entries,
+		RevenueEntries: entries,
+		Summaries:      []*pkgfinance.MonthlySummary{nil, nil, summary(100000, 50000)},
+		Now:            at12(t, "2026-07-15"),
+	})
+
+	if got.RevenueComposition[0].CategoryName != "Venda Varejo" {
+		t.Errorf("CategoryName = %q, want the slug title-cased", got.RevenueComposition[0].CategoryName)
+	}
+	if got.ExpenseComposition[0].CategoryName != "Aluguel" {
+		t.Errorf("CategoryName = %q, want the default's own label", got.ExpenseComposition[0].CategoryName)
+	}
+}
+
+// The bot reads the same split, and a ranking that was cut says so (ADR-015).
+func TestToolPayloadCarriesRevenueByCategory(t *testing.T) {
+	composition := make([]CategoryComposition, 0, maxToolCategories+2)
+	for i := range maxToolCategories + 2 {
+		composition = append(composition, CategoryComposition{
+			CategoryID:   fmt.Sprintf("venda_%d", i),
+			CategoryName: fmt.Sprintf("Venda %d", i),
+			Amount:       int64(1000 * (maxToolCategories + 2 - i)),
+			Percentage:   10,
+		})
+	}
+
+	full := Analysis{Month: "2026-07", RevenueComposition: composition}.ToolPayload()
+	rows, ok := full["faturamento_por_categoria"].([]map[string]any)
+	if !ok {
+		t.Fatalf("faturamento_por_categoria = %T, want a list", full["faturamento_por_categoria"])
+	}
+	if len(rows) != maxToolCategories {
+		t.Errorf("got %d rows, want the list capped at %d", len(rows), maxToolCategories)
+	}
+	if full["faturamento_por_categoria_truncado"] != true {
+		t.Error("a cut ranking must say it was cut")
+	}
+	warning, _ := full["faturamento_por_categoria_warning"].(string)
+	if !strings.Contains(warning, string(SectionRevenueFull)) {
+		t.Errorf("warning = %q, want it to name the section that completes it", warning)
+	}
+
+	// And the section brings the rest.
+	withSection := Analysis{RevenueComposition: composition}.ToolPayload(SectionRevenueFull)
+	if got := withSection[string(SectionRevenueFull)].([]map[string]any); len(got) != len(composition) {
+		t.Errorf("section carried %d rows, want all %d", len(got), len(composition))
+	}
+
+	// A month whose sales fit is not truncated, and says nothing about it.
+	short := Analysis{RevenueComposition: composition[:2]}.ToolPayload()
+	if _, ok := short["faturamento_por_categoria_truncado"]; ok {
+		t.Error("a complete ranking must not carry a truncation flag")
+	}
+}
+
 func TestCategoryLabelFallsBackToTitleCase(t *testing.T) {
-	if got := categoryLabel("taxa_maquininha"); got != "Taxa Maquininha" {
+	if got := categoryLabel(nil, "taxa_maquininha"); got != "Taxa Maquininha" {
 		t.Errorf("categoryLabel(unknown slug) = %q, want %q", got, "Taxa Maquininha")
 	}
 }
@@ -2300,9 +2441,9 @@ func TestDigestPayloadIsTheAnalysisMinusItsToolAffordances(t *testing.T) {
 // message whose reader has no seções to ask for.
 func TestDigestPayloadTellsTheWriterToDoNothingItCannotDo(t *testing.T) {
 	// Six categories, so the ranking is cut and the truncation warning fires.
-	composition := make([]ExpenseComposition, 0, maxToolCategories+1)
+	composition := make([]CategoryComposition, 0, maxToolCategories+1)
 	for i := range maxToolCategories + 1 {
-		composition = append(composition, ExpenseComposition{
+		composition = append(composition, CategoryComposition{
 			CategoryID:   fmt.Sprintf("cat-%d", i),
 			CategoryName: fmt.Sprintf("Categoria %d", i),
 			Amount:       int64(1000 * (i + 1)),
@@ -2860,9 +3001,9 @@ func TestToolPayloadAdvertisesTheSectionsItLeftOut(t *testing.T) {
 // A cut ranking that does not say it was cut describes a twelve-category month
 // as a five-category one (ADR-015).
 func TestToolPayloadWarnsWhenTheExpenseRankingIsCut(t *testing.T) {
-	composition := make([]ExpenseComposition, 0, maxToolCategories+3)
+	composition := make([]CategoryComposition, 0, maxToolCategories+3)
 	for i := range cap(composition) {
-		composition = append(composition, ExpenseComposition{
+		composition = append(composition, CategoryComposition{
 			CategoryName: fmt.Sprintf("categoria %d", i),
 			Amount:       int64(1000 * (cap(composition) - i)),
 		})

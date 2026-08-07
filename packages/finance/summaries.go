@@ -117,7 +117,26 @@ func categorySummary(ctx context.Context, l EntryLister, userID string, from, to
 	if err != nil {
 		return nil, err
 	}
-	return foldByCategory(entries), nil
+	return foldByCategory(entries, nil, nil), nil
+}
+
+// monthRevenueByCategory splits a month's faturamento into the kinds of sale it
+// was made of.
+//
+// It reads the month on the transaction basis and no other, because that is the
+// basis faturamento is measured on (a crediário sale belongs to the month it
+// was made in) — the same read MonthlySummary totals TotalRevenue from, so the
+// parts and the whole cannot disagree.
+func monthRevenueByCategory(ctx context.Context, l EntryLister, userID, yearMonth string, labels map[string]string) ([]CategorySummary, error) {
+	from, to, err := domain.ParseMonth(yearMonth)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := l.ListEntries(ctx, userID, EntryFilter{From: &from, To: &to, DateBasis: BasisTransaction})
+	if err != nil {
+		return nil, err
+	}
+	return RevenueByCategory(entries, labels), nil
 }
 
 // cashFlowForecast projects a daily running balance across the given calendar

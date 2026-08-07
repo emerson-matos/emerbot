@@ -49,9 +49,12 @@ type LedgerReader interface {
 	NotificationSent(ctx context.Context, userID, key string) (bool, error)
 	RecordNotificationSent(ctx context.Context, userID, key string, sentAt time.Time) error
 	// The digest embeds the month's analysis, which reads a trailing window of
-	// summaries and the ledger's cash-flow projection.
+	// summaries, the ledger's cash-flow projection and the user's categories —
+	// the digest names the kinds of sale behind the month's faturamento, and a
+	// category the user created is only named in their own catalog.
 	MultiMonthlySummary(ctx context.Context, userID string, yearMonths []string) (map[string]pkgfinance.MonthlySummary, error)
 	CashFlowForecast(ctx context.Context, userID, yearMonth string) ([]pkgfinance.CashFlowPoint, error)
+	ListCategories(ctx context.Context, userID string) ([]domain.Category, error)
 	// SaveInsightSnapshot persists the daily analysis as a subproduct of the
 	// digest run, so the dashboard-api can serve it without recomputing.
 	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error

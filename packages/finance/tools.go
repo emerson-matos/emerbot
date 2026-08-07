@@ -3,6 +3,7 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -42,6 +43,8 @@ func FinanceTools(store Store, dashboardURL string, loc *time.Location) []Tool {
 		definirMetaTool(store, loc),
 		listDueEntriesTool(store),
 		searchEntriesTool(store),
+		listCategoriesTool(store),
+		createCategoryTool(store),
 	}
 	if dashboardURL != "" {
 		tools = append(tools, dashboardLinkTool(dashboardURL))
@@ -70,6 +73,151 @@ func dashboardLinkTool(url string) Tool {
 	}
 }
 
+// --- list_categories ---
+
+const listCategoriesToolName = "list_categories"
+
+// listCategoriesTool is how the model learns which categories exist. It has to
+// exist for the same reason the enum had to go: the schema can only carry the
+// defaults, and the ones this user added are exactly the ones a question about
+// "minhas vendas no atacado" is about.
+func listCategoriesTool(store CategoryReader) Tool {
+	return Tool{
+		Name: listCategoriesToolName,
+		Description: "Lista as categorias disponíveis para lançamentos deste usuário — " +
+			"as padrão do sistema e as que ele já criou. Use antes de criar uma " +
+			"categoria nova (para não duplicar) e sempre que precisar do slug exato.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"type": {
+					Type: genai.TypeString, Enum: []string{"expense", "income"},
+					Description: "Filtra por tipo de lançamento (padrão: todas)",
+				},
+			},
+		},
+		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
+			var args struct {
+				Type string `json:"type"`
+			}
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &args); err != nil {
+					return nil, fmt.Errorf("parse args: %w", err)
+				}
+			}
+
+			cat, err := loadCatalog(ctx, store, userID)
+			if err != nil {
+				return nil, err
+			}
+
+			cats := make([]map[string]any, 0, len(cat.bySlug))
+			for _, c := range cat.list() {
+				if args.Type != "" && string(c.Type) != args.Type {
+					continue
+				}
+				cats = append(cats, map[string]any{
+					"slug":  c.Slug,
+					"label": c.Label,
+					"tipo":  string(c.Type),
+				})
+			}
+			return map[string]any{
+				"categorias": cats,
+				"count":      len(cats),
+			}, nil
+		},
+	}
+}
+
+// --- create_category ---
+
+const createCategoryToolName = "create_category"
+
+// createCategoryTool lets the pharmacy name its own kinds of movement from
+// WhatsApp — "venda no atacado", "venda no varejo", a supplier it buys from
+// every week — without opening the dashboard.
+//
+// What it deliberately does not do is create a *different kind* of category.
+// The slug is derived by domain.NewCategory, the same function the dashboard
+// form goes through, so a category born in a chat is indistinguishable from one
+// born in a form and nothing downstream has to know which it was. And it does
+// not touch faturamento: a new income category is still only revenue when the
+// entry's origin is "venda" (ADR-016) — the category says which kind of sale it
+// was, never whether it was one.
+func createCategoryTool(store CategoryStore) Tool {
+	return Tool{
+		Name: createCategoryToolName,
+		Description: "Cria uma categoria nova para este usuário (despesa ou receita), " +
+			"no mesmo padrão das categorias do sistema. Use quando ele quiser separar um " +
+			"tipo de venda ou de gasto que ainda não existe — por exemplo \"venda atacado\" " +
+			"e \"venda varejo\". Chame " + listCategoriesToolName + " antes para não " +
+			"duplicar uma que já existe. Criar categoria de entrada não muda o que é " +
+			"faturamento: isso continua sendo a origem \"venda\".",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"label": {
+					Type:        genai.TypeString,
+					Description: "Nome da categoria como o usuário fala dela (ex: \"Venda Atacado\")",
+				},
+				"type": {
+					Type: genai.TypeString, Enum: []string{"expense", "income"},
+					Description: "expense = saída de dinheiro, income = entrada",
+				},
+			},
+			Required: []string{"label", "type"},
+		},
+		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
+			var args struct {
+				Label string `json:"label"`
+				Type  string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, fmt.Errorf("parse args: %w", err)
+			}
+
+			cat, err := domain.NewCategory(userID, args.Label, "", domain.EntryType(args.Type))
+			if err != nil {
+				return nil, errors.New(
+					"categoria inválida: informe um label com letras ou números e type \"expense\" ou \"income\"")
+			}
+
+			existing, err := loadCatalog(ctx, store, userID)
+			if err != nil {
+				return nil, err
+			}
+			// Already there: reported as such rather than written again. SaveCategory
+			// is a PutItem, so re-creating "Venda Atacado" after the user renamed it
+			// to "Atacado (CNPJ)" would silently rename it back.
+			if current, ok := existing.bySlug[cat.Slug]; ok {
+				return map[string]any{
+					"status":   "ja_existe",
+					"slug":     current.Slug,
+					"label":    current.Label,
+					"tipo":     string(current.Type),
+					"mensagem": "Essa categoria já existe — use o slug acima no lançamento.",
+				}, nil
+			}
+			if len(existing.bySlug) >= maxUserCategories {
+				return nil, fmt.Errorf(
+					"o usuário já tem %d categorias, o máximo. Use uma das que existem (%s)",
+					len(existing.bySlug), listCategoriesToolName)
+			}
+
+			if err := store.SaveCategory(ctx, cat); err != nil {
+				return nil, fmt.Errorf("save category: %w", err)
+			}
+			return map[string]any{
+				"status": "created",
+				"slug":   cat.Slug,
+				"label":  cat.Label,
+				"tipo":   string(cat.Type),
+			}, nil
+		},
+	}
+}
+
 // --- create_financial_entry ---
 
 func createEntryTool(store Store, loc *time.Location) Tool {
@@ -83,7 +231,7 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 			Properties: map[string]*genai.Schema{
 				"type":        {Type: genai.TypeString, Enum: []string{"expense", "income"}},
 				"amount":      {Type: genai.TypeNumber, Description: "Valor em reais (ex: 500.00)"},
-				"category":    {Type: genai.TypeString, Enum: categorySlugs(), Description: "Categoria do lançamento"},
+				"category":    {Type: genai.TypeString, Description: categoryArgDescription},
 				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
 				"description": {Type: genai.TypeString, Description: "Descrição curta do lançamento"},
 				"date":        {Type: genai.TypeString, Description: "Data da transação YYYY-MM-DD (padrão: hoje)"},
@@ -113,6 +261,23 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				return nil, fmt.Errorf("invalid type: %q (expected expense or income)", args.Type)
 			}
 
+			entryType := domain.EntryTypeExpense
+			if args.Type == "income" {
+				entryType = domain.EntryTypeIncome
+			}
+			// Before anything is written. The category used to be checked after the
+			// entry was built and a bad one was quietly swapped for "Outros"; now
+			// that the user's own categories are in play, a slug this catalog does
+			// not have is a question for the model, not a bucket to dump the entry
+			// in — see errUnknownCategory.
+			cat, err := loadCatalog(ctx, store, userID)
+			if err != nil {
+				return nil, err
+			}
+			if err := cat.validate(args.Category, entryType); err != nil {
+				return nil, err
+			}
+
 			now := time.Now().In(loc)
 			entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 				UserID:          userID,
@@ -126,9 +291,8 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				return nil, err
 			}
 
-			entry.Type = domain.EntryTypeExpense
-			if args.Type == "income" {
-				entry.Type = domain.EntryTypeIncome
+			entry.Type = entryType
+			if entry.Type == domain.EntryTypeIncome {
 				// An income entry always gets an origin. The model omitting it
 				// most often means an ordinary sale, which is also the only
 				// reading that keeps a pharmacy's day-to-day entries out of
@@ -137,13 +301,6 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				entry.Origin = domain.OriginVenda
 				if args.Origin != "" {
 					entry.Origin = domain.NormalizeIncomeOrigin(args.Origin)
-				}
-			}
-
-			if !knownCategory(entry.Category) {
-				entry.Category = "outros_despesas"
-				if entry.Type == domain.EntryTypeIncome {
-					entry.Category = "outros_receitas"
 				}
 			}
 
@@ -172,6 +329,9 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				"status":   "created",
 				"amount":   centavosToReais(entry.Amount),
 				"category": entry.Category,
+				// The label as the user wrote it, so the confirmation says "Venda
+				// Atacado" rather than reading the slug out loud.
+				"category_label": CategoryLabel(cat.labels(), entry.Category),
 			}, nil
 		},
 	}
@@ -191,7 +351,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 			Properties: map[string]*genai.Schema{
 				"entry_id":    {Type: genai.TypeString, Description: "ID do lançamento a editar"},
 				"amount":      {Type: genai.TypeNumber, Description: "Novo valor em reais (ex: 500.00)"},
-				"category":    {Type: genai.TypeString, Enum: categorySlugs(), Description: "Nova categoria do lançamento"},
+				"category":    {Type: genai.TypeString, Description: "Nova categoria do lançamento. " + categoryArgDescription},
 				"description": {Type: genai.TypeString, Description: "Nova descrição do lançamento"},
 				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
 				"date":        {Type: genai.TypeString, Description: "Nova data da transação YYYY-MM-DD"},
@@ -235,8 +395,21 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 				}
 				entry.Amount = reaisToCentavos(args.Amount)
 			}
-			if args.Category != "" && knownCategory(args.Category) {
+			// Recategorizing is how "isso foi venda no atacado, não no balcão" gets
+			// fixed, so an unknown slug is refused rather than dropped: the edit
+			// used to ignore a category it did not recognise and report "updated",
+			// which reads to the user as though the correction had been applied.
+			labels := map[string]string{}
+			if args.Category != "" {
+				cat, err := loadCatalog(ctx, store, userID)
+				if err != nil {
+					return nil, err
+				}
+				if err := cat.validate(args.Category, entry.Type); err != nil {
+					return nil, err
+				}
 				entry.Category = args.Category
+				labels = cat.labels()
 			}
 			// Correcting the origin is how a mislabelled loan stops counting as
 			// faturamento, so an edit has to be able to set it. Only on income:
@@ -276,10 +449,11 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 			}
 
 			return map[string]any{
-				"entry_id": entry.EntryID,
-				"status":   "updated",
-				"amount":   centavosToReais(entry.Amount),
-				"category": entry.Category,
+				"entry_id":       entry.EntryID,
+				"status":         "updated",
+				"amount":         centavosToReais(entry.Amount),
+				"category":       entry.Category,
+				"category_label": CategoryLabel(labels, entry.Category),
 			}, nil
 		},
 	}
@@ -328,6 +502,25 @@ func resumoMensalTool(store Store, loc *time.Location) Tool {
 				"expense":           centavosToReais(summary.TotalExpense),
 				"balance":           centavosToReais(summary.ExpectedBalance),
 				"goal":              nil,
+			}
+
+			// Faturamento broken into the kinds of sale behind it. A single figure
+			// answers "quanto vendi" and nothing else, and a pharmacy that sells at
+			// atacado and at balcão is asking which of the two moved — see ADR-024.
+			// Only when there is faturamento to split: an empty list beside a zero
+			// says nothing the zero did not.
+			if summary.TotalRevenue > 0 {
+				var labels map[string]string
+				if cat, err := loadCatalog(ctx, store, userID); err == nil {
+					labels = cat.labels()
+				} else {
+					log.Printf("finance tool %s: category labels for user %s: %v", name, userID, err)
+				}
+				byCategory, err := monthRevenueByCategory(ctx, store, userID, args.Month, labels)
+				if err != nil {
+					return nil, fmt.Errorf("faturamento por categoria: %w", err)
+				}
+				result["faturamento_por_categoria"] = categoryToolPayload(byCategory)
 			}
 
 			goal, err := store.GetGoal(ctx, userID, args.Month)
@@ -480,7 +673,14 @@ const maxRangeEntries = 500
 // over without reading the whole ledger), so it returns rows only, and reports
 // totals_available=false rather than a partial sum. That is the only path
 // where limit still means anything.
-func listing(ctx context.Context, store EntryLister, userID string, filter EntryFilter, toolName string) (map[string]any, error) {
+// entryCatalogReader is what a listing needs: the entries, and the catalog that
+// names their categories to the user.
+type entryCatalogReader interface {
+	EntryLister
+	CategoryReader
+}
+
+func listing(ctx context.Context, store entryCatalogReader, userID string, filter EntryFilter, toolName string) (map[string]any, error) {
 	bounded := filter.From != nil && filter.To != nil &&
 		filter.To.Sub(*filter.From) <= maxAggregateSpanDays*24*time.Hour
 
@@ -540,23 +740,29 @@ func listing(ctx context.Context, store EntryLister, userID string, filter Entry
 				faturamento += e.Amount
 			}
 		}
-		byCategory := foldByCategory(matched)
-		cats := make([]map[string]any, 0, len(byCategory))
-		for _, c := range byCategory {
-			cats = append(cats, map[string]any{
-				"category": c.Category,
-				"label":    c.Label,
-				"type":     string(c.Type),
-				"total":    centavosToReais(c.Total),
-				"count":    c.Count,
-			})
+		// The user's own labels, so a category they created is named the way they
+		// named it. A catalog that cannot be read is not worth failing a listing
+		// over — CategoryLabel falls back to the defaults and then to the slug — so
+		// the error is logged and the totals go out regardless.
+		var labels map[string]string
+		if cat, err := loadCatalog(ctx, store, userID); err == nil {
+			labels = cat.labels()
+		} else {
+			log.Printf("finance tool %s: category labels for user %s: %v", toolName, userID, err)
 		}
+
 		result["totals_available"] = true
 		result["total_matching"] = len(matched)
 		result["total_expense"] = centavosToReais(expense)
 		result["total_entradas"] = centavosToReais(entradas)
 		result["total_faturamento"] = centavosToReais(faturamento)
-		result["by_category"] = cats
+		result["by_category"] = categoryToolPayload(foldByCategory(matched, labels, nil))
+		// Which kinds of sale the faturamento above was made of. by_category
+		// cannot answer that: it splits every entry, so an income category holds
+		// sales and non-sales alike, and origin is what tells them apart (ADR-016).
+		if faturamento > 0 {
+			result["faturamento_por_categoria"] = categoryToolPayload(RevenueByCategory(matched, labels))
+		}
 	} else {
 		result["totals_available"] = false
 		result["note"] = "Sem período (from e to), não há como somar: informe as datas " +

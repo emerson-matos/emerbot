@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,23 +163,193 @@ func TestCreateEntryToolRejectsInvalidType(t *testing.T) {
 	}
 }
 
-func TestCreateEntryToolCoercesUnknownCategory(t *testing.T) {
+// A category nobody defined is a question for the model, not a bucket to dump
+// the entry in. It used to be silently filed under "Outros (Receita)", which
+// was defensible while the category set was a closed enum in the schema — the
+// slug could only be a hallucination. Now that the catalog is the user's to
+// extend, the same slug is just as likely to be the "venda_varejo" they asked
+// for a message ago, and answering "lançado" while burying it in Outros is how
+// atacado and varejo end up in one bucket with nothing to show for it.
+func TestCreateEntryToolRefusesUnknownCategory(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryStore()
 	h := handlerFor(t, store, "create_financial_entry")
 
-	callTool(t, h, "u1", map[string]any{
+	raw, _ := json.Marshal(map[string]any{
 		"type": "income", "amount": 100.0, "category": "criptomoedas", "is_pending": false,
 	})
+	_, err := h(context.Background(), "u1", raw)
+	if err == nil {
+		t.Fatal("expected an unknown category to be refused")
+	}
+	// The refusal has to be actionable: the model gets the categories that would
+	// have worked, and where to go if the user really meant a new one.
+	if !strings.Contains(err.Error(), "venda_balcao") || !strings.Contains(err.Error(), createCategoryToolName) {
+		t.Errorf("error = %q, want the valid slugs and %s", err, createCategoryToolName)
+	}
 
 	entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+	if len(entries) != 0 {
+		t.Fatalf("expected nothing written, got %d entries", len(entries))
 	}
-	// An out-of-set category falls back to the income default, not persisted verbatim.
-	if entries[0].Category != "outros_receitas" {
-		t.Fatalf("expected coerced category outros_receitas, got %q", entries[0].Category)
+}
+
+// The point of the whole change: a category the user created from WhatsApp is
+// a category they can file a sale under, one message later.
+func TestCreateEntryToolAcceptsAUserCreatedCategory(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	create := handlerFor(t, store, createCategoryToolName)
+	callTool(t, create, "u1", map[string]any{"label": "Venda Varejo", "type": "income"})
+
+	out := callTool(t, handlerFor(t, store, "create_financial_entry"), "u1", map[string]any{
+		"type": "income", "amount": 250.0, "category": "venda_varejo", "is_pending": false,
+	})
+	if got := out.(map[string]any)["category_label"]; got != "Venda Varejo" {
+		t.Errorf("category_label = %v, want the label the user gave it", got)
+	}
+
+	entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+	if len(entries) != 1 || entries[0].Category != "venda_varejo" {
+		t.Fatalf("entries = %+v, want one filed under venda_varejo", entries)
+	}
+	// A new income category does not invent a new kind of money: the origin is
+	// what makes this faturamento, and it is still "venda" (ADR-016).
+	if entries[0].Origin != domain.OriginVenda {
+		t.Errorf("Origin = %q, want venda", entries[0].Origin)
+	}
+}
+
+// Filing a sale under an expense category is refused for the same reason an
+// unknown slug is: it is a breakdown that lies later.
+func TestCreateEntryToolRefusesACategoryOfTheOtherType(t *testing.T) {
+	t.Parallel()
+
+	h := handlerFor(t, NewInMemoryStore(), "create_financial_entry")
+	raw, _ := json.Marshal(map[string]any{
+		"type": "income", "amount": 100.0, "category": "aluguel", "is_pending": false,
+	})
+	if _, err := h(context.Background(), "u1", raw); err == nil {
+		t.Fatal("expected an income entry under an expense category to be refused")
+	}
+}
+
+func TestCreateCategoryTool(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, createCategoryToolName)
+
+	out := callTool(t, h, "u1", map[string]any{"label": "Venda Varejo", "type": "income"}).(map[string]any)
+	if out["status"] != "created" || out["slug"] != "venda_varejo" {
+		t.Fatalf("result = %+v, want a created venda_varejo", out)
+	}
+
+	stored, err := store.ListCategories(context.Background(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored = %+v, want exactly the one category", stored)
+	}
+	// Same shape as one created in the dashboard, and not a default: the
+	// defaults live in the codebase.
+	if stored[0].Slug != "venda_varejo" || stored[0].Label != "Venda Varejo" {
+		t.Errorf("stored = %+v, want the normalized slug and the label as typed", stored[0])
+	}
+	if stored[0].Type != domain.EntryTypeIncome || stored[0].Default {
+		t.Errorf("stored = %+v, want an income category that is not a default", stored[0])
+	}
+}
+
+// Creating one that is already there reports it instead of writing over it.
+// SaveCategory is a PutItem: re-creating "Venda Atacado" after the user renamed
+// it would silently rename it back.
+func TestCreateCategoryToolDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, createCategoryToolName)
+	callTool(t, h, "u1", map[string]any{"label": "Atacado (CNPJ)", "type": "income"})
+
+	out := callTool(t, h, "u1", map[string]any{"label": "Atacado CNPJ", "type": "income"}).(map[string]any)
+	if out["status"] != "ja_existe" {
+		t.Fatalf("result = %+v, want it reported as already existing", out)
+	}
+	if out["label"] != "Atacado (CNPJ)" {
+		t.Errorf("label = %v, want the label already stored", out["label"])
+	}
+
+	stored, _ := store.ListCategories(context.Background(), "u1")
+	if len(stored) != 1 {
+		t.Fatalf("stored %d categories, want the duplicate refused", len(stored))
+	}
+}
+
+// A default is already there for everyone, seeded or not, so creating one is
+// the same non-event as creating a duplicate — never a second definition.
+func TestCreateCategoryToolWillNotShadowADefault(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	h := handlerFor(t, store, createCategoryToolName)
+
+	out := callTool(t, h, "u1", map[string]any{"label": "Venda Balcão", "type": "income"}).(map[string]any)
+	if out["status"] != "ja_existe" || out["slug"] != "venda_balcao" {
+		t.Fatalf("result = %+v, want the default reported as existing", out)
+	}
+	if stored, _ := store.ListCategories(context.Background(), "u1"); len(stored) != 0 {
+		t.Fatalf("stored = %+v, want nothing written over the default", stored)
+	}
+}
+
+func TestCreateCategoryToolRejectsBadInput(t *testing.T) {
+	t.Parallel()
+
+	h := handlerFor(t, NewInMemoryStore(), createCategoryToolName)
+	for _, args := range []map[string]any{
+		{"label": "   ", "type": "income"},
+		{"label": "!!!", "type": "income"},
+		{"label": "Venda Atacado", "type": "outro"},
+		{"label": "Venda Atacado"},
+	} {
+		raw, _ := json.Marshal(args)
+		if _, err := h(context.Background(), "u1", raw); err == nil {
+			t.Errorf("args %v: expected an error, got none", args)
+		}
+	}
+}
+
+func TestListCategoriesTool(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	callTool(t, handlerFor(t, store, createCategoryToolName), "u1",
+		map[string]any{"label": "Venda Varejo", "type": "income"})
+
+	out := callTool(t, handlerFor(t, store, listCategoriesToolName), "u1",
+		map[string]any{"type": "income"}).(map[string]any)
+
+	cats, ok := out["categorias"].([]map[string]any)
+	if !ok {
+		t.Fatalf("categorias = %T, want a list", out["categorias"])
+	}
+	var sawDefault, sawCustom bool
+	for _, c := range cats {
+		if c["tipo"] != "income" {
+			t.Errorf("category %v leaked past the type filter", c)
+		}
+		switch c["slug"] {
+		case "venda_balcao":
+			sawDefault = true
+		case "venda_varejo":
+			sawCustom = true
+		}
+	}
+	if !sawDefault || !sawCustom {
+		t.Errorf("categorias = %+v, want the defaults and the user's own", cats)
 	}
 }
 
@@ -488,6 +659,84 @@ func TestEditEntryToolRejectsAmountOverCap(t *testing.T) {
 	}
 	if entry.Amount != 1000 {
 		t.Fatalf("expected amount unchanged after rejected edit, got %d", entry.Amount)
+	}
+}
+
+// End to end over the tools, which is where the two halves of ADR-024 meet: a
+// category created in a chat, a sale filed under it, and the month's faturamento
+// coming back split by kind of sale.
+func TestResumoMensalToolBreaksFaturamentoByCategory(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	callTool(t, handlerFor(t, store, createCategoryToolName), "u1",
+		map[string]any{"label": "Venda Varejo", "type": "income"})
+
+	create := handlerFor(t, store, "create_financial_entry")
+	callTool(t, create, "u1", map[string]any{
+		"type": "income", "amount": 600.0, "category": "venda_varejo",
+		"date": "2026-07-05", "is_pending": false,
+	})
+	callTool(t, create, "u1", map[string]any{
+		"type": "income", "amount": 400.0, "category": "venda_atacado",
+		"date": "2026-07-06", "is_pending": false,
+	})
+	// A loan is money in and is not a sale, so it is in neither slice.
+	callTool(t, create, "u1", map[string]any{
+		"type": "income", "amount": 5000.0, "category": "outros_receitas",
+		"origem": "emprestimo", "date": "2026-07-07", "is_pending": false,
+	})
+
+	out := callTool(t, handlerFor(t, store, "get_resumo_mensal"), "u1",
+		map[string]any{"month": "2026-07"}).(map[string]any)
+
+	if out["faturamento"] != 1000.0 {
+		t.Fatalf("faturamento = %v, want 1000 — the empréstimo is not a sale", out["faturamento"])
+	}
+	rows, ok := out["faturamento_por_categoria"].([]map[string]any)
+	if !ok {
+		t.Fatalf("faturamento_por_categoria = %T, want a list", out["faturamento_por_categoria"])
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want varejo and atacado and nothing else", rows)
+	}
+	if rows[0]["category"] != "venda_varejo" || rows[0]["total"] != 600.0 {
+		t.Errorf("first = %+v, want venda_varejo at 600", rows[0])
+	}
+	// Named the way the user named it, not by its slug.
+	if rows[0]["label"] != "Venda Varejo" {
+		t.Errorf("label = %v, want the label from the user's catalog", rows[0]["label"])
+	}
+	if rows[1]["category"] != "venda_atacado" || rows[1]["label"] != "Venda Atacado" {
+		t.Errorf("second = %+v, want the default venda_atacado with its own label", rows[1])
+	}
+
+	// The parts add up to the whole they were split from.
+	var sum float64
+	for _, r := range rows {
+		sum += r["total"].(float64)
+	}
+	if sum != out["faturamento"] {
+		t.Errorf("the split totals %v, want it to decompose faturamento (%v)", sum, out["faturamento"])
+	}
+}
+
+// Nothing sold, nothing to split: an empty list beside a zero says nothing the
+// zero did not, and invites the model to describe a month that has no sales.
+func TestResumoMensalToolOmitsTheSplitWithoutSales(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	callTool(t, handlerFor(t, store, "create_financial_entry"), "u1", map[string]any{
+		"type": "expense", "amount": 100.0, "category": "aluguel",
+		"date": "2026-07-05", "is_pending": false,
+	})
+
+	out := callTool(t, handlerFor(t, store, "get_resumo_mensal"), "u1",
+		map[string]any{"month": "2026-07"}).(map[string]any)
+	if _, ok := out["faturamento_por_categoria"]; ok {
+		t.Errorf("faturamento_por_categoria = %v, want it absent for a month with no sales",
+			out["faturamento_por_categoria"])
 	}
 }
 

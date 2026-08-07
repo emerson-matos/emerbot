@@ -1007,9 +1007,12 @@ func TestCreateCategoryRejectsBadInput(t *testing.T) {
 	h := NewCategoriesHandler(newStore(t))
 	cases := []struct{ name, body, wantErr string }{
 		{"malformed json", `{`, "invalid request body"},
-		{"blank slug", `{"slug":"   ","label":"X","type":"expense"}`, "slug and label are required"},
-		{"blank label", `{"slug":"x","label":"  ","type":"expense"}`, "slug and label are required"},
+		{"blank label", `{"slug":"x","label":"  ","type":"expense"}`, "label is required"},
 		{"bad type", `{"slug":"x","label":"X","type":"outro"}`, "type must be 'expense' or 'income'"},
+		// A label with nothing sluggable in it cannot become a category: there is
+		// no key to store it under, and storing it under "" would collide with the
+		// next one.
+		{"label with no letters", `{"label":"!!!","type":"expense"}`, "label must contain letters or numbers"},
 	}
 
 	for _, tc := range cases {
@@ -1020,6 +1023,43 @@ func TestCreateCategoryRejectsBadInput(t *testing.T) {
 				t.Fatalf("error = %v, want %q", got, tc.wantErr)
 			}
 		})
+	}
+}
+
+// A category created here and one created from WhatsApp are the same thing:
+// both go through domain.NewCategory, so the slug is derived from the label in
+// one form rather than taken from whatever the caller sent.
+func TestCreateCategoryNormalizesTheSlug(t *testing.T) {
+	store := newStore(t)
+	body := `{"slug":"Venda Atacado!","label":"Venda Atacado","type":"income"}`
+
+	w := run(NewCategoriesHandler(store).Create, authed(http.MethodPost, "/categories", body))
+	assertStatus(t, w, http.StatusCreated)
+
+	var got domain.Category
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Slug != "venda_atacado" {
+		t.Fatalf("slug = %q, want it normalized to venda_atacado", got.Slug)
+	}
+	if got.Type != domain.EntryTypeIncome {
+		t.Fatalf("type = %q, want income", got.Type)
+	}
+}
+
+// The slug is optional: the label is what the user typed, and it is enough.
+func TestCreateCategoryDerivesSlugFromLabel(t *testing.T) {
+	w := run(NewCategoriesHandler(newStore(t)).Create,
+		authed(http.MethodPost, "/categories", `{"label":"Venda Varejo","type":"income"}`))
+	assertStatus(t, w, http.StatusCreated)
+
+	var got domain.Category
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Slug != "venda_varejo" {
+		t.Fatalf("slug = %q, want venda_varejo derived from the label", got.Slug)
 	}
 }
 

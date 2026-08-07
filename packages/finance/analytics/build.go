@@ -62,6 +62,12 @@ type Input struct {
 	Summaries      []*pkgfinance.MonthlySummary
 	Goals          []*domain.Goal
 	CashFlowPoints []pkgfinance.CashFlowPoint
+	// CategoryLabels names the user's categories, slug → label, so the
+	// breakdowns below call a category what its owner calls it. Nil is allowed
+	// and means "no catalog at hand": every reader falls back to the default
+	// definitions and then to the slug title-cased, so a catalog that could not
+	// be read costs an accent, never a section.
+	CategoryLabels map[string]string
 	// Now anchors "today", "this week" and "days remaining". It must already
 	// be in the user's timezone: every date below is read off its calendar
 	// fields, so passing a UTC instant makes the analysis wrong by a day for
@@ -170,7 +176,14 @@ func Build(in Input) Analysis {
 		WeekComparison:     week,
 		Highlights:         buildHighlights(arrived, arrivedRevenue),
 		CashOutDays:        buildCashOutDays(arrived),
-		ExpenseComposition: expenseComposition(arrived),
+		ExpenseComposition: expenseComposition(arrived, in.CategoryLabels),
+		// Over the month's whole transaction-basis read, which is exactly what
+		// KPIs.Faturamento above totals — the parts have to add up to the figure
+		// they sit under. Two things it is deliberately not: `arrived`, the
+		// effective-date read, which misses a crediário sale made this month and
+		// due next; and `arrivedRevenue`, which stops at today and would leave the
+		// split short of the total whenever a sale carries a later date.
+		RevenueComposition: revenueComposition(in.RevenueEntries, in.CategoryLabels),
 		Goals:              goals,
 		Projection:         projection,
 		History:            buildHistory(months, in.Summaries, in.Goals),

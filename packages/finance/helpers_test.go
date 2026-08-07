@@ -1,6 +1,8 @@
 package finance
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/emerson/emerbot/packages/domain"
@@ -149,19 +151,128 @@ func TestIsRevenue(t *testing.T) {
 	}
 }
 
-func TestKnownCategory(t *testing.T) {
-	slugs := categorySlugs()
-	if len(slugs) == 0 {
-		t.Fatal("expected the domain to define default categories")
+// The catalog is the defaults *plus* whatever this user created. Both halves
+// matter: a user who has only ever talked to the bot has an empty CAT#
+// partition, so validating against the store alone would reject "aluguel" for
+// them, and validating against the defaults alone would reject the category
+// they asked for one message ago.
+func TestCatalogMergesDefaultsAndUserCategories(t *testing.T) {
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	custom, err := domain.NewCategory("u1", "Venda Atacado", "", domain.EntryTypeIncome)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !knownCategory(slugs[0]) {
-		t.Fatalf("knownCategory(%q) = false, want true for a default slug", slugs[0])
+	if err := store.SaveCategory(ctx, custom); err != nil {
+		t.Fatal(err)
 	}
-	// A hallucinated category must be rejected so it never reaches storage.
-	if knownCategory("categoria_inventada_pela_llm") {
-		t.Fatal("knownCategory accepted a category that is not defined")
+
+	cat, err := loadCatalog(ctx, store, "u1")
+	if err != nil {
+		t.Fatalf("loadCatalog: %v", err)
 	}
-	if knownCategory("") {
-		t.Fatal("knownCategory accepted an empty category")
+
+	if !cat.has("aluguel") {
+		t.Error("a default must be usable even when nothing was ever seeded")
+	}
+	if !cat.has("venda_atacado") {
+		t.Error("the user's own category must be usable")
+	}
+	// A hallucinated category must never reach storage.
+	if cat.has("categoria_inventada_pela_llm") || cat.has("") {
+		t.Error("catalog accepted a category nobody defined")
+	}
+	if got := cat.labels()["venda_atacado"]; got != "Venda Atacado" {
+		t.Errorf("label = %q, want the label the user gave it", got)
+	}
+}
+
+// The user's own definition wins on a shared slug: a renamed default is renamed.
+func TestCatalogPrefersTheUsersOwnDefinition(t *testing.T) {
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	if err := store.SaveCategory(ctx, domain.Category{
+		UserID: "u1", Slug: "venda_balcao", Label: "Balcão (loja 2)", Type: domain.EntryTypeIncome,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cat, err := loadCatalog(ctx, store, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.labels()["venda_balcao"]; got != "Balcão (loja 2)" {
+		t.Errorf("label = %q, want the user's label to win over the default's", got)
+	}
+}
+
+func TestCatalogValidateRejectsTheWrongType(t *testing.T) {
+	cat, err := loadCatalog(context.Background(), NewInMemoryStore(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.validate("aluguel", domain.EntryTypeExpense); err != nil {
+		t.Fatalf("validate(aluguel, expense) = %v, want nil", err)
+	}
+	// An expense category with sales in it is a breakdown that lies later, so it
+	// is refused now — and the refusal names the categories that would work.
+	err = cat.validate("aluguel", domain.EntryTypeIncome)
+	if err == nil {
+		t.Fatal("filing income under an expense category must be refused")
+	}
+	if !strings.Contains(err.Error(), "venda_balcao") {
+		t.Errorf("error = %q, want it to list the income categories", err)
+	}
+	err = cat.validate("nao_existe", domain.EntryTypeExpense)
+	if err == nil || !strings.Contains(err.Error(), createCategoryToolName) {
+		t.Errorf("error = %v, want it to point at %s", err, createCategoryToolName)
+	}
+}
+
+// The category names in a breakdown are the user's words. Only where they are
+// unreachable does the slug get title-cased — never printed raw.
+func TestCategoryLabelFallback(t *testing.T) {
+	labels := map[string]string{"venda_atacado": "Venda Atacado"}
+	for _, tc := range []struct{ name, slug, want string }{
+		{"the user's own label", "venda_atacado", "Venda Atacado"},
+		{"a default's label", "aluguel", "Aluguel"},
+		{"an unknown slug", "taxa_maquininha", "Taxa Maquininha"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CategoryLabel(labels, tc.slug); got != tc.want {
+				t.Errorf("CategoryLabel(%q) = %q, want %q", tc.slug, got, tc.want)
+			}
+		})
+	}
+	if got := CategoryLabel(nil, "aluguel"); got != "Aluguel" {
+		t.Errorf("CategoryLabel(nil, aluguel) = %q, want the default label", got)
+	}
+}
+
+// Faturamento is split by category, but never *decided* by it: origin is what
+// says a sale is a sale (ADR-016).
+func TestRevenueByCategory(t *testing.T) {
+	entries := []domain.FinancialEntry{
+		{Type: domain.EntryTypeIncome, Origin: domain.OriginVenda, Category: "venda_atacado", Amount: 30000},
+		{Type: domain.EntryTypeIncome, Origin: domain.OriginVenda, Category: "venda_atacado", Amount: 10000},
+		{Type: domain.EntryTypeIncome, Origin: domain.OriginVenda, Category: "venda_balcao", Amount: 25000},
+		// A loan filed under a sales category is still not faturamento.
+		{Type: domain.EntryTypeIncome, Origin: domain.OriginEmprestimo, Category: "venda_balcao", Amount: 900000},
+		{Type: domain.EntryTypeExpense, Category: "aluguel", Amount: 500000},
+	}
+
+	got := RevenueByCategory(entries, map[string]string{"venda_atacado": "Venda Atacado"})
+
+	if len(got) != 2 {
+		t.Fatalf("got %d categories (%+v), want atacado and balcão", len(got), got)
+	}
+	if got[0].Category != "venda_atacado" || got[0].Total != 40000 || got[0].Count != 2 {
+		t.Errorf("first = %+v, want venda_atacado at 40000 over 2 entries", got[0])
+	}
+	if got[0].Label != "Venda Atacado" {
+		t.Errorf("Label = %q, want the user's label", got[0].Label)
+	}
+	if got[1].Category != "venda_balcao" || got[1].Total != 25000 {
+		t.Errorf("second = %+v, want venda_balcao at 25000 — the empréstimo excluded", got[1])
 	}
 }

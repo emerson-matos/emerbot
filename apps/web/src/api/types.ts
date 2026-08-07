@@ -279,7 +279,13 @@ export interface CashOutDay {
   items: { category: string; amount: number; count: number }[];
 }
 
-export interface ExpenseComposition {
+/**
+ * One category's share of a total: of the month's expenses in
+ * `expenseComposition`, of its faturamento in `revenueComposition`. Same shape
+ * and same rendering — what differs is which entries went into the fold, which
+ * is the backend's business.
+ */
+export interface CategoryComposition {
   categoryId: string;
   categoryName: string;
   amount: number;
@@ -664,7 +670,13 @@ export interface Analysis {
     worstBalance: DayHighlight;
   };
   cashOutDays: CashOutDay[];
-  expenseComposition: ExpenseComposition[];
+  expenseComposition: CategoryComposition[];
+  /**
+   * The month's faturamento split by category — which kinds of sale it was
+   * made of (atacado, balcão, convênio). Origin decides what is faturamento
+   * (see ADR-016); the category only splits it. Empty when nothing was sold.
+   */
+  revenueComposition: CategoryComposition[];
   goals: GoalProgress;
   projection: Projection;
   history: MonthlySnapshot[];
