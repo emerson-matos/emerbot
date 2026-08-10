@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -422,4 +423,73 @@ func TestNormalize(t *testing.T) {
 			t.Fatal("expected PaymentDate to be nil")
 		}
 	})
+
+	// The means of payment belongs to the settlement, so un-paying an entry has
+	// to take it away with the date. Keeping it would leave the ledger saying
+	// how something was paid that nobody paid — see ADR-026.
+	t.Run("pending strips the payment method", func(t *testing.T) {
+		e := FinancialEntry{
+			PaymentStatus: PaymentStatusPending,
+			PaymentDate:   &payDate,
+			PaymentMethod: "pix",
+		}
+		e.Normalize()
+		if e.PaymentMethod != "" {
+			t.Fatalf("PaymentMethod = %q, want empty", e.PaymentMethod)
+		}
+	})
+
+	t.Run("paid keeps the payment method, trimmed", func(t *testing.T) {
+		e := FinancialEntry{
+			TransactionDate: d,
+			PaymentStatus:   PaymentStatusPaid,
+			PaymentDate:     &payDate,
+			PaymentMethod:   "  dinheiro  ",
+		}
+		e.Normalize()
+		if e.PaymentMethod != "dinheiro" {
+			t.Fatalf("PaymentMethod = %q, want %q", e.PaymentMethod, "dinheiro")
+		}
+	})
+
+	// Validate runs on every read (see finance.itemToEntry), so a value that
+	// somehow got past an edge must not turn a whole ListEntries into an error.
+	t.Run("validate accepts any stored payment method", func(t *testing.T) {
+		e := FinancialEntry{
+			UserID: "u1", EntryID: "e1", Amount: 100,
+			TransactionDate: d,
+			Type:            EntryTypeExpense,
+			Source:          SourceManual,
+			PaymentStatus:   PaymentStatusPaid,
+			PaymentDate:     &payDate,
+			PaymentMethod:   strings.Repeat("x", MaxPaymentMethodLen*3),
+		}
+		if err := e.Validate(); err != nil {
+			t.Fatalf("Validate() = %v, want nil", err)
+		}
+	})
+}
+
+func TestCleanPaymentMethod(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		want  string
+		valid bool
+	}{
+		{"trims", "  pix ", "pix", true},
+		{"empty is fine", "   ", "", true},
+		{"at the limit", strings.Repeat("a", MaxPaymentMethodLen), strings.Repeat("a", MaxPaymentMethodLen), true},
+		{"past the limit", strings.Repeat("a", MaxPaymentMethodLen+1), strings.Repeat("a", MaxPaymentMethodLen+1), false},
+		// Counted in runes, not bytes: "cartão" must not cost more than it looks.
+		{"accents count once", strings.Repeat("ã", MaxPaymentMethodLen), strings.Repeat("ã", MaxPaymentMethodLen), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := CleanPaymentMethod(tc.in)
+			if got != tc.want || ok != tc.valid {
+				t.Fatalf("CleanPaymentMethod(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.valid)
+			}
+		})
+	}
 }

@@ -121,6 +121,124 @@ func TestCreateEntryToolPendingWithDueDate(t *testing.T) {
 	}
 }
 
+func TestToolsRecordThePaymentMethod(t *testing.T) {
+	t.Parallel()
+
+	t.Run("created already settled, as the user said it", func(t *testing.T) {
+		store := NewInMemoryStore()
+		h := handlerFor(t, store, "create_financial_entry")
+
+		callTool(t, h, "u1", map[string]any{
+			"type":            "expense",
+			"amount":          120.0,
+			"category":        "fornecedor_geral",
+			"description":     "Fornecedor",
+			"is_pending":      false,
+			"forma_pagamento": " pix ",
+		})
+
+		entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+		if len(entries) != 1 || entries[0].PaymentMethod != "pix" {
+			t.Fatalf("payment method = %q, want %q", entries[0].PaymentMethod, "pix")
+		}
+	})
+
+	// "Vou pagar amanhã no pix" is not a payment. A bill nobody has settled
+	// cannot say how it was settled.
+	t.Run("dropped on a pending entry", func(t *testing.T) {
+		store := NewInMemoryStore()
+		h := handlerFor(t, store, "create_financial_entry")
+
+		callTool(t, h, "u1", map[string]any{
+			"type":            "expense",
+			"amount":          300.0,
+			"category":        "energia_agua",
+			"due_date":        "2026-08-20",
+			"is_pending":      true,
+			"forma_pagamento": "pix",
+		})
+
+		entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+		if len(entries) != 1 || entries[0].PaymentMethod != "" {
+			t.Fatalf("payment method on a pending entry = %q, want empty", entries[0].PaymentMethod)
+		}
+	})
+
+	// The message that quits a bill usually says how: "paguei o fornecedor no
+	// pix" is one edit, not two.
+	t.Run("recorded while quitting a pending bill", func(t *testing.T) {
+		store := NewInMemoryStore()
+		seedForEdit(t, store, "u1", "e1")
+		h := handlerFor(t, store, "edit_financial_entry")
+
+		callTool(t, h, "u1", map[string]any{
+			"entry_id":        "e1",
+			"is_pending":      false,
+			"forma_pagamento": "dinheiro",
+		})
+
+		e, err := store.FindEntryByID(context.Background(), "u1", "e1")
+		if err != nil {
+			t.Fatalf("find entry: %v", err)
+		}
+		if e.PaymentStatus != domain.PaymentStatusPaid || e.PaymentMethod != "dinheiro" {
+			t.Fatalf("entry = %+v, want paid in dinheiro", e)
+		}
+	})
+
+	t.Run("dropped when the entry is reopened", func(t *testing.T) {
+		store := NewInMemoryStore()
+		seedForEdit(t, store, "u1", "e1")
+		h := handlerFor(t, store, "edit_financial_entry")
+
+		callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": false, "forma_pagamento": "pix"})
+		callTool(t, h, "u1", map[string]any{"entry_id": "e1", "is_pending": true})
+
+		e, _ := store.FindEntryByID(context.Background(), "u1", "e1")
+		if e.PaymentMethod != "" {
+			t.Fatalf("payment method after reopening = %q, want empty", e.PaymentMethod)
+		}
+	})
+
+	t.Run("a hallucinated essay is refused, not stored", func(t *testing.T) {
+		store := NewInMemoryStore()
+		h := handlerFor(t, store, "create_financial_entry")
+
+		raw, _ := json.Marshal(map[string]any{
+			"type": "expense", "amount": 10.0, "category": "fornecedor_geral",
+			"is_pending":      false,
+			"forma_pagamento": strings.Repeat("a", domain.MaxPaymentMethodLen+1),
+		})
+		if _, err := h(context.Background(), "u1", raw); err == nil {
+			t.Fatal("expected an error for an over-long forma_pagamento")
+		}
+		entries, _ := store.ListEntries(context.Background(), "u1", EntryFilter{})
+		if len(entries) != 0 {
+			t.Fatalf("stored %d entries, want none", len(entries))
+		}
+	})
+}
+
+// seedForEdit puts one pending expense in the store for the edit tool to act
+// on, addressed by the id the tool looks it up by.
+func seedForEdit(t *testing.T, store Store, userID, id string) {
+	t.Helper()
+	e := domain.FinancialEntry{
+		UserID:          userID,
+		EntryID:         domain.EntryID(id),
+		TransactionDate: domain.NewCalendarDate(time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)),
+		Amount:          15000,
+		Category:        "fornecedor_geral",
+		Description:     "Fornecedor",
+		Type:            domain.EntryTypeExpense,
+		PaymentStatus:   domain.PaymentStatusPending,
+		Source:          domain.SourceWhatsApp,
+	}
+	if err := store.SaveEntry(context.Background(), e); err != nil {
+		t.Fatalf("seed entry: %v", err)
+	}
+}
+
 func TestCreateEntryToolRejectsNonPositiveAmount(t *testing.T) {
 	t.Parallel()
 

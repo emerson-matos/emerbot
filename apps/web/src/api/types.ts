@@ -22,6 +22,13 @@ export interface Entry {
   DueDate: string | null;
   PaymentStatus: "pending" | "paid";
   PaymentDate: string | null;
+  /**
+   * How it was paid or received, in the user's own words ("pix", "dinheiro") —
+   * free text, and empty far more often than not (ADR-026). It is a fact about
+   * the settlement, so the API clears it whenever an entry goes back to
+   * pending. Nothing groups or totals by it.
+   */
+  PaymentMethod?: string;
   Supplier: string;
   Source: string;
   /**
@@ -85,6 +92,8 @@ export type UpdateEntryInput = Partial<CreateEntryInput> & {
   /** "" clears the due date. */
   due_date?: string;
   supplier?: string;
+  /** Free text, "" clears it; sent beside payment_status when quitting. */
+  payment_method?: string;
 };
 
 /**

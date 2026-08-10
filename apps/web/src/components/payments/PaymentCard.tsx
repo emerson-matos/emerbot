@@ -17,11 +17,13 @@ import { formatBRL } from '@/lib/format'
 import { categoryLabelMap } from '@/lib/categories'
 import { editEntryPath, effectiveDate, formatEffectiveDate, formatPaidAt, todayISO as computeTodayISO } from '@/lib/entries'
 import { useCategories } from '@/api/queries'
+import MarkPaidDialog from './MarkPaidDialog'
 import type { Entry } from '@/api/types'
 
 interface Props {
   entry: Entry
-  onMarkPaid?: (entry: Entry) => void
+  /** The method is the user's own words, and "" when they left it blank. */
+  onMarkPaid?: (entry: Entry, method: string) => void
   onDelete?: (entry: Entry) => void
 }
 
@@ -47,35 +49,29 @@ export default function PaymentCard({ entry, onMarkPaid, onDelete }: Props) {
         </p>
       </div>
 
-      <div className="flex justify-start">
+      <div className="flex min-w-0 justify-start">
         {entry.PaymentStatus === 'paid' ? (
-          <span className="text-xs whitespace-nowrap text-muted-foreground">
+          // The form of payment rides along with the date it was settled on:
+          // the two together are the whole answer to "quando e como isso saiu".
+          <span
+            className="max-w-32 truncate text-xs text-muted-foreground"
+            title={entry.PaymentMethod || undefined}
+          >
             {isIncome ? 'recebido' : 'pago'} {formatPaidAt(entry)}
+            {entry.PaymentMethod ? ` · ${entry.PaymentMethod}` : ''}
           </span>
         ) : onMarkPaid ? (
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button variant="outline" size="sm" className="h-8 w-22 text-xs">
-                  <Check className="size-3.5" /> {isIncome ? 'Receber' : 'Pagar'}
-                </Button>
-              }
-            />
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{isIncome ? 'Marcar como recebida?' : 'Marcar como paga?'}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  "{entry.Description || 'Esta transação'}" será marcada como {isIncome ? 'recebida' : 'paga'}.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={() => onMarkPaid(entry)}>
-                  Confirmar
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <MarkPaidDialog
+            isIncome={isIncome}
+            title={isIncome ? 'Marcar como recebida?' : 'Marcar como paga?'}
+            description={`"${entry.Description || 'Esta transação'}" será marcada como ${isIncome ? 'recebida' : 'paga'}.`}
+            onConfirm={method => onMarkPaid(entry, method)}
+            trigger={
+              <Button variant="outline" size="sm" className="h-8 w-22 text-xs">
+                <Check className="size-3.5" /> {isIncome ? 'Receber' : 'Pagar'}
+              </Button>
+            }
+          />
         ) : null}
       </div>
 

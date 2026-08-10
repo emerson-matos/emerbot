@@ -5,7 +5,7 @@ import type { Entry } from '@/api/types'
 
 interface Props {
   groups: PaymentGroupData[]
-  onMarkPaid?: (entry: Entry) => void
+  onMarkPaid?: (entry: Entry, method: string) => void
   onDelete?: (entry: Entry) => void
 }
 

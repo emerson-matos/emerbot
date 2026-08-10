@@ -464,6 +464,44 @@ func TestStoresAgreeOnEntryLifecycle(t *testing.T) {
 	})
 }
 
+// The payment method is free text neither store indexes, which is exactly why
+// it is worth a conformance test: a field nobody queries is the one that
+// quietly fails to round-trip through a marshaller.
+func TestStoresAgreeOnThePaymentMethod(t *testing.T) {
+	eachStore(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		day := date(t, "2026-07-10")
+		paid := entry(t, "e1", "2026-07-10", 1000, withPaid(t, "2026-07-12"), withMethod("pix"))
+
+		if err := s.SaveEntry(ctx, paid); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		got, err := s.GetEntry(ctx, "u1", day, "e1")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.PaymentMethod != "pix" {
+			t.Fatalf("PaymentMethod = %q, want %q", got.PaymentMethod, "pix")
+		}
+
+		// Un-paying takes the method with the date, in both stores: Normalize
+		// runs on the way in and on the way out.
+		reopened := got
+		reopened.PaymentStatus = domain.PaymentStatusPending
+		reopened.Normalize()
+		if err := s.UpdateEntry(ctx, got, reopened); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		got, err = s.GetEntry(ctx, "u1", day, "e1")
+		if err != nil {
+			t.Fatalf("get after update: %v", err)
+		}
+		if got.PaymentMethod != "" {
+			t.Fatalf("PaymentMethod after reopening = %q, want empty", got.PaymentMethod)
+		}
+	})
+}
+
 func TestStoresAgreeOnMissingEntryErrors(t *testing.T) {
 	eachStore(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

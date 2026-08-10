@@ -16,7 +16,7 @@ export interface PaymentGroupData {
 
 interface Props {
   group: PaymentGroupData
-  onMarkPaid?: (entry: Entry) => void
+  onMarkPaid?: (entry: Entry, method: string) => void
   onDelete?: (entry: Entry) => void
 }
 

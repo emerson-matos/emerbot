@@ -270,8 +270,23 @@ func expense(userID string, d time.Time, amount int64, cat, desc, supplier strin
 	}
 	if status == domain.PaymentStatusPaid {
 		e.PaymentDate = &date
+		e.PaymentMethod = nextDemoPaymentMethod()
 	}
 	return e
+}
+
+// demoPaymentMethods rotates the forms of payment across the seeded ledger so
+// the demo shows the field the way a real month looks — mostly filled in, and
+// blank often enough to be normal, because "não informado" is the ordinary
+// state of an optional annotation (ADR-026).
+var demoPaymentMethods = []string{"Pix", "Dinheiro", "Cartão de débito", "Boleto", "", "Pix", "Transferência", ""}
+
+var demoMethodCursor int
+
+func nextDemoPaymentMethod() string {
+	m := demoPaymentMethods[demoMethodCursor%len(demoPaymentMethods)]
+	demoMethodCursor++
+	return m
 }
 
 func income(userID string, d time.Time, amount int64, cat, desc string, origin domain.IncomeOrigin) domain.FinancialEntry {
@@ -287,6 +302,7 @@ func income(userID string, d time.Time, amount int64, cat, desc string, origin d
 		Description:     desc,
 		PaymentStatus:   domain.PaymentStatusPaid,
 		PaymentDate:     &date,
+		PaymentMethod:   nextDemoPaymentMethod(),
 		Source:          domain.SourceManual,
 		Origin:          origin,
 		CreatedAt:       now,

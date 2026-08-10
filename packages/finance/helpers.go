@@ -194,6 +194,16 @@ const originArgDescription = "Origem do dinheiro que entrou (só para type=incom
 	"Apenas \"venda\" conta como faturamento e conta para a meta; as demais são só entrada de caixa. " +
 	"Padrão: \"venda\"."
 
+// paymentMethodArgDescription tells the model to write down what it heard and
+// nothing else. The two failure modes are symmetric and both cost more than the
+// field is worth: inventing a form of payment puts a fact in the ledger nobody
+// stated, and asking for one turns "paguei a conta de luz" into an interrogation
+// over an optional annotation (ADR-026).
+const paymentMethodArgDescription = "Como foi pago ou recebido, nas palavras do usuário " +
+	"(ex: \"pix\", \"dinheiro\", \"boleto\", \"cartão da loja\"). " +
+	"Preencha só se ele disser; nunca invente e nunca pergunte. " +
+	"Só faz sentido em lançamento já quitado (is_pending=false)."
+
 // createOriginSlugs is the origin enum offered to create_financial_entry.
 //
 // It deliberately omits OriginRecebimentoCliente. A customer settling a

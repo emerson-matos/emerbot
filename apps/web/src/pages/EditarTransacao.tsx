@@ -17,6 +17,7 @@ import {
   editEntryErrors, editEntryPatch, entryToEditValues, isEmptyPatch,
   type EditEntryValues,
 } from '@/lib/entry-form'
+import { MAX_PAYMENT_METHOD_LENGTH, paymentMethodSuggestions } from '@/lib/payment-methods'
 import { useCategories, useEntry, useUpdateEntryMutation } from '../api/queries'
 import type { Category, IncomeOrigin } from '../api/types'
 import { incomeOriginLabels } from '../api/types'
@@ -325,6 +326,29 @@ export default function EditarTransacao() {
                 </p>
               )}
             </div>
+
+            {/* Only on a settled entry: a form of payment is a fact about the
+                quitação, and the API drops it on anything still pending. */}
+            {values.status === 'paid' && (
+              <div>
+                <Label htmlFor="tx-method" className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                  {isIncome ? 'Forma de recebimento' : 'Forma de pagamento'}
+                </Label>
+                <Input
+                  id="tx-method"
+                  list="tx-method-formas"
+                  value={values.paymentMethod}
+                  maxLength={MAX_PAYMENT_METHOD_LENGTH}
+                  onChange={e => update({ paymentMethod: e.target.value })}
+                  placeholder="Opcional — ex.: Pix, dinheiro"
+                />
+                <datalist id="tx-method-formas">
+                  {paymentMethodSuggestions().map(s => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </div>
+            )}
 
             <div className="flex items-center gap-3 pt-2">
               <Button type="submit" disabled={updateEntry.isPending || invalid || nothingToSave}>

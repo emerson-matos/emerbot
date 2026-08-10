@@ -3,6 +3,7 @@ import { formatBRL } from '@/lib/format'
 import { todayISO } from '@/lib/entries'
 import KpiCard, { KpiCardContent, KpiCardActions, toneVar } from '@/components/KpiCard'
 import { Button } from '@/components/ui/button'
+import MarkPaidDialog from '@/components/payments/MarkPaidDialog'
 import { useEntries, useMarkPaidMutation } from '../api/queries'
 
 export default function ToPayToday() {
@@ -15,9 +16,12 @@ export default function ToPayToday() {
   const pendingToday = entries.filter(e => e.Type === 'expense' && e.PaymentStatus === 'pending')
   const payableToday = pendingToday.reduce((sum, e) => sum + e.Amount, 0)
 
-  const payAllToday = () => {
-    if (!window.confirm('Marcar todos os pagamentos de hoje como pagos?')) return
-    pendingToday.forEach(e => markPaid.mutate(e))
+  // One question for the whole batch: quitting the day's bills one by one is
+  // exactly what this button exists to avoid, so asking the form of payment per
+  // entry would give the field back the cost the button removed. Somebody who
+  // paid one of them differently fixes that one on the edit page.
+  const payAllToday = (method: string) => {
+    pendingToday.forEach(entry => markPaid.mutate({ entry, method }))
   }
 
   return (
@@ -37,15 +41,23 @@ export default function ToPayToday() {
       </KpiCardContent>
       <KpiCardActions>
         {pendingToday.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full border-warning text-warning hover:bg-warning/10"
-            disabled={markPaid.isPending}
-            onClick={payAllToday}
-          >
-            <Check className="size-3.5" /> Pagar
-          </Button>
+          <MarkPaidDialog
+            isIncome={false}
+            title="Marcar todos como pagos?"
+            description={`${pendingToday.length} ${pendingToday.length === 1 ? 'conta' : 'contas'} de hoje, ${formatBRL(payableToday)} no total.`}
+            confirmLabel="Confirmar"
+            onConfirm={payAllToday}
+            trigger={
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full border-warning text-warning hover:bg-warning/10"
+                disabled={markPaid.isPending}
+              >
+                <Check className="size-3.5" /> Pagar
+              </Button>
+            }
+          />
         )}
       </KpiCardActions>
     </KpiCard>

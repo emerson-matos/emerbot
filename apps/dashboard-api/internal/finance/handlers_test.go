@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -678,6 +679,129 @@ func TestUpdateEntryPaymentStatusTransitions(t *testing.T) {
 			t.Fatalf("payment date = %v, want it cleared", *got.PaymentDate)
 		}
 	})
+}
+
+func TestUpdateEntryPaymentMethod(t *testing.T) {
+	t.Run("recorded beside the status, the way the dialog sends it", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"paid","payment_method":" pix "}`)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		if got.PaymentMethod != "pix" {
+			t.Fatalf("payment method = %q, want %q (trimmed)", got.PaymentMethod, "pix")
+		}
+	})
+
+	t.Run("an absent method leaves the stored one alone", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+			d, _ := domain.ParseCalendarDate("2026-07-12")
+			e.PaymentStatus = domain.PaymentStatusPaid
+			e.PaymentDate = &d
+			e.PaymentMethod = "dinheiro"
+		})
+
+		r := addressed(http.MethodPut, seededDate, "e1", `{"description":"conta de luz"}`)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		if got.PaymentMethod != "dinheiro" {
+			t.Fatalf("payment method = %q, want it untouched at %q", got.PaymentMethod, "dinheiro")
+		}
+	})
+
+	t.Run("an explicitly empty method clears it", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+			d, _ := domain.ParseCalendarDate("2026-07-12")
+			e.PaymentStatus = domain.PaymentStatusPaid
+			e.PaymentDate = &d
+			e.PaymentMethod = "pix"
+		})
+
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_method":""}`)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		if got.PaymentMethod != "" {
+			t.Fatalf("payment method = %q, want it cleared", got.PaymentMethod)
+		}
+	})
+
+	// Reopening a bill takes the method with the payment date: nothing can say
+	// how something was paid that nobody paid.
+	t.Run("reopening the entry drops the method it was settled with", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000, func(e *domain.FinancialEntry) {
+			d, _ := domain.ParseCalendarDate("2026-07-12")
+			e.PaymentStatus = domain.PaymentStatusPaid
+			e.PaymentDate = &d
+			e.PaymentMethod = "pix"
+		})
+
+		r := addressed(http.MethodPut, seededDate, "e1", `{"payment_status":"pending"}`)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var got entryResponse
+		json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+		if got.PaymentMethod != "" {
+			t.Fatalf("payment method = %q, want it cleared with the payment date", got.PaymentMethod)
+		}
+	})
+
+	t.Run("a method longer than the limit is refused", func(t *testing.T) {
+		store := newStore(t)
+		seedEntry(t, store, "e1", "2026-07-10", 1000)
+
+		body := fmt.Sprintf(`{"payment_status":"paid","payment_method":%q}`,
+			strings.Repeat("a", domain.MaxPaymentMethodLen+1))
+		r := addressed(http.MethodPut, seededDate, "e1", body)
+		w := run(NewEntriesHandler(store, time.UTC).Update, r)
+		assertStatus(t, w, http.StatusBadRequest)
+
+		stored, err := store.FindEntryByID(context.Background(), testUser, "e1")
+		if err != nil {
+			t.Fatalf("get entry: %v", err)
+		}
+		if stored.PaymentStatus != domain.PaymentStatusPending {
+			t.Fatal("the rejected update was persisted")
+		}
+	})
+}
+
+func TestCreateEntryRecordsThePaymentMethod(t *testing.T) {
+	store := newStore(t)
+
+	body := `{"date":"2026-07-10","amount":5000,"category":"mercado","type":"expense","payment_status":"paid","payment_method":"cartão da loja"}`
+	w := run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", body))
+	assertStatus(t, w, http.StatusCreated)
+
+	var got entryResponse
+	json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+	if got.PaymentMethod != "cartão da loja" {
+		t.Fatalf("payment method = %q, want %q", got.PaymentMethod, "cartão da loja")
+	}
+
+	// A pending entry has not been paid, so it cannot say how — Normalize drops
+	// whatever a client sends.
+	pending := `{"date":"2026-07-10","amount":5000,"category":"mercado","type":"expense","payment_status":"pending","payment_method":"pix"}`
+	w = run(NewEntriesHandler(store, time.UTC).Create, authed(http.MethodPost, "/entries", pending))
+	assertStatus(t, w, http.StatusCreated)
+
+	json.Unmarshal(w.Body.Bytes(), &got) //nolint:errcheck
+	if got.PaymentMethod != "" {
+		t.Fatalf("payment method on a pending entry = %q, want empty", got.PaymentMethod)
+	}
 }
 
 func TestUpdateEntryRejectsInvalidBeforeWriting(t *testing.T) {

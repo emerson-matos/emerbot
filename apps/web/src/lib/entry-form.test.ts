@@ -108,6 +108,28 @@ describe('editEntryPatch', () => {
     })
   })
 
+  it('sends a corrected payment method on a settled entry', () => {
+    const paid = values({ status: 'paid', paymentMethod: 'pix' })
+    expect(editEntryPatch(paid, { ...paid, paymentMethod: ' dinheiro ' })).toEqual({
+      payment_method: 'dinheiro',
+    })
+  })
+
+  it('sends an emptied payment method, which is how the API is told to clear it', () => {
+    const paid = values({ status: 'paid', paymentMethod: 'pix' })
+    expect(editEntryPatch(paid, { ...paid, paymentMethod: '' })).toEqual({ payment_method: '' })
+  })
+
+  // The field is hidden while the status is pending, so whatever the input was
+  // holding is not an edit the user made — and the server drops the method with
+  // the payment date anyway.
+  it('does not send a payment method when the entry is being reopened', () => {
+    const paid = values({ status: 'paid', paymentMethod: 'pix' })
+    const patch = editEntryPatch(paid, { ...paid, status: 'pending' })
+    expect(patch).toEqual({ payment_status: 'pending' })
+    expect('payment_method' in patch).toBe(false)
+  })
+
   // Origin is meaningless on money going out: the server drops it, so sending
   // one alongside the type change would be noise.
   it('does not send an origin when the entry becomes an expense', () => {
