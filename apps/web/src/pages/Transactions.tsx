@@ -436,7 +436,7 @@ export default function Transactions() {
               )}
               <PaymentList
                 groups={groups}
-                onMarkPaid={entry => markPaid.mutate(entry)}
+                onMarkPaid={(entry, method) => markPaid.mutate({ entry, method })}
                 onDelete={entry => deleteEntry.mutate(entry)}
               />
               {!rangeMode && browse.hasPreviousPage && (

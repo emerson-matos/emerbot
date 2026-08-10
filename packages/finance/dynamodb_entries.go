@@ -49,13 +49,18 @@ type entryItem struct {
 	DueDate          string `dynamodbav:"DueDate"` // RFC3339 or ""
 	PaymentStatus    string `dynamodbav:"PaymentStatus"`
 	PaymentDate      string `dynamodbav:"PaymentDate"` // RFC3339 or ""
-	Supplier         string `dynamodbav:"Supplier"`
-	Source           string `dynamodbav:"Source"`
-	CreatedAt        string `dynamodbav:"CreatedAt"`
-	UpdatedAt        string `dynamodbav:"UpdatedAt"`
-	RecurrenceID     string `dynamodbav:"RecurrenceID,omitempty"`
-	RecurrenceIndex  int    `dynamodbav:"RecurrenceIndex,omitempty"`
-	RecurrenceTotal  int    `dynamodbav:"RecurrenceTotal,omitempty"`
+	// PaymentMethod is the user's own words for how this was settled, and is
+	// empty on every entry written before ADR-026 — an absent attribute
+	// unmarshals to "", which is exactly the right reading, so there is no
+	// backfill. Nothing queries or filters on it.
+	PaymentMethod   string `dynamodbav:"PaymentMethod"`
+	Supplier        string `dynamodbav:"Supplier"`
+	Source          string `dynamodbav:"Source"`
+	CreatedAt       string `dynamodbav:"CreatedAt"`
+	UpdatedAt       string `dynamodbav:"UpdatedAt"`
+	RecurrenceID    string `dynamodbav:"RecurrenceID,omitempty"`
+	RecurrenceIndex int    `dynamodbav:"RecurrenceIndex,omitempty"`
+	RecurrenceTotal int    `dynamodbav:"RecurrenceTotal,omitempty"`
 }
 
 func entryToItem(e domain.FinancialEntry) entryItem {
@@ -102,6 +107,7 @@ func entryToItem(e domain.FinancialEntry) entryItem {
 		DueDate:          dueDate,
 		PaymentStatus:    status,
 		PaymentDate:      payDate,
+		PaymentMethod:    e.PaymentMethod,
 		Supplier:         e.Supplier,
 		Source:           string(e.Source),
 		CreatedAt:        e.CreatedAt.UTC().Format(time.RFC3339),
@@ -159,6 +165,7 @@ func itemToEntry(item entryItem) (domain.FinancialEntry, error) {
 		DueDate:         dueDate,
 		PaymentStatus:   domain.PaymentStatus(item.PaymentStatus),
 		PaymentDate:     payDate,
+		PaymentMethod:   item.PaymentMethod,
 		Supplier:        item.Supplier,
 		Source:          source,
 		CreatedAt:       createdAt,

@@ -81,6 +81,8 @@ export interface EditEntryValues extends EntryFormValues {
   dueDate: string
   status: 'pending' | 'paid'
   supplier: string
+  /** Free text, "" when the entry does not say how it was settled. */
+  paymentMethod: string
 }
 
 export function entryToEditValues(entry: Entry): EditEntryValues {
@@ -90,6 +92,7 @@ export function entryToEditValues(entry: Entry): EditEntryValues {
     dueDate: entry.DueDate ?? '',
     status: entry.PaymentStatus,
     supplier: entry.Supplier,
+    paymentMethod: entry.PaymentMethod ?? '',
   }
 }
 
@@ -124,6 +127,15 @@ export function editEntryPatch(
   // worst.
   if (current.type === 'income' && current.origin !== initial.origin) {
     patch.origin = current.origin as IncomeOrigin
+  }
+
+  // The form of payment only exists on a settled entry, and the form hides the
+  // field while the status is pending — so a lançamento being reopened must not
+  // also send whatever the input happened to be holding. The server clears it
+  // with the payment date anyway; not sending it keeps the patch honest about
+  // what the user actually touched.
+  if (current.status === 'paid' && current.paymentMethod.trim() !== initial.paymentMethod.trim()) {
+    patch.payment_method = current.paymentMethod.trim()
   }
 
   return patch

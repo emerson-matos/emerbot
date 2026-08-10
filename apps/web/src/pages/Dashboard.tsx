@@ -248,7 +248,7 @@ export default function Dashboard() {
       <TransactionsTable
         entries={entries}
         isLoading={entriesQuery.isLoading}
-        onMarkPaid={entry => markPaid.mutate(entry)}
+        onMarkPaid={(entry, method) => markPaid.mutate({ entry, method })}
         onDelete={entry => deleteEntry.mutate(entry)}
       />
     </div>

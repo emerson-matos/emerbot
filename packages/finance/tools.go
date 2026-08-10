@@ -229,27 +229,29 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"type":        {Type: genai.TypeString, Enum: []string{"expense", "income"}},
-				"amount":      {Type: genai.TypeNumber, Description: "Valor em reais (ex: 500.00)"},
-				"category":    {Type: genai.TypeString, Description: categoryArgDescription},
-				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
-				"description": {Type: genai.TypeString, Description: "Descrição curta do lançamento"},
-				"date":        {Type: genai.TypeString, Description: "Data da transação YYYY-MM-DD (padrão: hoje)"},
-				"due_date":    {Type: genai.TypeString, Description: "Data de vencimento YYYY-MM-DD (para contas a pagar/receber)"},
-				"is_pending":  {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
+				"type":            {Type: genai.TypeString, Enum: []string{"expense", "income"}},
+				"amount":          {Type: genai.TypeNumber, Description: "Valor em reais (ex: 500.00)"},
+				"category":        {Type: genai.TypeString, Description: categoryArgDescription},
+				"origem":          {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
+				"description":     {Type: genai.TypeString, Description: "Descrição curta do lançamento"},
+				"date":            {Type: genai.TypeString, Description: "Data da transação YYYY-MM-DD (padrão: hoje)"},
+				"due_date":        {Type: genai.TypeString, Description: "Data de vencimento YYYY-MM-DD (para contas a pagar/receber)"},
+				"is_pending":      {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
+				"forma_pagamento": {Type: genai.TypeString, Description: paymentMethodArgDescription},
 			},
 			Required: []string{"type", "amount", "category", "is_pending"},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
 			var args struct {
-				Type        string  `json:"type"`
-				Amount      float64 `json:"amount"`
-				Category    string  `json:"category"`
-				Origin      string  `json:"origem"`
-				Description string  `json:"description"`
-				Date        string  `json:"date"`
-				DueDate     string  `json:"due_date"`
-				IsPending   bool    `json:"is_pending"`
+				Type          string  `json:"type"`
+				Amount        float64 `json:"amount"`
+				Category      string  `json:"category"`
+				Origin        string  `json:"origem"`
+				Description   string  `json:"description"`
+				Date          string  `json:"date"`
+				DueDate       string  `json:"due_date"`
+				IsPending     bool    `json:"is_pending"`
+				PaymentMethod string  `json:"forma_pagamento"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return nil, fmt.Errorf("parse args: %w", err)
@@ -308,6 +310,11 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				entry.TransactionDate = domain.NewCalendarDate(d)
 			}
 
+			method, ok := domain.CleanPaymentMethod(args.PaymentMethod)
+			if !ok {
+				return nil, fmt.Errorf("forma_pagamento muito longa (máximo %d caracteres)", domain.MaxPaymentMethodLen)
+			}
+
 			entry.PaymentStatus = domain.PaymentStatusPaid
 			if args.IsPending {
 				entry.PaymentStatus = domain.PaymentStatusPending
@@ -318,6 +325,10 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 			} else {
 				date := entry.TransactionDate
 				entry.PaymentDate = &date
+				// Only on a settled entry: a bill nobody has paid cannot say how
+				// it was paid, and the model does hand a forma_pagamento to a
+				// "vou pagar amanhã no pix" now and then.
+				entry.PaymentMethod = method
 			}
 
 			if err := store.SaveEntry(ctx, entry); err != nil {
@@ -329,6 +340,10 @@ func createEntryTool(store Store, loc *time.Location) Tool {
 				"status":   "created",
 				"amount":   centavosToReais(entry.Amount),
 				"category": entry.Category,
+				// Echoed so the confirmation can say "lancei, pago no pix"
+				// without the model reciting an argument it might have
+				// mangled — and empty when nobody said how it was paid.
+				"forma_pagamento": entry.PaymentMethod,
 				// The label as the user wrote it, so the confirmation says "Venda
 				// Atacado" rather than reading the slug out loud.
 				"category_label": CategoryLabel(cat.labels(), entry.Category),
@@ -349,27 +364,29 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"entry_id":    {Type: genai.TypeString, Description: "ID do lançamento a editar"},
-				"amount":      {Type: genai.TypeNumber, Description: "Novo valor em reais (ex: 500.00)"},
-				"category":    {Type: genai.TypeString, Description: "Nova categoria do lançamento. " + categoryArgDescription},
-				"description": {Type: genai.TypeString, Description: "Nova descrição do lançamento"},
-				"origem":      {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
-				"date":        {Type: genai.TypeString, Description: "Nova data da transação YYYY-MM-DD"},
-				"due_date":    {Type: genai.TypeString, Description: "Nova data de vencimento YYYY-MM-DD"},
-				"is_pending":  {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
+				"entry_id":        {Type: genai.TypeString, Description: "ID do lançamento a editar"},
+				"amount":          {Type: genai.TypeNumber, Description: "Novo valor em reais (ex: 500.00)"},
+				"category":        {Type: genai.TypeString, Description: "Nova categoria do lançamento. " + categoryArgDescription},
+				"description":     {Type: genai.TypeString, Description: "Nova descrição do lançamento"},
+				"origem":          {Type: genai.TypeString, Enum: createOriginSlugs(), Description: originArgDescription},
+				"date":            {Type: genai.TypeString, Description: "Nova data da transação YYYY-MM-DD"},
+				"due_date":        {Type: genai.TypeString, Description: "Nova data de vencimento YYYY-MM-DD"},
+				"is_pending":      {Type: genai.TypeBoolean, Description: "true = a pagar/receber, false = já pago/recebido"},
+				"forma_pagamento": {Type: genai.TypeString, Description: paymentMethodArgDescription},
 			},
 			Required: []string{"entry_id"},
 		},
 		Handler: func(ctx context.Context, userID string, raw json.RawMessage) (any, error) {
 			var args struct {
-				EntryID     string  `json:"entry_id"`
-				Amount      float64 `json:"amount"`
-				Category    string  `json:"category"`
-				Origin      string  `json:"origem"`
-				Description string  `json:"description"`
-				Date        string  `json:"date"`
-				DueDate     string  `json:"due_date"`
-				IsPending   *bool   `json:"is_pending"`
+				EntryID       string  `json:"entry_id"`
+				Amount        float64 `json:"amount"`
+				Category      string  `json:"category"`
+				Origin        string  `json:"origem"`
+				Description   string  `json:"description"`
+				Date          string  `json:"date"`
+				DueDate       string  `json:"due_date"`
+				IsPending     *bool   `json:"is_pending"`
+				PaymentMethod string  `json:"forma_pagamento"`
 			}
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return nil, fmt.Errorf("parse args: %w", err)
@@ -446,19 +463,35 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 					}
 				}
 			}
+			// "Paguei a conta do fornecedor no pix" is one message: the status
+			// and the form of payment arrive together, so this runs after the
+			// status is settled. Normalize below drops it if the entry is (or
+			// went back to) pending.
+			if args.PaymentMethod != "" {
+				method, ok := domain.CleanPaymentMethod(args.PaymentMethod)
+				if !ok {
+					return nil, fmt.Errorf("forma_pagamento muito longa (máximo %d caracteres)", domain.MaxPaymentMethodLen)
+				}
+				entry.PaymentMethod = method
+			}
 
 			entry.UpdatedAt = time.Now().UTC()
+			// The in-memory store writes whatever it is handed (only the
+			// DynamoDB one validates), so the invariants are settled here — the
+			// same thing the dashboard's PUT handler does before saving.
+			entry.Normalize()
 
 			if err := store.UpdateEntry(ctx, previous, entry); err != nil {
 				return nil, fmt.Errorf("update entry: %w", err)
 			}
 
 			return map[string]any{
-				"entry_id":       entry.EntryID,
-				"status":         "updated",
-				"amount":         centavosToReais(entry.Amount),
-				"category":       entry.Category,
-				"category_label": CategoryLabel(cat.labels(), entry.Category),
+				"entry_id":        entry.EntryID,
+				"status":          "updated",
+				"amount":          centavosToReais(entry.Amount),
+				"category":        entry.Category,
+				"forma_pagamento": entry.PaymentMethod,
+				"category_label":  CategoryLabel(cat.labels(), entry.Category),
 			}, nil
 		},
 	}

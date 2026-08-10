@@ -12,7 +12,7 @@ import PaymentList from "./payments/PaymentList";
 interface Props {
   entries: Entry[];
   isLoading?: boolean;
-  onMarkPaid?: (entry: Entry) => void;
+  onMarkPaid?: (entry: Entry, method: string) => void;
   onDelete?: (entry: Entry) => void;
 }
 

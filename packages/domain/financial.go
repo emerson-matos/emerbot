@@ -2,7 +2,9 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -49,6 +51,21 @@ const (
 	OriginRestituicao        IncomeOrigin = "restituicao"
 	OriginOutros             IncomeOrigin = "outros"
 )
+
+// MaxPaymentMethodLen bounds FinancialEntry.PaymentMethod at the edges that
+// accept one — the dashboard API and the agent's tools. Validate deliberately
+// does not enforce it (see ADR-026): it runs on every read, so a stored value
+// that somehow got past an edge must not turn a whole ListEntries into an
+// error. A label longer than this is not a means of payment, it is a sentence.
+const MaxPaymentMethodLen = 60
+
+// CleanPaymentMethod trims s and reports whether it is short enough to accept.
+// Both edges use it so "pix " and "pix" are never two different answers, and so
+// the limit is one number rather than one per handler.
+func CleanPaymentMethod(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	return s, utf8.RuneCountInString(s) <= MaxPaymentMethodLen
+}
 
 func NormalizeSource(s string) EntrySource {
 	switch EntrySource(s) {
@@ -138,9 +155,21 @@ type FinancialEntry struct {
 	// Origin is where the money came from, for income entries; empty on
 	// expenses. Empty on an income entry means a legacy row the backfill never
 	// reached — IsRevenue treats it as not-a-sale.
-	Origin    IncomeOrigin
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Origin IncomeOrigin
+	// PaymentMethod is how this was paid or received, in the user's own words
+	// ("pix", "dinheiro", "cartão da loja") — see ADR-026. Free text on purpose:
+	// it exists so the person reading their own ledger recognises the movement,
+	// not so the system can total anything by it. Nothing here or downstream
+	// groups, filters or sums by this field, and turning it into an enum would
+	// be a migration, not a cleanup.
+	//
+	// It is a fact about the settlement, so it lives with PaymentDate: Normalize
+	// clears both when an entry goes back to pending. Empty is the ordinary
+	// state — every entry written before the field existed has none, and filling
+	// one in is always optional.
+	PaymentMethod string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 
 	// RecurrenceID groups occurrences created together as one series. Empty
 	// for one-off entries, which is every entry written since the /recorrente
@@ -165,6 +194,7 @@ type NewFinancialEntryInput struct {
 	PaymentStatus   PaymentStatus
 	Source          EntrySource
 	Origin          IncomeOrigin
+	PaymentMethod   string
 	RecurrenceID    string
 	RecurrenceIndex int
 	RecurrenceTotal int
@@ -178,7 +208,8 @@ func NewFinancialEntry(input NewFinancialEntryInput) (FinancialEntry, error) {
 		TransactionDate: input.TransactionDate, DueDate: input.DueDate, PaymentDate: input.PaymentDate,
 		Amount: input.Amount, Category: input.Category, Description: input.Description, Supplier: input.Supplier,
 		Type: input.Type, PaymentStatus: input.PaymentStatus, Source: input.Source, Origin: input.Origin,
-		CreatedAt: now, UpdatedAt: now,
+		PaymentMethod: input.PaymentMethod,
+		CreatedAt:     now, UpdatedAt: now,
 		RecurrenceID: input.RecurrenceID, RecurrenceIndex: input.RecurrenceIndex, RecurrenceTotal: input.RecurrenceTotal,
 	}
 	e.Normalize()
@@ -194,7 +225,13 @@ func (e *FinancialEntry) Normalize() {
 	}
 	if e.PaymentStatus == PaymentStatusPending {
 		e.PaymentDate = nil
+		// The means of payment is a fact about the settlement, so it goes with
+		// the date it happened on. Un-paying a bill that was settled "no pix"
+		// and keeping the "pix" would leave the ledger saying how something was
+		// paid that nobody paid.
+		e.PaymentMethod = ""
 	}
+	e.PaymentMethod = strings.TrimSpace(e.PaymentMethod)
 	// An origin on an expense is meaningless — "where did this money come
 	// from" has no answer for money going out.
 	if e.Type == EntryTypeExpense {

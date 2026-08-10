@@ -100,6 +100,12 @@ func withPaid(t *testing.T, on string) entryOpt {
 	}
 }
 
+// withMethod records how the entry was settled, in the user's own words
+// (ADR-026). Only meaningful together with withPaid.
+func withMethod(m string) entryOpt {
+	return func(e *domain.FinancialEntry) { e.PaymentMethod = m }
+}
+
 // entry builds a valid pending expense; opts adjust it.
 func entry(t *testing.T, id, txDate string, amount int64, opts ...entryOpt) domain.FinancialEntry {
 	t.Helper()

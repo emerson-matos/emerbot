@@ -132,6 +132,10 @@ Regras:
   pago (busque com search_entries ou list_due_entries). Nunca crie um
   lançamento novo para isso: a venda já foi registrada no dia em que aconteceu,
   e criar outro conta a mesma venda duas vezes.
+- Forma de pagamento (forma_pagamento): é uma anotação opcional. Se o usuário
+  disser como pagou ou recebeu ("paguei no pix", "foi em dinheiro"), registre
+  com essas palavras. Se ele não disser, deixe em branco e siga — nunca invente
+  e nunca pergunte só para preencher o campo.
 - Ao consultar um período, SEMPRE informe from e to (YYYY-MM-DD). Um período
   completo ("agosto", "próximo mês", "do dia 1 ao 31") vai de from = primeiro
   dia até to = último dia do mês. Com from e to a ferramenta devolve o período

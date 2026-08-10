@@ -220,9 +220,12 @@ type InfiniteEntriesData = { pages: EntriesPage[]; pageParams: unknown[] };
 function markEntryPaid<T extends EntriesPage | InfiniteEntriesData>(
   old: T,
   entryID: string,
+  method: string,
 ): T {
   const flip = (e: Entry) =>
-    e.EntryID === entryID ? { ...e, PaymentStatus: "paid" as const } : e;
+    e.EntryID === entryID
+      ? { ...e, PaymentStatus: "paid" as const, PaymentMethod: method }
+      : e;
 
   if ("pages" in old) {
     return {
@@ -233,30 +236,42 @@ function markEntryPaid<T extends EntriesPage | InfiniteEntriesData>(
   return { ...old, entries: old.entries.map(flip) };
 }
 
-// Takes the whole entry, not an id: an entry is addressed by its transaction
-// date together with its id (see api.entries), and the caller always has the
-// row it is acting on.
+/**
+ * Quits a lançamento, optionally recording how it was settled.
+ *
+ * Takes the whole entry, not an id: an entry is addressed by its transaction
+ * date together with its id (see api.entries), and the caller always has the
+ * row it is acting on. The method is free text and "" means the user left it
+ * blank — which is the ordinary case, and is sent as-is rather than omitted so
+ * quitting an entry never inherits a form of payment from an earlier attempt.
+ */
+export interface MarkPaidInput {
+  entry: Entry;
+  method: string;
+}
+
 export function useMarkPaidMutation() {
   const queryClient = useQueryClient();
   const entriesKey = { queryKey: ["entries"] };
 
   return useMutation({
-    mutationFn: (entry: Entry) =>
+    mutationFn: ({ entry, method }: MarkPaidInput) =>
       api.entries.update(entry.TransactionDate, entry.EntryID, {
         payment_status: "paid",
+        payment_method: method,
       }),
-    onMutate: async ({ EntryID: entryID }: Entry) => {
+    onMutate: async ({ entry, method }: MarkPaidInput) => {
       await queryClient.cancelQueries(entriesKey);
       const previous = queryClient.getQueriesData<
         EntriesPage | InfiniteEntriesData
       >(entriesKey);
       queryClient.setQueriesData<EntriesPage | InfiniteEntriesData | undefined>(
         entriesKey,
-        (old) => (old ? markEntryPaid(old, entryID) : old),
+        (old) => (old ? markEntryPaid(old, entry.EntryID, method) : old),
       );
       return { previous };
     },
-    onError: (_err, _entry, context) => {
+    onError: (_err, _input, context) => {
       context?.previous?.forEach(([key, data]) => {
         queryClient.setQueryData(key, data);
       });

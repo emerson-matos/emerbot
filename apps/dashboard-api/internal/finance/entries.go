@@ -95,6 +95,7 @@ type entryResponse struct {
 	Supplier                         string
 	Type                             domain.EntryType
 	PaymentStatus                    domain.PaymentStatus
+	PaymentMethod                    string
 	Source                           domain.EntrySource
 	Origin                           domain.IncomeOrigin
 	CreatedAt                        time.Time
@@ -104,7 +105,7 @@ type entryResponse struct {
 }
 
 func responseEntry(e domain.FinancialEntry) entryResponse {
-	r := entryResponse{UserID: e.UserID, EntryID: e.EntryID, TransactionDate: e.TransactionDate.String(), Amount: e.Amount, Category: e.Category, Description: e.Description, Supplier: e.Supplier, Type: e.Type, PaymentStatus: e.PaymentStatus, Source: e.Source, Origin: e.Origin, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, RecurrenceID: e.RecurrenceID, RecurrenceIndex: e.RecurrenceIndex, RecurrenceTotal: e.RecurrenceTotal}
+	r := entryResponse{UserID: e.UserID, EntryID: e.EntryID, TransactionDate: e.TransactionDate.String(), Amount: e.Amount, Category: e.Category, Description: e.Description, Supplier: e.Supplier, Type: e.Type, PaymentStatus: e.PaymentStatus, PaymentMethod: e.PaymentMethod, Source: e.Source, Origin: e.Origin, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, RecurrenceID: e.RecurrenceID, RecurrenceIndex: e.RecurrenceIndex, RecurrenceTotal: e.RecurrenceTotal}
 	if e.DueDate != nil {
 		s := e.DueDate.String()
 		r.DueDate = &s
@@ -193,6 +194,10 @@ type createEntryRequest struct {
 	Description   string `json:"description"`
 	DueDate       string `json:"due_date"`       // "YYYY-MM-DD" or ""
 	PaymentStatus string `json:"payment_status"` // "pending" | "paid"
+	// PaymentMethod is how it was paid or received, in the user's own words
+	// (ADR-026). Only meaningful on an entry that is already settled — on a
+	// pending one domain.Normalize drops it, the same as the payment date.
+	PaymentMethod string `json:"payment_method"`
 	Supplier      string `json:"supplier"`
 	Source        string `json:"source"`
 	// Origin is where the money came from, for income entries. Empty defaults
@@ -295,6 +300,11 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	method, ok := domain.CleanPaymentMethod(req.PaymentMethod)
+	if !ok {
+		httpx.Error(w, tooLongMethodMessage, http.StatusBadRequest)
+		return
+	}
 	entry, err := domain.NewFinancialEntry(domain.NewFinancialEntryInput{
 		UserID:          claims.UserID,
 		TransactionDate: date,
@@ -304,6 +314,7 @@ func (h *EntriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description:     req.Description,
 		DueDate:         dueDate,
 		PaymentStatus:   status,
+		PaymentMethod:   method,
 		Supplier:        req.Supplier,
 		Source:          source,
 		Origin:          origin,
@@ -360,9 +371,18 @@ type updateEntryRequest struct {
 	Description   *string `json:"description"`
 	DueDate       *string `json:"due_date"`       // "YYYY-MM-DD", or "" to clear
 	PaymentStatus *string `json:"payment_status"` // "pending" | "paid"
+	// PaymentMethod is how it was settled, free text (ADR-026). "" clears it.
+	// This is the field the "marcar como paga" dialog sends beside
+	// payment_status, so an entry usually gets its status and its method in the
+	// same request.
+	PaymentMethod *string `json:"payment_method"`
 	Supplier      *string `json:"supplier"`
 	Origin        *string `json:"origin"`
 }
+
+// tooLongMethodMessage is shared by both handlers so the two ways into the
+// field answer a too-long value the same way.
+var tooLongMethodMessage = fmt.Sprintf("payment_method must be at most %d characters", domain.MaxPaymentMethodLen)
 
 // apply writes the patch onto e, reporting the first field the client got
 // wrong.
@@ -455,6 +475,17 @@ func (req updateEntryRequest) apply(e *domain.FinancialEntry, loc *time.Location
 			return errors.New("payment_status must be 'pending' or 'paid'")
 		}
 		e.PaymentStatus = status
+	}
+	// Sent beside payment_status by the "marcar como paga" dialog, so it is
+	// applied after the status. A patch that reopens an entry *and* names a
+	// method ends up with neither: Normalize, which the caller runs before
+	// validating, drops the method with the date.
+	if req.PaymentMethod != nil {
+		method, ok := domain.CleanPaymentMethod(*req.PaymentMethod)
+		if !ok {
+			return errors.New(tooLongMethodMessage)
+		}
+		e.PaymentMethod = method
 	}
 	return nil
 }
