@@ -73,6 +73,7 @@ func buildProjection(rates dailyRates, goals GoalProgress, clock monthClock, tod
 	// rest are reachable through the tool rather than shipped as fields.
 	projection.Plan = newPlan(rates, projection, basis, clock, todayRevenue)
 	projection.TodayTarget = projection.Plan.at(rates, clock, clock.today, todayRevenue)
+	projection.PlannedClose = projection.plannedClose(rates, clock, todayRevenue)
 
 	if projection.Target <= 0 {
 		return projection
@@ -89,11 +90,26 @@ func buildProjection(rates dailyRates, goals GoalProgress, clock monthClock, tod
 	return projection
 }
 
-// newPlan distributes the gap over the days the month has left. The guards run
-// in the order a person would ask them: a month that has ended has no day left
-// to sell on, a month with no goal has nothing to take a share of, a goal
-// already met needs no share, and only then does the history behind the days
-// matter.
+// newPlan distributes the gap over the days the month has left, and never asks
+// a day for less than that day of the week usually brings. The guards run in
+// the order a person would ask them: a month that has ended has no day left to
+// sell on, a month with no goal has nothing to take a share of, and only then
+// does the history behind the days matter.
+//
+// The floor is the whole point of the second half. Distributing the gap and
+// nothing else meant that a month running ahead asked each day for *less* than
+// it habitually sells — a Wednesday worth R$ 1.000,00 asked for R$ 820,00 —
+// and a month whose goal was already met asked for nothing at all. Both are
+// read as permission to trade below the pharmacy's own rhythm, and the second
+// one is worse than the first: at 99% of the pace the day was asked for almost
+// its average, at 101% it was asked for nothing. A target is a floor under the
+// day, not a ceiling over it. See ADR-025.
+//
+// So the goal-met case is no longer an absence: it is a plan at exactly the
+// rhythm, and the good news travels as Plan.GapFactor (below 1, or 0 when there
+// is no gap left at all) rather than as a missing number. What the day is asked
+// for is the greater of the two, which is what makes the plan close the month
+// *and* keep the average.
 //
 // There is exactly one plan per analysis, and it is what makes today's ask and
 // any other day's slices of one distribution rather than rival forecasts — see
@@ -106,23 +122,63 @@ func newPlan(rates dailyRates, projection Projection, basis ProjectionBasis, clo
 		return Plan{State: DayTargetNoGoal}
 	}
 
-	// Measured from what the till held when the day opened: totalHistAvg prices
-	// today at a whole day's average, so a numerator net of the morning shrank
-	// the target hour by hour against a whole-day Histórico.
-	missing := projection.Target - (projection.Actual - todayRevenue)
-	if missing <= 0 {
-		return Plan{State: DayTargetGoalMet}
-	}
-
 	var totalHistAvg int64
 	for day := clock.today; day <= clock.total; day++ {
 		totalHistAvg += rates.avg[int(clock.weekdayOf(day))]
 	}
+	// Asked before the gap is priced, and not after as it used to be: the floor
+	// *is* the weekday average, so a window with nothing in it has no ask to
+	// make either way. A goal already met used to short-circuit above this
+	// check and reported "meta_batida" over a ledger that had never traded.
 	if basis == ProjectionNoBasis || totalHistAvg <= 0 {
 		return Plan{State: DayTargetNoHistory}
 	}
 
-	return Plan{State: DayTargetOK, Factor: float64(missing) / float64(totalHistAvg)}
+	// Measured from what the till held when the day opened: totalHistAvg prices
+	// today at a whole day's average, so a numerator net of the morning shrank
+	// the target hour by hour against a whole-day Histórico.
+	//
+	// Clamped at zero because a goal already met is a gap of nothing, not a
+	// negative one — a negative factor would ask the remaining days for less
+	// than nothing.
+	missing := max(0, projection.Target-(projection.Actual-todayRevenue))
+	gap := float64(missing) / float64(totalHistAvg)
+
+	return Plan{State: DayTargetOK, GapFactor: gap, Factor: max(1, gap)}
+}
+
+// plannedClose is where the month lands if every day still to come is sold at
+// the ask the plan makes of it — as opposed to Projected, which is where it
+// lands if they merely trade as usual.
+//
+// The two are different questions and only one of them was being answered. A
+// pharmacy running ahead of its goal had a projection built on its averages and
+// a plan that asked for less than those averages, so "se eu bater a meta todo
+// dia, fecho em quanto?" resolved to the goal itself — below what the pharmacy
+// would close at by doing nothing differently. With the floor in place the plan
+// can only close the month at or above both, and this is that figure:
+//
+//	PlannedClose == max(Projected, meta do mês)
+//
+// It sums the days' own rounded asks rather than multiplying the total average
+// by the factor, so it is exactly what get_meta_do_dia would add up to — the
+// month's close and its days cannot disagree by a rounding.
+//
+// The max against Projected covers the one day that is not priced by the plan:
+// today, when it has already sold more than its weekday usually brings. Projected
+// counts what the till actually holds there; the plan still asks for a whole
+// ordinary day, and a projection must never fall below takings already banked.
+func (p Projection) plannedClose(rates dailyRates, clock monthClock, todayRevenue int64) int64 {
+	if p.Plan.State != DayTargetOK {
+		return p.Projected
+	}
+	var asked int64
+	for day := clock.today; day <= clock.total; day++ {
+		asked += roundToInt64(float64(rates.avg[int(clock.weekdayOf(day))]) * p.Plan.Factor)
+	}
+	// Measured from the morning, like every whole-day ask here: what today has
+	// already sold is inside Actual and inside its own target.
+	return max(p.Projected, p.Actual-todayRevenue+asked)
 }
 
 // at prices one day of the analysed month against the plan: that weekday's own
@@ -191,8 +247,31 @@ func (p Plan) at(rates dailyRates, clock monthClock, day int, realized int64) Da
 
 	target.Target = roundToInt64(float64(historical) * p.Factor)
 	target.Factor = p.Factor
+	target.Source = p.source()
 	target.Delta, target.DeltaPercent, target.Status = compareToUsual(target.Target, historical)
 	return target
+}
+
+// source says what the ask is: a share of what the month still needs, or the
+// day's own rhythm holding the floor under it — and, when it is the floor,
+// whether there is anything left to chase.
+//
+// The amounts cannot answer that. Once the plan is floored, an ask equal to the
+// weekday average is what a month in perfect step and a month already past its
+// goal both produce, and "a meta de hoje é R$ 1.000,00" reads identically in
+// each — the first is a month to keep steady, the second one to be told it has
+// arrived. Naming it is the same rule DayBasis follows for the other axis.
+func (p Plan) source() DayTargetSource {
+	switch {
+	case p.GapFactor > 1:
+		return TargetFromGap
+	case p.GapFactor <= 0:
+		// The gap is exactly nothing, which newPlan clamps at zero: the goal is
+		// met and every remaining day is asked for its rhythm alone.
+		return TargetGoalMet
+	default:
+		return TargetFromAverage
+	}
 }
 
 // compareToUsual grades an amount against what its weekday usually brings.

@@ -454,6 +454,19 @@ function ProjectionSection({ projection, faturamento, period }: {
               {projectionBasisNote[projection.basis]}
             </p>
           )}
+          {/* The other close, and a different question: the figure above is where
+              the month lands if the days simply trade as usual, this is where it
+              lands if each one hits the ask on the strip below. Only worth a line
+              when they differ — on a month whose plan is the rhythm itself they
+              are the same number, and printing it twice reads as a contradiction. */}
+          {projection.plannedClose > projection.projected && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Batendo a meta de cada dia:{' '}
+              <span className="font-medium text-foreground tabular-nums">
+                {formatBRL(projection.plannedClose)}
+              </span>
+            </p>
+          )}
         </div>
 
         <GoalBar

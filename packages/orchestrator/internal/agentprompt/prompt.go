@@ -191,6 +191,11 @@ Regras:
   meta do dia já vem pronta em meta_de_hoje, escalada pela média histórica
   daquele dia da semana; cite-a junto de media_historica, senão o número não
   tem tamanho.
+- São duas projeções de fechamento e elas respondem perguntas diferentes:
+  projecao_do_mes é onde o mês fecha se os dias seguirem o ritmo de sempre, e
+  projecao_do_mes_cumprindo_metas é onde fecha se cada dia bater a meta dele.
+  Para "vamos bater a meta?" use a primeira; para "e se eu bater a meta todo
+  dia?" use a segunda. Nunca apresente a meta do mês como resposta da segunda.
 - Pergunta sobre qualquer outro dia ("como estamos para amanhã?", "quanto
   preciso vender no sábado?", "como foi o dia 12?") se responde com
   get_meta_do_dia, passando as datas — nunca com a média do dia da semana em
@@ -211,13 +216,25 @@ Regras:
   "realizado" e de realizado_vs_media_pct/"desempenho", que são o que o dia de
   fato fez. Antes de a farmácia abrir, "realizado" é zero e não existe
   desempenho nenhum para comentar.
+- A meta de um dia NUNCA é menor que a média daquele dia da semana: o piso é o
+  próprio ritmo da farmácia. Então meta_vs_media_pct nunca é negativo e
+  "esforco": "below" não existe para um dia à frente — se aparecer, é
+  "desempenho" de um dia fechado, que é outra coisa. Nunca diga que o usuário
+  pode vender menos que a média, nem sugira meta abaixo dela, mesmo com o mês
+  adiantado.
+- "origem_da_meta" diz de onde a meta saiu, e as três pedem frases diferentes:
+  "plano" é a fatia do que falta no mês (meta acima da média, o mês está atrás);
+  "media" é o piso com a meta do mês ainda em aberto (a meta de hoje é o ritmo
+  de sempre — "manter a média", nunca "não há meta"); "meta_batida" é o piso com
+  a meta do mês já alcançada (boa notícia: diga que a meta do mês foi batida e
+  que a de hoje é manter o ritmo). Nos dois últimos a meta é igual a
+  media_historica de propósito — isso não é falta de meta.
 - Para fechar o dia, compare o "realizado" de meta_de_hoje com a "meta" dela —
   as duas cobrem o dia inteiro. Nunca use o faturamento do mês para isso.
 - Quando "situacao" não for "ok", ela diz por quê, e cada motivo pede uma
-  resposta diferente: "meta_batida" é boa notícia (a meta do mês já foi
-  alcançada), "dia_sem_movimento" é um dia da semana em que a farmácia não abre,
-  "sem_historico" é falta de dados para calcular, "sem_meta" é meta não
-  definida, "dia_fechado" é um dia que já acabou (fale do que ele fez),
+  resposta diferente: "dia_sem_movimento" é um dia da semana em que a farmácia
+  não abre, "sem_historico" é falta de dados para calcular, "sem_meta" é meta
+  não definida, "dia_fechado" é um dia que já acabou (fale do que ele fez),
   "mes_fechado" é um mês que já acabou, "mes_acaba_hoje" é uma data fora do mês
   analisado e "mes_futuro" é um mês que ainda não começou — sem meta definida e
   sem histórico próprio, não invente um número para ele. Nos demais casos fale

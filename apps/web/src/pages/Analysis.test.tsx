@@ -81,6 +81,8 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
       remaining: 593001,
       projected: 3370501,
       target: 3600000,
+      // Meeting every ask lands on the goal; trading as usual lands short of it.
+      plannedClose: 3600000,
       gap: 229499,
       onTrack: false,
       daysRemaining: 5,
@@ -100,10 +102,11 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
         deltaPercent: 0.084,
         factor: 1.084,
         status: "above",
+        source: "plano",
       },
       // The distribution today's ask is one slice of. Every other day of the
       // month is priced from it — see the backend's get_meta_do_dia.
-      plan: { state: "ok", factor: 1.084 },
+      plan: { state: "ok", factor: 1.084, gapFactor: 1.084 },
     },
     history: [],
     cashPosition: {
@@ -222,25 +225,57 @@ describe("Analysis page", () => {
     expect(screen.queryByText(/dia útil/)).not.toBeInTheDocument();
   });
 
-   it("says a lighter day is below the average, not a negative amount above it", () => {
+  // A month running ahead is asked for its ordinary day, and the card says so
+  // as a floor rather than as slack. This used to assert the opposite — "R$
+  // 200,00 abaixo do esperado" — which is the page telling a pharmacy it may
+  // sell less than an ordinary Monday (ADR-025).
+  it("words an ask at the average as the rhythm, never as a lighter day", () => {
     const data = analysisData();
     data.projection = {
       ...data.projection,
       todayTarget: {
         ...data.projection.todayTarget,
         state: "ok",
-        target: 91700,
+        target: 111700,
         historical: 111700,
-        delta: -20000,
-        deltaPercent: -0.179,
-        factor: 0.821,
-        status: "below",
+        delta: 0,
+        deltaPercent: 0,
+        factor: 1,
+        status: "on_track",
+        source: "media",
       },
     };
     renderWith(data);
 
-    expect(screen.getByText("R$ 200,00 abaixo do esperado")).toBeInTheDocument();
-    expect(screen.queryByText(/acima do esperado/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("O esperado para o dia — o mês está no ritmo"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/abaixo do esperado/)).not.toBeInTheDocument();
+  });
+
+  // Same figures, different news: the goal being met used to arrive as an absent
+  // target, indistinguishable from "não há histórico".
+  it("says the goal is met when that is why the ask is only the average", () => {
+    const data = analysisData();
+    data.projection = {
+      ...data.projection,
+      todayTarget: {
+        ...data.projection.todayTarget,
+        target: 111700,
+        historical: 111700,
+        delta: 0,
+        deltaPercent: 0,
+        factor: 1,
+        status: "on_track",
+        source: "meta_batida",
+      },
+      plan: { state: "ok", factor: 1, gapFactor: 0 },
+    };
+    renderWith(data);
+
+    expect(
+      screen.getByText("Meta do mês já batida — hoje é manter o ritmo"),
+    ).toBeInTheDocument();
   });
 
   // domingo and sábado are masculine; the sentence used to hardcode "uma".
