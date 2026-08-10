@@ -111,20 +111,29 @@ func (a Analysis) AheadLines() []string {
 // the ask means nothing without it: "R$ 1.480,00" on a Sunday is either a
 // quiet morning or an impossible one depending on what Sundays bring, and the
 // person reading it at seven in the morning is owed which.
+//
+// It switches on Source rather than on Status because the floor collapsed the
+// three readings into two amounts (ADR-025): a day asked for exactly its
+// average is a month in step or a month already home, and the digest is read
+// once, in a hurry, by someone deciding how hard to push today.
+//
+// There is deliberately no "abaixo do que costuma faturar" line any more. It
+// used to fire whenever the month ran ahead, and it told a pharmacy at seven in
+// the morning that it could afford to sell less than an ordinary Wednesday.
 func todayTargetLine(t DayTarget) string {
 	day := weekdayNames[int(t.Day)]
 	article := weekdayWithArticle(t.Day)
-	pct := roundToInt(math.Abs(t.DeltaPercent) * 100)
-	switch t.Status {
-	case PaceAbove:
+	switch t.Source {
+	case TargetFromGap:
+		pct := roundToInt(math.Abs(t.DeltaPercent) * 100)
 		return fmt.Sprintf("Meta de hoje (%s): %s — %d%% acima do que %s costuma faturar (%s).",
 			day, formatBRL(t.Target), pct, article, formatBRL(t.Historical))
-	case PaceBelow:
-		return fmt.Sprintf("Meta de hoje (%s): %s — %d%% abaixo do que %s costuma faturar (%s), o mês está adiantado.",
-			day, formatBRL(t.Target), pct, article, formatBRL(t.Historical))
+	case TargetGoalMet:
+		return fmt.Sprintf("Meta de hoje (%s): %s — a meta do mês já foi batida, então a de hoje é manter o que %s costuma faturar.",
+			day, formatBRL(t.Target), article)
 	default:
-		return fmt.Sprintf("Meta de hoje (%s): %s — em linha com o que %s costuma faturar (%s).",
-			day, formatBRL(t.Target), article, formatBRL(t.Historical))
+		return fmt.Sprintf("Meta de hoje (%s): %s — o que %s costuma faturar; o mês está no ritmo.",
+			day, formatBRL(t.Target), article)
 	}
 }
 
@@ -249,6 +258,14 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		// averages, so the bot and the screen quoted different figures for the
 		// same month.
 		"projecao_do_mes": reais(a.Projection.Projected),
+		// Where the month lands if every day still to come sells what the plan
+		// asks of it, as against the line above — where it lands if they simply
+		// trade as usual. Asked "e se eu bater a meta todo dia?", the model had
+		// only the month's goal to answer with, which on a pharmacy running ahead
+		// is *below* the projection: it was quoting a worse month as the reward
+		// for hitting every target. It never falls below projecao_do_mes now
+		// (ADR-025).
+		"projecao_do_mes_cumprindo_metas": reais(a.Projection.PlannedClose),
 		// How the projection was arrived at, and how much trading it stands on.
 		// Spelled out because the model reads the figure aloud, and a projection
 		// built on a user's first three days must not be quoted with the same
@@ -510,6 +527,12 @@ func dayTargetToolPayload(t DayTarget) map[string]any {
 		payload["meta"] = reais(t.Target)
 		payload["meta_vs_media_pct"] = roundToInt(t.DeltaPercent * 100)
 		payload["esforco"] = string(t.Status)
+		// What the ask is made of. Since the plan is floored at the weekday
+		// average (ADR-025), a meta equal to media_historica is the commonest
+		// answer there is, and the amounts give the model no way to tell the two
+		// months that produce it apart: one is still chasing its goal, the other
+		// has already reached it. The reply to those is not the same sentence.
+		payload["origem_da_meta"] = string(t.Source)
 	}
 	return payload
 }

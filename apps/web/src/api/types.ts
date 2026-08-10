@@ -394,12 +394,35 @@ export type ProjectionBasis =
   (typeof ProjectionBasis)[keyof typeof ProjectionBasis];
 
 export const DayTargetScale = {
+  /**
+   * Below the weekday average. A *target* can no longer be — the plan is floored
+   * at the weekday's own rhythm — so this now only grades what a closed day
+   * sold.
+   */
   Below: "below",
   OnTrack: "on_track",
   Above: "above",
 } as const;
 export type DayTargetScale =
   (typeof DayTargetScale)[keyof typeof DayTargetScale];
+
+/**
+ * What a day's ask is made of. The floor at the weekday average makes different
+ * situations produce the same amount: a Wednesday asked for exactly its average
+ * is a month in step when the gap works out at the rhythm, and a month already
+ * past its goal when the gap works out at nothing. One is "mantenha o ritmo",
+ * the other is "você já chegou lá", and the numbers no longer tell them apart.
+ */
+export const DayTargetSource = {
+  /** Above the average: the month is behind and this day carries its share. */
+  Gap: "plano",
+  /** The floor, with the month still chasing its goal. `target === historical`. */
+  Average: "media",
+  /** The floor, with the goal already reached. Same figures, different news. */
+  GoalMet: "meta_batida",
+} as const;
+export type DayTargetSource =
+  (typeof DayTargetSource)[keyof typeof DayTargetSource];
 
 export const DayTargetState = {
   /** A real ask: the amounts below are meaningful. */
@@ -408,7 +431,12 @@ export const DayTargetState = {
   ClosedMonth: "mes_fechado",
   /** No revenue goal set, so no share of one to ask for today. */
   NoGoal: "sem_meta",
-  /** The goal is already reached. The one absence that is good news. */
+  /**
+   * The goal is already reached. No longer produced: a month past its goal is
+   * asked for its ordinary rhythm rather than for nothing, so the day comes
+   * back `ok` with a `meta_batida` *source*. Kept because stored snapshots
+   * still carry it.
+   */
   GoalMet: "meta_batida",
   /** Nothing in the trailing window to price any remaining day from. */
   NoHistory: "sem_historico",
@@ -479,13 +507,24 @@ export interface DayTarget {
   day: number;
   /** What this weekday usually brings, over a whole day. */
   historical: number;
-  /** What it has to bring to keep the month on its goal. */
+  /**
+   * What it has to bring to keep the month on its goal — never less than
+   * `historical`. The ask is the greater of the gap's share and the weekday's
+   * own rhythm: a target is a floor under the day, not a ceiling over it.
+   */
   target: number;
-  /** `target` minus `historical`. Negative when the day can afford to be lighter. */
+  /**
+   * `target` minus `historical`, so never negative on a day still ahead. On a
+   * closed day it is `realized` against `historical` and may be either way —
+   * that is a result, not an ask.
+   */
   delta: number;
   deltaPercent: number;
+  /** Never below 1: 1.08 asks for 8% above the usual rhythm, 1 asks for it exactly. */
   factor: number;
   status: DayTargetScale;
+  /** Which of the three the ask is. Absent on a day with no ask at all. */
+  source?: DayTargetSource;
 }
 
 export const ProjectionStatus = {
@@ -503,6 +542,13 @@ export interface Projection {
   remaining: number;
   projected: number;
   target: number;
+  /**
+   * Where the month lands if every day still to come sells what `plan` asks of
+   * it, as against `projected` — where it lands if they merely trade as usual.
+   * Never below `projected`: with the ask floored at the weekday average, the
+   * plan cannot close the month worse than doing nothing differently would.
+   */
+  plannedClose: number;
   /** What the projection still misses the target by; 0 once it clears it. */
   gap: number;
   onTrack: boolean;
@@ -530,17 +576,26 @@ export interface Projection {
   todayTarget: DayTarget;
   /**
    * How the gap is spread over the days the month has left: each of them asked
-   * for its own weekday average times `factor`. Deliberately not derived from
-   * `todayTarget` — on a Sunday the pharmacy does not open, that has no factor
-   * at all while the plan behind it still prices every other day.
+   * for its own weekday average times `factor`, and never for less than that
+   * average. Deliberately not derived from `todayTarget` — on a Sunday the
+   * pharmacy does not open, that has no factor at all while the plan behind it
+   * still prices every other day.
    */
   plan: Plan;
 }
 
 export interface Plan {
   state: DayTargetState;
-  /** Meaningless unless `state` is `ok`. */
+  /** Never below 1. Meaningless unless `state` is `ok`. */
   factor: number;
+  /**
+   * What the gap alone would have asked for, before the floor: above 1 the
+   * month is behind, at or below 1 it is in step or ahead, 0 means the goal is
+   * already met. It is the only thing that separates the months a floored ask
+   * cannot tell apart — don't infer "adiantado" from `target === historical`,
+   * which is also what a month in perfect step looks like.
+   */
+  gapFactor: number;
 }
 
 export const RecommendationSeverity = {

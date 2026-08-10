@@ -328,8 +328,11 @@ const (
 type DayTargetScale string
 
 const (
-	// PaceBelow means the day's target is below the historical average — the
-	// pharmacy is ahead and can afford a lighter day.
+	// PaceBelow means the amount is below the historical average. Since ADR-025
+	// a *target* can no longer be: the plan is floored at the weekday's own
+	// rhythm, so this is now produced only for a day that has closed, where it
+	// grades what the day sold. It is emphatically not dead: "essa quarta veio
+	// 20% abaixo do que uma quarta costuma dar" is the reading it exists for.
 	PaceBelow DayTargetScale = "below"
 	// PaceOnTrack means the target is within ±5% of the historical average —
 	// neither a stretch nor a slack day.
@@ -361,9 +364,17 @@ const (
 	// DayTargetNoGoal is a month with no revenue target: nothing to pace
 	// against, so no share of it to ask for the day.
 	DayTargetNoGoal DayTargetState = "sem_meta"
-	// DayTargetGoalMet is the target already reached. There is no ask left,
-	// and this is the one absence that is good news — consumers must say so
-	// rather than render the same blank as the cases below.
+	// DayTargetGoalMet is the target already reached. It is no longer produced:
+	// since ADR-025 a month past its goal is asked for its ordinary rhythm
+	// rather than for nothing, so the day comes back DayTargetOK with a
+	// TargetFromAverage source and the good news travels as Plan.GapFactor
+	// below 1. It survives in this enum because stored snapshots (see
+	// SchemaVersion) still carry it and consumers still have to word it.
+	//
+	// What it used to do was read as permission to close the shop: "a meta já
+	// foi batida" arrived as the same blank space as "não há histórico", and a
+	// pharmacy that beat its goal on the 20th was asked for nothing at all for
+	// eleven days.
 	DayTargetGoalMet DayTargetState = "meta_batida"
 	// DayTargetNoHistory is a trailing window with nothing in it to price any
 	// remaining day from.
@@ -388,6 +399,39 @@ const (
 	// news — it is the day having a result instead of a target. The figures that
 	// do mean something (Realized, Historical) are filled in.
 	DayTargetClosedDay DayTargetState = "dia_fechado"
+)
+
+// DayTargetSource says what a day's ask is made of: the share of the month's
+// gap that fell to it, or the day of the week's own average holding the floor
+// under that share — and, when it is the floor, why.
+//
+// It exists because the floor makes different situations produce the same
+// number. A Wednesday asked for exactly R$ 1.000,00 is a month in step when the
+// gap works out at the rhythm, and a month already past its goal when the gap
+// works out at nothing, and the reader is owed which: one is "mantenha o
+// ritmo", the other is "você já chegou lá". Before the floor those differed in
+// the amount itself — the second one had no amount at all — and now they do
+// not. An unnamed regime is exactly what DayBasis was added to prevent on the
+// other axis.
+type DayTargetSource string
+
+const (
+	// TargetFromGap is an ask above the weekday's average: the month is behind
+	// and this day carries its share of catching up. Delta and DeltaPercent are
+	// positive, Status is PaceAbove, and consumers must word it as a demand —
+	// never as performance (see compareToUsual).
+	TargetFromGap DayTargetSource = "plano"
+	// TargetFromAverage is the floor with the month still chasing its goal: the
+	// gap's share came out at or below this weekday's average, so the day is
+	// asked for its average and nothing more. Target equals Historical, Delta is
+	// zero and Status is PaceOnTrack.
+	TargetFromAverage DayTargetSource = "media"
+	// TargetGoalMet is the floor with nothing left to chase: the month's goal is
+	// already reached and the ask is purely the pharmacy's own rhythm. The
+	// figures are identical to TargetFromAverage and the sentence is not — this
+	// is the one that is good news, and it is the reading that used to arrive as
+	// an absent target (see DayTargetGoalMet).
+	TargetGoalMet DayTargetSource = "meta_batida"
 )
 
 // DayBasis says what kind of thing a day's figures are: something that
@@ -426,7 +470,8 @@ const (
 // This keeps Sunday targets naturally lower than Saturday targets while
 // remaining consistent with the monthly projection model. A factor of 1.08
 // means the pharmacy needs to sell 8% above its usual Monday rhythm to close
-// the gap; 0.92 means it can sell 8% below and still be fine.
+// the gap; 1.00 means an ordinary Monday is enough, and there is no factor
+// below it — the ask is floored at the weekday's own average (ADR-025).
 //
 // Internally this is computed using Gaussian-smoothed weekday averages.
 //
@@ -471,14 +516,22 @@ type DayTarget struct {
 	// whether the day met it. Zero for a day still ahead.
 	Realized int64 `json:"realized"`
 	// Historical is what this weekday usually brings, over a whole day; Target
-	// is what it has to bring; Delta and DeltaPercent are the difference,
-	// negative when the day can afford to be lighter.
+	// is what it has to bring; Delta and DeltaPercent are the difference.
+	//
+	// On a day still ahead the difference can no longer be negative: the plan is
+	// floored at Historical (ADR-025), so the ask is the average or more. On a
+	// day that has closed it is Realized against Historical and may be either
+	// way — that is the day's result, not an ask.
 	Historical   int64          `json:"historical"`
 	Target       int64          `json:"target"`
 	Delta        int64          `json:"delta"`
 	DeltaPercent float64        `json:"deltaPercent"`
 	Factor       float64        `json:"factor"`
 	Status       DayTargetScale `json:"status"`
+	// Source is which of the two the ask came out of — the month's gap, or the
+	// weekday average underneath it. Empty on a day with no ask at all. See
+	// DayTargetSource for why the amounts cannot answer this.
+	Source DayTargetSource `json:"source,omitempty"`
 }
 
 // Asked reports whether there is a target to show. It reads better than
@@ -497,6 +550,17 @@ type Projection struct {
 	Remaining int64 `json:"remaining"`
 	Projected int64 `json:"projected"`
 	Target    int64 `json:"target"`
+	// PlannedClose is where the month lands if every day still to come sells
+	// what Plan asks of it — as against Projected, which is where it lands if
+	// they merely trade as usual. Equal to Projected when there is no plan.
+	//
+	// The two answer different questions and only one of them was published,
+	// which left "se eu bater a meta todo dia, fecho em quanto?" to be answered
+	// with the month's goal — a figure that could sit *below* the projection on
+	// a pharmacy running ahead of it. With the floor in place this is
+	// max(Projected, Target): the plan never closes the month below what the
+	// averages alone would have brought. See ADR-025.
+	PlannedClose int64 `json:"plannedClose"`
 	// Gap is what the projection still misses the target by, 0 once it clears
 	// it — so it never reads as a shortfall when there is none.
 	Gap int64 `json:"gap"`
@@ -540,21 +604,42 @@ type Projection struct {
 }
 
 // Plan is one distribution of what is missing over the days that can still
-// sell: every remaining day asked for its own weekday average times a shared
-// Factor. A Factor of 1.08 asks each of them for 8% above its usual rhythm, and
-// by construction the slices add back up to the gap:
+// sell, floored at what those days usually bring: every remaining day asked for
+// its own weekday average times a shared Factor, and Factor is never below 1.
+// A Factor of 1.08 asks each day for 8% above its usual rhythm; a Factor of 1
+// asks each for exactly its rhythm.
 //
-//	Σ média[dia_da_semana(d)] × Factor, over d in today..end  ==  what is missing
+// The floor changed the invariant, and the new one is the point of ADR-025:
 //
-// which is the property a flat daily average never had — see ADR-019 for the
-// R$ 1.200,00 it printed on a Sunday worth R$ 600,00.
+//	Σ média[dia_da_semana(d)] × Factor  ==  max(what is missing, Σ média[...])
+//
+// The plan asks for the gap or for the pharmacy's own rhythm, whichever is
+// larger. It used to distribute the gap exactly — which closed the month and
+// nothing else, so a month running ahead asked its days for less than they
+// habitually sell, and a month past its goal asked for nothing at all. Neither
+// is a target: a target is a floor under the day, never a ceiling over it.
+//
+// What it keeps from ADR-019 is the shape of the distribution — each day at its
+// own weekday rhythm, never a flat daily average that asks a Sunday worth
+// R$ 600,00 for R$ 1.200,00.
 //
 // State is DayTargetOK when there is a distribution at all, and otherwise names
-// why there is none — no goal, goal already met, no trading history, a month
-// that has ended. Factor means nothing unless State is DayTargetOK.
+// why there is none — no goal, no trading history, a month that has ended. A
+// goal already met is no longer one of them: it is a plan at Factor 1. Factor
+// means nothing unless State is DayTargetOK.
 type Plan struct {
 	State  DayTargetState `json:"state"`
 	Factor float64        `json:"factor"`
+	// GapFactor is what the gap alone would have asked for, before the floor:
+	// above 1 the month is behind and Factor equals it, at or below 1 the month
+	// is in step or ahead and Factor is 1. Zero means the goal is already met.
+	//
+	// It is published because it is the only thing that separates the two months
+	// a floored ask cannot tell apart — see DayTargetSource — and because a
+	// consumer that wants to say "o mês está adiantado" must not infer it from
+	// Target equalling Historical, which is also what a month in perfect step
+	// looks like.
+	GapFactor float64 `json:"gapFactor"`
 }
 
 // AccelerationPct returns how much the projected revenue needs to grow, as a
@@ -892,6 +977,23 @@ type KPIs struct {
 // This one *is* a step of its own: unlike the run up to 8, v8 shipped and
 // snapshots were written under it.
 //
+// 11: a day's ask stopped being allowed below what that day of the week
+// usually brings. projection.plan.factor is floored at 1, so
+// projection.todayTarget.target — and every day get_meta_do_dia prices — is now
+// the greater of the gap's share and the weekday average, and
+// todayTarget.delta can no longer be negative. Added projection.plannedClose
+// (where the month lands if the asks are met), projection.plan.gapFactor (what
+// the gap alone asked for, which is what still says the month is ahead) and
+// dayTarget.source. See ADR-025.
+//
+// The bump is for the change of meaning, not the additions. A v10 snapshot read
+// into this struct yields day targets whose `source` is empty and whose target
+// may sit below `historical` — a combination this version's consumers are
+// entitled to treat as impossible, and the wording keyed off it ("mantendo a
+// média") would be printed over an ask that is not the average at all. The
+// stored snapshot is what the dashboard serves, so the morning after a deploy
+// would show yesterday's under-average asks in this version's words.
+//
 // 10: added revenueComposition — the month's faturamento split by category —
 // and the category names in both compositions now come from the user's own
 // catalog instead of the default definitions alone, because the catalog became
@@ -905,7 +1007,7 @@ type KPIs struct {
 // "nothing was sold this month". The dashboard serves the stored snapshot, so
 // without the bump a month of atacado and balcão would render as a month with
 // no sales in it — the exact reading the section was added to prevent.
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 // Analysis is the full picture of one month — the payload of
 // GET /analysis/monthly, and the input every consumer renders from.

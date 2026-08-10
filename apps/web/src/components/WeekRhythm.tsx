@@ -2,7 +2,7 @@ import { Calendar } from 'lucide-react'
 import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
 import { weekdayFull, weekdayShort, weekdayWithArticle } from '@/lib/weekdays'
-import { DayTargetState } from '@/api/types'
+import { DayTargetSource, DayTargetState } from '@/api/types'
 import type { DayTarget, DayTargetScale, WeekdayStat } from '@/api/types'
 
 // A pharmacy's week has a shape — the weekend carries it, Sunday is a trough —
@@ -22,6 +22,21 @@ function paceTone(status: DayTargetScale): string {
   }
 }
 
+// What the ask is made of, in the reader's words. The three cases produce two
+// different amounts, so the amount cannot say which one this is: a mark sitting
+// exactly on the bar is a month keeping pace and a month already home alike.
+// See DayTargetSource — the backend decides, the page words it.
+function sourceNote(target: DayTarget): string {
+  switch (target.source) {
+    case DayTargetSource.Gap:
+      return `${formatBRL(target.delta)} acima do esperado`
+    case DayTargetSource.GoalMet:
+      return 'Meta do mês já batida — hoje é manter o ritmo'
+    default:
+      return 'O esperado para o dia — o mês está no ritmo'
+  }
+}
+
 function TodayMark({ target }: { target: DayTarget }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-3">
@@ -32,14 +47,10 @@ function TodayMark({ target }: { target: DayTarget }) {
       >
         {formatBRL(target.target)}
       </span>
-      {/* The sign carries the direction: the sentence was fixed at "acima do
-          esperado" and printed "-R$ 500,00 acima do esperado" on a day the
-          pharmacy could afford to take lighter. */}
-      <span className={`text-sm ${paceTone(target.status)}`}>
-        {target.delta === 0
-          ? 'Em linha com o esperado'
-          : `${formatBRL(Math.abs(target.delta))} ${target.delta > 0 ? 'acima' : 'abaixo'} do esperado`}
-      </span>
+      {/* Never "abaixo do esperado": the ask is floored at the weekday average,
+          and a page telling a pharmacy it may sell less than an ordinary
+          Wednesday is the thing ADR-025 removed. */}
+      <span className={`text-sm ${paceTone(target.status)}`}>{sourceNote(target)}</span>
       <span className="text-sm text-muted-foreground">
         ≈ {target.factor.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}× o
         esperado para {weekdayWithArticle(target.day)}

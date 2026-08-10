@@ -154,6 +154,8 @@ func dayTargetTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 			"apuracao: \"realizado\" (dia fechado: traz o que vendeu, sem meta), " +
 			"\"em_curso\" (hoje: meta e o que já vendeu) ou \"projetado\" (dia " +
 			"futuro: meta, supondo que os dias antes dele fechem nas metas deles). " +
+			"A meta nunca é menor que a média daquele dia da semana; quando ela é " +
+			"igual à média, origem_da_meta diz por quê. " +
 			"NUNCA responda uma pergunta sobre um dia com a média do dia da semana: " +
 			"a média é o que aquele dia costuma faturar, a meta é o que ele precisa faturar.",
 		Parameters: &genai.Schema{
