@@ -399,17 +399,22 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 			// fixed, so an unknown slug is refused rather than dropped: the edit
 			// used to ignore a category it did not recognise and report "updated",
 			// which reads to the user as though the correction had been applied.
-			labels := map[string]string{}
+			//
+			// The catalog is read whether or not the category is changing, because
+			// the confirmation names the entry's category either way: read only on
+			// a change, an edit to the amount alone would answer "Venda Varejo"
+			// with the slug title-cased — the fallback for a category nobody knows,
+			// on one the user named themselves. It is a small Query beside the
+			// partition read above it.
+			cat, err := loadCatalog(ctx, store, userID)
+			if err != nil {
+				return nil, err
+			}
 			if args.Category != "" {
-				cat, err := loadCatalog(ctx, store, userID)
-				if err != nil {
-					return nil, err
-				}
 				if err := cat.validate(args.Category, entry.Type); err != nil {
 					return nil, err
 				}
 				entry.Category = args.Category
-				labels = cat.labels()
 			}
 			// Correcting the origin is how a mislabelled loan stops counting as
 			// faturamento, so an edit has to be able to set it. Only on income:
@@ -453,7 +458,7 @@ func editEntryTool(store Store, loc *time.Location) Tool {
 				"status":         "updated",
 				"amount":         centavosToReais(entry.Amount),
 				"category":       entry.Category,
-				"category_label": CategoryLabel(labels, entry.Category),
+				"category_label": CategoryLabel(cat.labels(), entry.Category),
 			}, nil
 		},
 	}
