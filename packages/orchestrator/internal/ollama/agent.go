@@ -18,6 +18,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/fiado"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/agentprompt"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/agenttools"
@@ -46,7 +47,7 @@ type Agent struct {
 // NewAgent builds an Ollama-backed finance agent. Empty host/model fall back to
 // the local defaults. It never dials Ollama here — the connection is lazy, made
 // on the first Process call.
-func NewAgent(host, model string, store finance.Store, dashboardURL string) *Agent {
+func NewAgent(host, model string, store finance.Store, fiadoStore fiado.Store, dashboardURL string) *Agent {
 	if host == "" {
 		host = DefaultHost
 	}
@@ -54,7 +55,7 @@ func NewAgent(host, model string, store finance.Store, dashboardURL string) *Age
 		model = DefaultModel
 	}
 
-	financeTools := agenttools.All(store, dashboardURL)
+	financeTools := agenttools.All(store, fiadoStore, dashboardURL)
 	tools := make([]tool, len(financeTools))
 	handlers := make(map[string]finance.ToolFunc, len(financeTools))
 	for i, t := range financeTools {

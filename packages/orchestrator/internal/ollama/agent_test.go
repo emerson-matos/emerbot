@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/fiado"
 	"github.com/emerson/emerbot/packages/finance"
 )
 
@@ -59,7 +60,7 @@ func TestAgentReturnsTextForChitChat(t *testing.T) {
 	server := httptest.NewServer(script)
 	defer server.Close()
 
-	agent := NewAgent(server.URL, "test-model", finance.NewInMemoryStore(), "")
+	agent := NewAgent(server.URL, "test-model", finance.NewInMemoryStore(), fiado.NewInMemoryStore(), "")
 	reply, err := agent.Process(context.Background(), "u1", userTurn("oi, tudo bem?"), time.Now())
 	if err != nil {
 		t.Fatalf("Process: %v", err)
@@ -88,7 +89,7 @@ func TestAgentCreatesEntryViaTool(t *testing.T) {
 	server := httptest.NewServer(script)
 	defer server.Close()
 
-	agent := NewAgent(server.URL, "test-model", store, "")
+	agent := NewAgent(server.URL, "test-model", store, fiado.NewInMemoryStore(), "")
 	reply, err := agent.Process(context.Background(), "ledger", userTurn("paguei 500 de aluguel"), time.Now())
 	if err != nil {
 		t.Fatalf("Process: %v", err)
@@ -122,7 +123,7 @@ func TestAgentThreadsHistoryAndSystemPrompt(t *testing.T) {
 	server := httptest.NewServer(script)
 	defer server.Close()
 
-	agent := NewAgent(server.URL, "test-model", finance.NewInMemoryStore(), "")
+	agent := NewAgent(server.URL, "test-model", finance.NewInMemoryStore(), fiado.NewInMemoryStore(), "")
 	history := []domain.ConversationMessage{
 		{Role: domain.RoleUser, Text: "meu nome é Emerson", Timestamp: time.Now()},
 		{Role: domain.RoleAssistant, Text: "Prazer, Emerson!", Timestamp: time.Now()},
