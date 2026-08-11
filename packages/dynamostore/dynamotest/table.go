@@ -5,8 +5,9 @@
 // It models the parts of DynamoDB that this repo's correctness actually
 // depends on: composite primary keys, sparse global secondary indexes, sort
 // order and ScanIndexForward, Limit-before-filter, paginated responses with
-// LastEvaluatedKey, conditional writes, BatchWriteItem's UnprocessedItems, and
-// the all-or-nothing semantics of TransactWriteItems. Everything it does not
+// LastEvaluatedKey, conditional writes, in-place updates (SET/ADD/REMOVE),
+// BatchWriteItem's UnprocessedItems, and the all-or-nothing semantics of
+// TransactWriteItems. Everything it does not
 // model — an unknown expression function, a key condition that touches a
 // non-key attribute, a write missing its key — is reported as an error, so a
 // store issuing a request that real DynamoDB would reject fails the test here
@@ -15,7 +16,9 @@ package dynamotest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -154,6 +157,9 @@ func (t *Table) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(
 	if err := t.begin("PutItem", in.TableName); err != nil {
 		return nil, err
 	}
+	if err := checkExprRefs(in.ExpressionAttributeNames, in.ExpressionAttributeValues, in.ConditionExpression); err != nil {
+		return nil, err
+	}
 	ok, err := t.checkCondition(in.Item, in.ConditionExpression, in.ExpressionAttributeNames, in.ExpressionAttributeValues)
 	if err != nil {
 		return nil, err
@@ -184,6 +190,77 @@ func (t *Table) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(
 	return &dynamodb.GetItemOutput{Item: cloneItem(item)}, nil
 }
 
+func (t *Table) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err := t.begin("UpdateItem", in.TableName); err != nil {
+		return nil, err
+	}
+	switch in.ReturnValues {
+	case "", types.ReturnValueNone, types.ReturnValueAllNew, types.ReturnValueAllOld:
+	default:
+		return nil, fmt.Errorf("dynamotest: ReturnValues %q is not modelled (only NONE, ALL_NEW and ALL_OLD are)", in.ReturnValues)
+	}
+
+	id, before, after, err := t.stageUpdate(in.Key, in.UpdateExpression, in.ConditionExpression, in.ExpressionAttributeNames, in.ExpressionAttributeValues)
+	if err != nil {
+		if errors.Is(err, errConditionFailed) {
+			return nil, &types.ConditionalCheckFailedException{Message: aws.String("The conditional request failed")}
+		}
+		return nil, err
+	}
+	if err := checkEmptyKeyAttrs(after, t.cfg.Key, t.cfg.GSIs); err != nil {
+		return nil, err
+	}
+	t.store(id, after)
+
+	out := &dynamodb.UpdateItemOutput{}
+	switch in.ReturnValues {
+	case types.ReturnValueAllNew:
+		out.Attributes = cloneItem(after)
+	case types.ReturnValueAllOld:
+		out.Attributes = cloneItem(before)
+	}
+	return out, nil
+}
+
+// stageUpdate evaluates an Update's condition and update expression against the
+// stored item and returns what the write would produce, without applying it —
+// so a transaction can stage several of them before touching the table. It must
+// be called with t.mu held.
+func (t *Table) stageUpdate(
+	key map[string]types.AttributeValue,
+	updateExpr, condExpr *string,
+	names map[string]string,
+	values map[string]types.AttributeValue,
+) (id string, before, after map[string]types.AttributeValue, err error) {
+	id, err = t.keyOf(key)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if updateExpr == nil {
+		return "", nil, nil, fmt.Errorf("dynamotest: an update is missing its UpdateExpression")
+	}
+	if err := checkExprRefs(names, values, updateExpr, condExpr); err != nil {
+		return "", nil, nil, err
+	}
+	before = t.items[id]
+
+	ok, err := t.checkCondition(key, condExpr, names, values)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !ok {
+		return "", nil, nil, errConditionFailed
+	}
+
+	after, err = applyUpdate(before, key, *updateExpr, names, values, t.cfg.Key)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return id, before, after, nil
+}
+
 func (t *Table) DeleteItem(_ context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -192,6 +269,9 @@ func (t *Table) DeleteItem(_ context.Context, in *dynamodb.DeleteItemInput, _ ..
 	}
 	id, err := t.keyOf(in.Key)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkExprRefs(in.ExpressionAttributeNames, in.ExpressionAttributeValues, in.ConditionExpression); err != nil {
 		return nil, err
 	}
 	ok, err := t.checkCondition(t.items[id], in.ConditionExpression, in.ExpressionAttributeNames, in.ExpressionAttributeValues)
@@ -276,6 +356,9 @@ func (t *Table) TransactWriteItems(_ context.Context, in *dynamodb.TransactWrite
 			if err != nil {
 				return nil, err
 			}
+			if err := checkExprRefs(ti.Put.ExpressionAttributeNames, ti.Put.ExpressionAttributeValues, ti.Put.ConditionExpression); err != nil {
+				return nil, err
+			}
 			ok, err := t.checkCondition(ti.Put.Item, ti.Put.ConditionExpression, ti.Put.ExpressionAttributeNames, ti.Put.ExpressionAttributeValues)
 			if err != nil {
 				return nil, err
@@ -299,6 +382,9 @@ func (t *Table) TransactWriteItems(_ context.Context, in *dynamodb.TransactWrite
 			if err != nil {
 				return nil, err
 			}
+			if err := checkExprRefs(ti.Delete.ExpressionAttributeNames, ti.Delete.ExpressionAttributeValues, ti.Delete.ConditionExpression); err != nil {
+				return nil, err
+			}
 			ok, err := t.checkCondition(t.items[id], ti.Delete.ConditionExpression, ti.Delete.ExpressionAttributeNames, ti.Delete.ExpressionAttributeValues)
 			if err != nil {
 				return nil, err
@@ -312,8 +398,28 @@ func (t *Table) TransactWriteItems(_ context.Context, in *dynamodb.TransactWrite
 			seen[id] = true
 			plan = append(plan, staged{id: id})
 
+		case ti.Update != nil:
+			if err := t.checkTableName(ti.Update.TableName); err != nil {
+				return nil, err
+			}
+			id, _, after, err := t.stageUpdate(ti.Update.Key, ti.Update.UpdateExpression, ti.Update.ConditionExpression, ti.Update.ExpressionAttributeNames, ti.Update.ExpressionAttributeValues)
+			if err != nil {
+				if errors.Is(err, errConditionFailed) {
+					return nil, transactionCancelled(len(in.TransactItems), i, "ConditionalCheckFailed")
+				}
+				return nil, err
+			}
+			if err := checkEmptyKeyAttrs(after, t.cfg.Key, t.cfg.GSIs); err != nil {
+				return nil, err
+			}
+			if seen[id] {
+				return nil, transactionCancelled(len(in.TransactItems), i, "ValidationError: transaction operates on the same item more than once")
+			}
+			seen[id] = true
+			plan = append(plan, staged{id: id, item: after})
+
 		default:
-			return nil, fmt.Errorf("dynamotest: TransactWriteItems item %d uses an operation this fake does not model (only Put and Delete are supported)", i)
+			return nil, fmt.Errorf("dynamotest: TransactWriteItems item %d uses an operation this fake does not model (only Put, Delete and Update are supported)", i)
 		}
 	}
 
@@ -348,6 +454,10 @@ func (t *Table) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dyn
 	}
 	if in.KeyConditionExpression == nil {
 		return nil, fmt.Errorf("dynamotest: Query requires a KeyConditionExpression")
+	}
+	if err := checkExprRefs(in.ExpressionAttributeNames, in.ExpressionAttributeValues,
+		in.KeyConditionExpression, in.FilterExpression, in.ProjectionExpression); err != nil {
+		return nil, err
 	}
 	keyCond, err := parseExpression(*in.KeyConditionExpression)
 	if err != nil {
@@ -460,6 +570,10 @@ func (t *Table) Scan(_ context.Context, in *dynamodb.ScanInput, _ ...func(*dynam
 		if _, err := t.indexKey(in.IndexName); err != nil {
 			return nil, err
 		}
+	}
+	if err := checkExprRefs(in.ExpressionAttributeNames, in.ExpressionAttributeValues,
+		in.FilterExpression, in.ProjectionExpression); err != nil {
+		return nil, err
 	}
 
 	var filter node
@@ -718,6 +832,47 @@ func checkKeyRefs(n node, idx Key, names map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// exprRef matches one #name or :value placeholder inside an expression string.
+var exprRef = regexp.MustCompile(`[#:][A-Za-z0-9_]+`)
+
+// checkExprRefs rejects an ExpressionAttributeNames or ExpressionAttributeValues
+// entry that none of the request's expressions references.
+//
+// DynamoDB fails the whole request for this ("Value provided in
+// ExpressionAttributeNames unused in expressions"), and the reason it is worth
+// modelling is that the mistake looks harmless in Go: one name map shared by two
+// updates that touch different attributes reads like deduplication and is a
+// runtime error on every call. The fake accepted it, so only a live run found it.
+func checkExprRefs(names map[string]string, values map[string]types.AttributeValue, exprs ...*string) error {
+	used := make(map[string]bool)
+	for _, e := range exprs {
+		if e == nil {
+			continue
+		}
+		for _, ref := range exprRef.FindAllString(*e, -1) {
+			used[ref] = true
+		}
+	}
+
+	unused := make([]string, 0, len(names)+len(values))
+	for n := range names {
+		if !used[n] {
+			unused = append(unused, "ExpressionAttributeNames "+n)
+		}
+	}
+	for v := range values {
+		if !used[v] {
+			unused = append(unused, "ExpressionAttributeValues "+v)
+		}
+	}
+	if len(unused) == 0 {
+		return nil
+	}
+	// Sorted so a request with several leftovers names them in a stable order.
+	sort.Strings(unused)
+	return fmt.Errorf("dynamotest: %s unused in expressions — DynamoDB rejects the request", strings.Join(unused, ", "))
 }
 
 // refs collects every attribute path an expression reads.

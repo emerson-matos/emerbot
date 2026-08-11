@@ -15,7 +15,7 @@ Emerbot: a WhatsApp AI assistant + financial dashboard ("Farmácia Financeira"),
 ## Commands (via root Makefile)
 
 - `make build` / `make test` — `go build ./...` / `go test ./...`. Single test: `go test ./packages/finance -run TestName`.
-- `make fmt` — formats Go with **gofumpt** (stricter than gofmt). CI does NOT run this; always run it before committing Go changes.
+- `make fmt` — formats Go with **gofumpt** (stricter than gofmt); `make fmt-check` is the same check without writing, and CI runs it. The pin lives in the Makefile (`GOFUMPT_VERSION`) and CI installs exactly that, because a gate that formats differently from the devshell is worse than no gate — bumping the flake means bumping it too.
 - `make lint` — `golangci-lint run ./...`. Web lint: `npm --prefix apps/web run lint` (**oxlint**, not ESLint).
 - `make demo` — brings up podman compose stack + seeds ~120 demo entries. Demo login: `demo@user.com` / `fake123`. Native runs: `make run-webhook`, `make run-api`, `make run-cli`.
 

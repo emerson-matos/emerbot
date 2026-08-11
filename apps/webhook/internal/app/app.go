@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/emerson/emerbot/packages/conversation"
 	"github.com/emerson/emerbot/packages/domain"
+	pkgfiado "github.com/emerson/emerbot/packages/fiado"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
@@ -150,6 +151,13 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 			log.Fatalf("NewFromEnv: finance store: %v", err)
 		}
 		cfg.FinanceStore = store
+		// The caderninho lives in the same table, as a neighbour of the entries
+		// in the user's partition — no resource of its own (ADR-027 §4).
+		fiadoStore, err := pkgfiado.NewDynamoDBStore(ctx, finTable, endpoint)
+		if err != nil {
+			log.Fatalf("NewFromEnv: fiado store: %v", err)
+		}
+		cfg.FiadoStore = fiadoStore
 		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
 		// LLM_PROVIDER=ollama runs a local open-source model for dev (ADR-012);
 		// unset keeps the Gemini/static path used in production.

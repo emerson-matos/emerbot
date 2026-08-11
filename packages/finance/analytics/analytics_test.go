@@ -2776,7 +2776,8 @@ func TestDayTargetsPriceEachRegime(t *testing.T) {
 			seeded = append(seeded, sale(t, date.String(), amount))
 		}
 	}
-	seeded = append(seeded,
+	seeded = append(
+		seeded,
 		sale(t, "2026-08-03", 150000), // Monday, closed
 		sale(t, "2026-08-04", 160000), // Tuesday, today
 	)

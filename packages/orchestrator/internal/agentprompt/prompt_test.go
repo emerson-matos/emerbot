@@ -54,3 +54,51 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// The caderninho's vocabulary is a rule, not a style note: nothing was promised,
+// so nothing is late. A prompt that let "vencido" through would have the model
+// dunning a customer over a debt that has no due date (ADR-027 §2).
+func TestFinanceForbidsTheLanguageOfLateness(t *testing.T) {
+	got := Finance(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
+
+	if !strings.Contains(got, "em aberto há N dias") {
+		t.Error("prompt does not give the model the only phrasing fiado has")
+	}
+	if !strings.Contains(got, `Nunca diga "vencido", "atrasado", "em atraso" ou "inadimplente"`) {
+		t.Error("prompt does not forbid the language of lateness")
+	}
+
+	// And the words exist nowhere except inside that prohibition. The rest of
+	// the prompt is about the ledger, where "vencido" is correct — so what this
+	// pins is that the caderninho's section is the only place they appear after
+	// it, i.e. nothing tells the model to use them about fiado.
+	_, caderninho, found := strings.Cut(got, "Caderninho de fiado")
+	if !found {
+		t.Fatal("prompt has no caderninho section")
+	}
+	for _, banned := range []string{"vencido", "atrasado", "inadimplente"} {
+		lines := strings.Split(caderninho, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, banned) && !strings.Contains(line, "Nunca diga") && !strings.Contains(line, "nada está atrasado") {
+				t.Errorf("a seção do caderninho usa %q fora da regra que o proíbe: %q", banned, line)
+			}
+		}
+	}
+}
+
+// The two systems must not leak into each other: a fiado sale that becomes a
+// ledger entry is counted as faturamento, which is the one thing ADR-027 exists
+// to prevent.
+func TestFinanceKeepsTheCaderninhoApartFromTheLedger(t *testing.T) {
+	got := Finance(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC))
+
+	for _, rule := range []string{
+		"FIADO NUNCA VIRA LANÇAMENTO E LANÇAMENTO NUNCA VIRA FIADO",
+		"NUNCA registre fiado sem saber de quem é",
+		"cliente_novo=true",
+	} {
+		if !strings.Contains(got, rule) {
+			t.Errorf("prompt is missing the rule %q", rule)
+		}
+	}
+}

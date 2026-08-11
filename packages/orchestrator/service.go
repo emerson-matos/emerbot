@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emerson/emerbot/packages/domain"
+	"github.com/emerson/emerbot/packages/fiado"
 	"github.com/emerson/emerbot/packages/finance"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/gemini"
 	"github.com/emerson/emerbot/packages/orchestrator/internal/ollama"
@@ -17,6 +18,10 @@ import (
 type Config struct {
 	GeminiAPIKey string
 	FinanceStore finance.Store
+	// FiadoStore is the caderninho (ADR-027). Optional and separate from
+	// FinanceStore on purpose: the two are different systems, and an agent
+	// without one still gets every tool of the other.
+	FiadoStore   fiado.Store
 	DashboardURL string
 	ShortTerm    ShortTermStore
 	// LLMProvider selects the text generator. "ollama" runs a local open-source
@@ -58,12 +63,12 @@ func NewTextGenerator(cfg Config) TextGenerator {
 	}
 
 	if cfg.LLMProvider == "ollama" {
-		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore, cfg.DashboardURL)
+		agent := ollama.NewAgent(cfg.OllamaHost, cfg.OllamaModel, cfg.FinanceStore, cfg.FiadoStore, cfg.DashboardURL)
 		return &agentGenerator{agent: agent}
 	}
 
 	if cfg.GeminiAPIKey != "" {
-		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore, cfg.DashboardURL)
+		agent, err := gemini.NewAgent(context.Background(), cfg.GeminiAPIKey, cfg.FinanceStore, cfg.FiadoStore, cfg.DashboardURL)
 		if err != nil {
 			log.Printf("orchestrator: gemini agent: %v, using static fallback", err)
 		} else {

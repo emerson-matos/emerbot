@@ -568,7 +568,8 @@ func TestBillListSplitsRatherThanTruncates(t *testing.T) {
 		entries = append(entries, pendingExpense(
 			fmt.Sprintf("e%03d", i),
 			fmt.Sprintf("Fornecedor de material hospitalar número %03d", i),
-			"", int64(100*(i+1))))
+			"", int64(100*(i+1)),
+		))
 	}
 	seedUser(t, s, inWindow, prefs, entries...)
 

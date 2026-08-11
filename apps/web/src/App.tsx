@@ -7,6 +7,8 @@ import NovaTransacao from './pages/NovaTransacao';
 import EditarTransacao from './pages/EditarTransacao';
 import Goals from './pages/Goals';
 import Adquirentes from './pages/Adquirentes';
+import Fiado from './pages/Fiado';
+import FiadoCliente from './pages/FiadoCliente';
 import Analysis from './pages/Analysis';
 import Notificacoes from './pages/Notificacoes';
 import Settings from './pages/Settings';
@@ -33,6 +35,8 @@ export default function App() {
               <Route path="adquirentes" element={<Adquirentes />} />
               <Route path="ajustes" element={<Settings />} />
               <Route path="analise" element={<Analysis />} />
+              <Route path="fiado" element={<Fiado />} />
+              <Route path="fiado/:cliente" element={<FiadoCliente />} />
               <Route path="metas" element={<Goals />} />
               <Route path="notificacoes" element={<Notificacoes />} />
               <Route path="nova-transacao" element={<NovaTransacao />} />

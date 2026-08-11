@@ -7,6 +7,7 @@ import (
 
 	"github.com/emerson/emerbot/apps/dashboard-api/internal/app"
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	pkgfiado "github.com/emerson/emerbot/packages/fiado"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	pkgpayments "github.com/emerson/emerbot/packages/payments"
 	"github.com/emerson/emerbot/packages/shared"
@@ -19,6 +20,7 @@ func main() {
 
 	var finStore pkgfinance.Store
 	var payRepo pkgpayments.Repository
+	var fiadoStore pkgfiado.Store
 
 	if endpoint != "" {
 		finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "emerbot-local-financial-entries")
@@ -34,10 +36,19 @@ func main() {
 			log.Fatalf("payments repo: %v", err)
 		}
 		payRepo = pr
+
+		// Same table as the finance store: the caderninho is a neighbour in the
+		// user's partition, not a resource of its own.
+		fs2, err := pkgfiado.NewDynamoDBStore(ctx, finTable, endpoint)
+		if err != nil {
+			log.Fatalf("fiado store: %v", err)
+		}
+		fiadoStore = fs2
 	} else {
 		log.Println("DYNAMODB_ENDPOINT not set — using in-memory store")
 		finStore = pkgfinance.NewInMemoryStore()
 		payRepo = pkgpayments.NewInMemoryRepository()
+		fiadoStore = pkgfiado.NewInMemoryStore()
 	}
 
 	// cognito-local generates its own pool/client IDs at creation time (see
@@ -59,7 +70,7 @@ func main() {
 		log.Fatalf("cognito JWKS setup failed (is cognito-local up? try `podman compose up cognito-local cognito-init -d`): %v", err)
 	}
 
-	application := app.NewLocal(finStore, payRepo, authMw)
+	application := app.NewLocal(finStore, payRepo, fiadoStore, authMw)
 	log.Printf("dashboard-api listening on %s", addr)
 	if err := http.ListenAndServe(addr, application); err != nil {
 		log.Fatal(err)

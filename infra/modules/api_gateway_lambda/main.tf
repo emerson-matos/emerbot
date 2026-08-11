@@ -419,6 +419,13 @@ locals {
     # tente salvar leva 404 do gateway em vez de acordar a Lambda.
     "GET /notifications/preferences",
     "GET /payments/sales", "GET /payments/receivables", "GET /payments/forecast",
+    # O caderninho de fiado (ADR-027). Só leitura: registrar uma compra e dar
+    # baixa são conversa com o bot, onde o nome do cliente é reconciliado antes
+    # de gravar. Não há recurso novo aqui — os itens moram na mesma tabela, na
+    # partição do usuário, sem índice e sem atributo declarado; estas quatro
+    # linhas são só as rotas dos handlers.
+    "GET /fiado", "GET /fiado/movimentos",
+    "GET /fiado/{cliente}", "GET /fiado/{cliente}/movimentos",
   ])
   # An explicit OPTIONS route is still required: API Gateway's automatic CORS
   # preflight handling only kicks in for a path with *no* route at all. Every

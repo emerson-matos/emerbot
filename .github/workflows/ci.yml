@@ -23,6 +23,17 @@ jobs:
         with:
           version: v2.12
 
+      # gofumpt is not in the Go toolchain, and golangci-lint vendors its own
+      # (older) copy that no config enables — so without this step nothing ever
+      # checked Go formatting, while OpenTofu's was gated below all along. The
+      # version comes from the Makefile so CI and `make fmt` cannot drift apart:
+      # a gate formatting differently from the devshell is worse than no gate.
+      - name: Setup gofumpt
+        run: go install mvdan.cc/gofumpt@$(make -s print-gofumpt-version)
+
+      - name: Check formatting
+        run: make fmt-check
+
       - name: Build
         run: make build
 
