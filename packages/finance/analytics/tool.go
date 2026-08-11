@@ -165,7 +165,8 @@ func dayTargetTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 					Type:  genai.TypeArray,
 					Items: &genai.Schema{Type: genai.TypeString},
 					Description: fmt.Sprintf(
-						"Datas no formato YYYY-MM-DD, no máximo %d. Padrão: hoje.", maxDayTargets),
+						"Datas no formato YYYY-MM-DD, no máximo %d. Padrão: hoje.", maxDayTargets,
+					),
 				},
 			},
 		},
@@ -192,7 +193,8 @@ func dayTargetTool(store LedgerReader, loc *time.Location) pkgfinance.Tool {
 				// answer.
 				payload["truncated"] = true
 				payload["warning"] = fmt.Sprintf(
-					"Mostrando %d de %d datas. Peça o resto em outra chamada.", maxDayTargets, len(dates))
+					"Mostrando %d de %d datas. Peça o resto em outra chamada.", maxDayTargets, len(dates),
+				)
 				dates = dates[:maxDayTargets]
 			}
 

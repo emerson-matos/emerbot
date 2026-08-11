@@ -180,7 +180,8 @@ func createCategoryTool(store CategoryStore) Tool {
 			cat, err := domain.NewCategory(userID, args.Label, "", domain.EntryType(args.Type))
 			if err != nil {
 				return nil, errors.New(
-					"categoria inválida: informe um label com letras ou números e type \"expense\" ou \"income\"")
+					"categoria inválida: informe um label com letras ou números e type \"expense\" ou \"income\"",
+				)
 			}
 
 			existing, err := loadCatalog(ctx, store, userID)
@@ -202,7 +203,8 @@ func createCategoryTool(store CategoryStore) Tool {
 			if len(existing.bySlug) >= maxUserCategories {
 				return nil, fmt.Errorf(
 					"o usuário já tem %d categorias, o máximo. Use uma das que existem (%s)",
-					len(existing.bySlug), listCategoriesToolName)
+					len(existing.bySlug), listCategoriesToolName,
+				)
 			}
 
 			if err := store.SaveCategory(ctx, cat); err != nil {

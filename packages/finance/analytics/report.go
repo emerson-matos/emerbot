@@ -375,7 +375,8 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 	// the same mistake with one more day on it — the question after "e amanhã?"
 	// is "e no sábado?". See ADR-021.
 	payload["meta_de_outro_dia"] = fmt.Sprintf(
-		"Para a meta de qualquer outro dia (amanhã, sábado, o dia 15), chame %s com as datas.", dayTargetToolName)
+		"Para a meta de qualquer outro dia (amanhã, sábado, o dia 15), chame %s com as datas.", dayTargetToolName,
+	)
 	if a.Projection.Gap > 0 {
 		payload["falta_para_a_meta_na_projecao"] = reais(a.Projection.Gap)
 	}
@@ -393,7 +394,8 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		payload["maiores_despesas_truncado"] = true
 		payload["maiores_despesas_warning"] = fmt.Sprintf(
 			"Mostrando as %d maiores de %d categorias. Peça a seção %q para a lista completa.",
-			maxToolCategories, len(a.ExpenseComposition), SectionExpensesFull)
+			maxToolCategories, len(a.ExpenseComposition), SectionExpensesFull,
+		)
 	}
 	// The same rule on the way in. A pharmacy whose faturamento is spread over
 	// seven kinds of sale must not have five of them presented as all of it —
@@ -403,7 +405,8 @@ func (a Analysis) ToolPayload(sections ...Section) map[string]any {
 		payload["faturamento_por_categoria_truncado"] = true
 		payload["faturamento_por_categoria_warning"] = fmt.Sprintf(
 			"Mostrando as %d maiores de %d categorias. Peça a seção %q para a lista completa.",
-			maxToolCategories, len(a.RevenueComposition), SectionRevenueFull)
+			maxToolCategories, len(a.RevenueComposition), SectionRevenueFull,
+		)
 	}
 
 	// What else exists, named so the model can ask for it by name rather than
@@ -464,11 +467,13 @@ func (a Analysis) DigestPayload() map[string]any {
 	// a seção despesas_completas" in front of someone with no way to do that.
 	if len(a.ExpenseComposition) > maxToolCategories {
 		payload["maiores_despesas_warning"] = fmt.Sprintf(
-			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.ExpenseComposition))
+			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.ExpenseComposition),
+		)
 	}
 	if len(a.RevenueComposition) > maxToolCategories {
 		payload["faturamento_por_categoria_warning"] = fmt.Sprintf(
-			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.RevenueComposition))
+			"Mostrando as %d maiores de %d categorias.", maxToolCategories, len(a.RevenueComposition),
+		)
 	}
 	return payload
 }

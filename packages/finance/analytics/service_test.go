@@ -274,7 +274,8 @@ func TestKPIsCoverTheDaysThatHaveArrived(t *testing.T) {
 	ctx := context.Background()
 	store := pkgfinance.NewInMemoryStore()
 
-	seed(t, store,
+	seed(
+		t, store,
 		sale(t, "2026-08-01", 70000),
 		sale(t, "2026-08-02", 70000),
 		expense(t, "2026-08-02", "fornecedor_geral", 20000),
@@ -313,7 +314,8 @@ func TestKPIsCountToday(t *testing.T) {
 	ctx := context.Background()
 	store := pkgfinance.NewInMemoryStore()
 
-	seed(t, store,
+	seed(
+		t, store,
 		sale(t, "2026-08-10", 50000),
 		expense(t, "2026-08-12", "aluguel", 30000), // today
 	)
