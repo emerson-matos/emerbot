@@ -4,8 +4,8 @@
 //
 // Stores depend on API rather than on *dynamodb.Client so they can be
 // exercised against a fake (see dynamotest) instead of a live table. The
-// interface is deliberately narrow — it lists only the six operations this
-// repo issues, so a fake has a small, fully-implementable surface.
+// interface is deliberately narrow — it lists only the operations this repo
+// issues, so a fake has a small, fully-implementable surface.
 package dynamostore
 
 import (
@@ -21,6 +21,10 @@ import (
 type API interface {
 	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+	// UpdateItem mutates one item in place. It is here for the counters a Put
+	// cannot express: read-modify-write loses concurrent increments, while
+	// "ADD Saldo :n" applies the delta inside DynamoDB (see packages/fiado).
+	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(ctx context.Context, in *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
