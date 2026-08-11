@@ -7,8 +7,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	apiauth "github.com/emerson/emerbot/apps/dashboard-api/internal/auth"
+	apifiado "github.com/emerson/emerbot/apps/dashboard-api/internal/fiado"
 	apifinance "github.com/emerson/emerbot/apps/dashboard-api/internal/finance"
 	apipayments "github.com/emerson/emerbot/apps/dashboard-api/internal/payments"
+	pkgfiado "github.com/emerson/emerbot/packages/fiado"
 	pkgfinance "github.com/emerson/emerbot/packages/finance"
 	pkgpayments "github.com/emerson/emerbot/packages/payments"
 	"github.com/emerson/emerbot/packages/shared"
@@ -32,22 +34,22 @@ type App struct {
 // cors_configuration's real job is attaching CORS headers to responses API
 // Gateway generates itself, like a 401/403 from the JWT authorizer rejecting
 // a request before it ever reaches this Lambda.
-func NewGateway(finStore pkgfinance.Store, payRepo pkgpayments.Repository) *App {
-	return newApp(finStore, payRepo, apiauth.GatewayMiddleware)
+func NewGateway(finStore pkgfinance.Store, payRepo pkgpayments.Repository, fiadoStore pkgfiado.Store) *App {
+	return newApp(finStore, payRepo, fiadoStore, apiauth.GatewayMiddleware)
 }
 
 // NewLocal is used by cmd/local, which has no API Gateway in front of it — it
 // verifies Cognito JWTs itself via JWKS (see apiauth.NewLocalCognitoMiddleware)
 // instead of trusting pre-validated claims.
-func NewLocal(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
-	return newApp(finStore, payRepo, authMw)
+func NewLocal(finStore pkgfinance.Store, payRepo pkgpayments.Repository, fiadoStore pkgfiado.Store, authMw func(http.Handler) http.Handler) *App {
+	return newApp(finStore, payRepo, fiadoStore, authMw)
 }
 
 // newApp wires the routes shared by both entrypoints. NOTE: this route list
 // must stay in sync with the dashboard_protected_routes/dashboard_public_routes
 // locals in infra/modules/api_gateway_lambda/main.tf — there is no
 // compile-time link between the two.
-func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw func(http.Handler) http.Handler) *App {
+func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, fiadoStore pkgfiado.Store, authMw func(http.Handler) http.Handler) *App {
 	// "Hoje", "esta semana" and "dias restantes" are the pharmacy's calendar
 	// day, not the Lambda's UTC one — every handler below that answers a
 	// "current month"/"today" question shares this one location.
@@ -103,6 +105,24 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, authMw fu
 	notifHandler := apifinance.NewNotificationsHandler(finStore)
 
 	mux.Handle("GET /notifications/preferences", authMw(http.HandlerFunc(notifHandler.Get)))
+
+	// The caderninho de fiado (ADR-027), read-only: registering a purchase and
+	// settling one happen in the WhatsApp conversation, where the client's name
+	// is reconciled before anything is written.
+	//
+	// Wired only when there is a store for it, so an entrypoint that has not
+	// built one answers 404 rather than panicking on the first request.
+	if fiadoStore != nil {
+		fiadoHandler := apifiado.NewHandler(fiadoStore, pharmacyLoc)
+		mux.Handle("GET /fiado", authMw(http.HandlerFunc(fiadoHandler.List)))
+		// "GET /fiado/movimentos" is registered too, and Go's mux prefers the
+		// literal segment over the wildcard, so it wins over /fiado/{cliente}.
+		// The cost is that a client whose slug is literally "movimentos" is
+		// unreachable, which is a trade nobody will ever notice.
+		mux.Handle("GET /fiado/movimentos", authMw(http.HandlerFunc(fiadoHandler.DayMovements)))
+		mux.Handle("GET /fiado/{cliente}", authMw(http.HandlerFunc(fiadoHandler.Get)))
+		mux.Handle("GET /fiado/{cliente}/movimentos", authMw(http.HandlerFunc(fiadoHandler.ClientMovements)))
+	}
 
 	// Imported payment-processor data (read-only; writes go through the
 	// payment-importer Lambda triggered by S3).

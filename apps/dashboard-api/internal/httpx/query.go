@@ -56,6 +56,22 @@ func CalendarDateRange(r *http.Request, loc *time.Location) (from, to domain.Cal
 	return domain.NewCalendarDate(f), domain.NewCalendarDate(t), nil
 }
 
+// Day reads a required YYYY-MM-DD query param. There is no default: the
+// endpoints that use it answer about one specific day, and substituting today
+// for a date somebody typed wrong renders a different day's data under the
+// label they asked for.
+func Day(r *http.Request, param string) (domain.CalendarDate, error) {
+	raw := r.URL.Query().Get(param)
+	if raw == "" {
+		return domain.CalendarDate{}, errors.New(param + " is required, expected YYYY-MM-DD")
+	}
+	d, err := domain.ParseCalendarDate(raw)
+	if err != nil {
+		return domain.CalendarDate{}, errors.New("invalid " + param + ", expected YYYY-MM-DD")
+	}
+	return d, nil
+}
+
 // Month reads the month query param (YYYY-MM), defaulting to the current
 // month in loc. An unparseable month is an error, for the same reason
 // DateRange rejects a bad day.
