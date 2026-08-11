@@ -36,6 +36,15 @@ export const queryKeys = {
     ["payments", "receivables", from, to] as const,
   paymentsForecast: (month: string) =>
     ["payments", "forecast", month] as const,
+  // Tudo do caderninho pendurado em ["fiado"]: é um sistema à parte do razão
+  // (ADR-027), então nada que invalide lançamentos deve alcançá-lo, e nada
+  // daqui deve alcançar as métricas.
+  fiadoCaderninho: () => ["fiado", "caderninho"] as const,
+  fiadoDevedor: (cliente: string) => ["fiado", "devedor", cliente] as const,
+  fiadoMovimentosCliente: (cliente: string) =>
+    ["fiado", "movimentos", "cliente", cliente] as const,
+  fiadoMovimentosDia: (date: string) =>
+    ["fiado", "movimentos", "dia", date] as const,
 };
 
 export function useCategories() {
@@ -174,6 +183,60 @@ export function usePaymentsForecast(month: string) {
   return useQuery({
     queryKey: queryKeys.paymentsForecast(month),
     queryFn: () => api.payments.forecast(month),
+  });
+}
+
+/** O caderninho inteiro: quem deve, quanto, e o total em aberto. */
+export function useCaderninho() {
+  return useQuery({
+    queryKey: queryKeys.fiadoCaderninho(),
+    queryFn: () => api.fiado.list(),
+  });
+}
+
+/**
+ * Um devedor, para a página aberta por URL — a lista não é cache suficiente
+ * para um link salvo ou um F5 em /fiado/joao_silva.
+ */
+export function useDevedor(cliente: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.fiadoDevedor(cliente ?? ""),
+    queryFn: () => api.fiado.devedor(cliente!),
+    enabled: Boolean(cliente),
+    // 404 aqui quer dizer que essa pessoa não está no caderninho; repetir a
+    // requisição não muda isso, e a página tem estado próprio para dizer.
+    retry: false,
+  });
+}
+
+/**
+ * O extrato de uma pessoa, paginado pelo cursor que a própria API devolve.
+ *
+ * A paginação é do DynamoDB, não uma janela calculada aqui: `next_cursor` é
+ * opaco e ausente quando acabou, então é ele — e não uma contagem de páginas —
+ * que decide se ainda há o que carregar.
+ */
+export function useFiadoMovimentos(cliente: string | undefined) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.fiadoMovimentosCliente(cliente ?? ""),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      api.fiado.movimentos(cliente!, { cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    enabled: Boolean(cliente),
+  });
+}
+
+/**
+ * O caderninho de um dia. Sem cursor de propósito: o endpoint do dia responde
+ * uma página só, então quando ela vem cortada o que sobra é o `warning` —
+ * renderizá-lo é a única forma de a lista não mentir por omissão (ADR-015).
+ */
+export function useFiadoMovimentosDoDia(date: string) {
+  return useQuery({
+    queryKey: queryKeys.fiadoMovimentosDia(date),
+    queryFn: () => api.fiado.movimentosDoDia(date),
+    enabled: date !== "",
   });
 }
 

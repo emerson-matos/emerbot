@@ -20,6 +20,9 @@ import type {
   SalesResponse,
   ReceivablesResponse,
   ForecastResponse,
+  CaderninhoResponse,
+  Devedor,
+  FiadoMovimentosResponse,
 } from "./types";
 
 export { CognitoAuthError } from "./cognito";
@@ -40,6 +43,10 @@ export type {
   ReceivablesResponse,
   ForecastResponse,
   PaymentForecastPoint,
+  Devedor,
+  CaderninhoResponse,
+  FiadoMovimento,
+  FiadoMovimentosResponse,
 } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8081";
@@ -207,5 +214,37 @@ export const api = {
       const qs = month ? `?month=${month}` : "";
       return httpClient<ForecastResponse>(`/payments/forecast${qs}`);
     },
+  },
+
+  // O caderninho de fiado (ADR-027). Só leitura: registrar uma compra e dar
+  // baixa são conversas com o bot no WhatsApp, onde o nome do cliente é
+  // reconciliado antes de gravar — um formulário aqui criaria "joão", "João
+  // Silva" e "Joao S." como três devedores, que é exatamente o que faz o
+  // caderninho mentir para menos.
+  fiado: {
+    list: () => httpClient<CaderninhoResponse>("/fiado"),
+    // Um devedor é endereçado pelo slug; 404 significa que ele não está no
+    // caderninho, e não que a leitura falhou.
+    devedor: (cliente: string) =>
+      httpClient<Devedor>(`/fiado/${encodeURIComponent(cliente)}`),
+    movimentos: (
+      cliente: string,
+      params: { limit?: number; cursor?: string } = {},
+    ) => {
+      const qs = new URLSearchParams();
+      if (params.limit) qs.set("limit", String(params.limit));
+      // O cursor é opaco: repassado como veio, sem interpretação nossa.
+      if (params.cursor) qs.set("cursor", params.cursor);
+      const query = qs.toString();
+      return httpClient<FiadoMovimentosResponse>(
+        `/fiado/${encodeURIComponent(cliente)}/movimentos${query ? `?${query}` : ""}`,
+      );
+    },
+    // A data é obrigatória — sem ela não há dia sobre o qual responder, e o
+    // endpoint recusa em vez de assumir hoje.
+    movimentosDoDia: (date: string) =>
+      httpClient<FiadoMovimentosResponse>(
+        `/fiado/movimentos?date=${encodeURIComponent(date)}`,
+      ),
   },
 };

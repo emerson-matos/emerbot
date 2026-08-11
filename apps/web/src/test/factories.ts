@@ -1,4 +1,4 @@
-import type { Category, Entry } from "@/api/types";
+import type { Category, Devedor, Entry, FiadoMovimento } from "@/api/types";
 
 /**
  * Builders for the API shapes the lib helpers consume. Each takes partial
@@ -30,6 +30,36 @@ export function makeCategory(overrides: Partial<Category> = {}): Category {
     Label: "Venda Balcão",
     Type: "income",
     Default: false,
+    ...overrides,
+  };
+}
+
+/** Uma conta do caderninho de fiado: por padrão, alguém devendo há 60 dias. */
+export function makeDevedor(overrides: Partial<Devedor> = {}): Devedor {
+  return {
+    cliente: "joao_silva",
+    nome: "João Silva",
+    saldo: 34000,
+    desde: "2026-06-12",
+    dias_em_aberto: 60,
+    ...overrides,
+  };
+}
+
+/**
+ * Um movimento do caderninho. O padrão é positivo — uma dívida — porque o
+ * sinal é o tipo: um pagamento é este mesmo objeto com `valor` negativo.
+ */
+export function makeMovimento(
+  overrides: Partial<FiadoMovimento> = {},
+): FiadoMovimento {
+  return {
+    id: "01J0000000000000000000000A",
+    cliente: "joao_silva",
+    nome: "João Silva",
+    valor: 4000,
+    data: "2026-08-10",
+    descricao: "",
     ...overrides,
   };
 }

@@ -801,3 +801,80 @@ export interface ForecastResponse {
   points: PaymentForecastPoint[];
   month: string;
 }
+
+// --- Caderninho de fiado (GET /fiado) ---
+//
+// Controle interno, à parte do razão: nada aqui é faturamento, caixa nem
+// previsto, e nenhuma métrica do painel enxerga estes valores (ADR-027).
+// Amounts are centavos and dates are "YYYY-MM-DD", como no resto da API.
+
+/** A foto de uma conta do caderninho: quanto a pessoa deve *agora*. */
+export interface Devedor {
+  /** Slug normalizado. É a identidade da pessoa — e o endereço dela na URL. */
+  cliente: string;
+  /** O nome como o usuário digitou; é o que se mostra na tela. */
+  nome: string;
+  /**
+   * Positivo é o que a pessoa deve. Zero é conta quitada e negativo é crédito
+   * dela (pagou mais do que devia) — os dois acontecem e nenhum é erro, então
+   * a tela nomeia os três casos em vez de assumir dívida.
+   */
+  saldo: number;
+  /**
+   * O dia em que o saldo saiu de zero — "está devendo sem parar desde X", não
+   * "a compra mais antiga em aberto". Vem null quando não há dívida, porque o
+   * backend limpa isso quando a conta zera.
+   */
+  desde: string | null;
+  /**
+   * Há quantos dias a conta está aberta, contado pelo backend. Fiado não
+   * vence, envelhece: a única leitura permitida deste número é "em aberto há N
+   * dias" — nunca "vencido", "atrasado" ou "inadimplente", porque nada foi
+   * prometido. Não recalcule no browser: quem sabe que dia é hoje no fuso da
+   * farmácia é o servidor, e uma dívida de hoje não tem idade medível
+   * (ADR-017), então N começa em 1.
+   */
+  dias_em_aberto: number | null;
+}
+
+export interface CaderninhoResponse {
+  /** Ordenado por saldo desc: quem deve mais primeiro. */
+  devedores: Devedor[];
+  total_em_aberto: number;
+  count: number;
+}
+
+/**
+ * Um movimento: o que aconteceu, no dia em que aconteceu.
+ *
+ * **O sinal é o tipo.** Positivo é dívida (a pessoa levou), negativo é
+ * pagamento (a pessoa pagou) — não há campo `tipo` a consultar, e por isso a
+ * UI tem de deixar o sinal visível em vez de mostrar só o módulo.
+ *
+ * Não há saldo por linha, de propósito: o saldo é o do devedor e aparece uma
+ * vez, no topo. Somar movimento a movimento aqui reintroduz a coluna que foi
+ * descartada — e numa lista paginada ela começaria pelo meio da história.
+ */
+export interface FiadoMovimento {
+  id: string;
+  cliente: string;
+  nome: string;
+  valor: number;
+  data: string;
+  descricao: string;
+}
+
+/**
+ * Uma página de movimentos, do mais recente para o mais antigo.
+ *
+ * `next_cursor` vem ausente quando acabou — é o que encerra a paginação.
+ * `truncated` com `warning` é a ADR-015: uma lista cortada nunca sai calada, e
+ * o aviso é para renderizar, não para engolir.
+ */
+export interface FiadoMovimentosResponse {
+  movimentos: FiadoMovimento[];
+  count: number;
+  next_cursor?: string;
+  truncated: boolean;
+  warning?: string;
+}
