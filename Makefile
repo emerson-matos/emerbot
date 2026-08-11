@@ -27,11 +27,11 @@ IMPORTER_ZIP := $(LAMBDA_DIR)/payment-importer.zip
 # is what removes the old "remember to rm the zips before apply" footgun.
 GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mod go.sum
 
-.PHONY: build test fmt lint \
+.PHONY: build test fmt fmt-check print-gofumpt-version lint \
         run-webhook run-api run-cli run-lambda \
         up down up-infra \
         logs-webhook logs-api \
-        seed seed-payments import-pagbank demo demo-ollama \
+        seed seed-fiado seed-payments import-pagbank demo demo-ollama \
         web-dev \
         build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-bootstrap-plan tofu-bootstrap-adopt tofu-migrate-state gh-secrets \
@@ -101,6 +101,23 @@ test:
 fmt:
 	gofumpt -w .
 
+# The version the devshell ships (flake.nix takes whatever nixpkgs has, so this
+# tracks flake.lock rather than pinning it). CI installs exactly this one: a
+# gate that disagrees with `make fmt` is worse than no gate, and the two
+# gofumpt releases in play differ precisely in the reflow they would fight over.
+GOFUMPT_VERSION ?= v0.11.0
+
+# CI reads the pin from here rather than repeating it in ci.yml, so bumping the
+# flake is one edit instead of two that silently disagree.
+print-gofumpt-version:
+	@echo $(GOFUMPT_VERSION)
+
+fmt-check:
+	@out=$$(gofumpt -l .); \
+	if [ -n "$$out" ]; then \
+	  echo "Fora do gofumpt (rode make fmt):"; echo "$$out"; exit 1; \
+	fi
+
 lint:
 	golangci-lint run ./...
 
@@ -167,6 +184,14 @@ seed:
 		--endpoint http://localhost:8000 \
 		--table emerbot-local-financial-entries \
 		--months 12
+
+# Fills the caderninho (ADR-027). Separate from `seed` because it is a separate
+# system: it writes no financial entry, so no metric on the dashboard moves.
+seed-fiado:
+	AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 \
+	$(GO) run ./scripts/seed-fiado \
+		--endpoint http://localhost:8000 \
+		--table emerbot-local-financial-entries
 
 # Imports the recorded PagBank scenarios into dynamodb-local so the Adquirentes
 # page has data. -rebase moves the (2024-dated) scenarios into the current month,
