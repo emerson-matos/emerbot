@@ -1,7 +1,7 @@
-import { format, isValid, parseISO } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
-import { formatBRL } from '@/lib/format'
-import type { Devedor } from '@/api/types'
+import { format, isValid, parseISO } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { formatBRL } from "@/lib/format";
+import type { Devedor } from "@/api/types";
 
 /**
  * O vocabulário do caderninho, num lugar só (ADR-027).
@@ -20,9 +20,9 @@ import type { Devedor } from '@/api/types'
  * então o "há N dias" só começa em 1. `null` é conta sem dívida aberta.
  */
 export function agingLabel(dias: number | null | undefined): string | null {
-  if (dias === null || dias === undefined) return null
-  if (dias <= 0) return 'começou hoje'
-  return `em aberto há ${dias} ${dias === 1 ? 'dia' : 'dias'}`
+  if (dias === null || dias === undefined) return null;
+  if (dias <= 0) return "começou hoje";
+  return `em aberto há ${dias} ${dias === 1 ? "dia" : "dias"}`;
 }
 
 /**
@@ -30,12 +30,12 @@ export function agingLabel(dias: number | null | undefined): string | null {
  * cliente que pagou mais do que devia, e o caderninho registra porque
  * aconteceu de verdade.
  */
-export type ContaEstado = 'devendo' | 'quite' | 'credito'
+export type ContaEstado = "devendo" | "quite" | "credito";
 
 export function contaEstado(saldo: number): ContaEstado {
-  if (saldo > 0) return 'devendo'
-  if (saldo < 0) return 'credito'
-  return 'quite'
+  if (saldo > 0) return "devendo";
+  if (saldo < 0) return "credito";
+  return "quite";
 }
 
 /**
@@ -43,11 +43,12 @@ export function contaEstado(saldo: number): ContaEstado {
  *
  * Crédito não é dívida negativa. Um "−R$ 50,00" no meio de uma lista de
  * dívidas é lido como desconto do total, e o total não é esse — então o
- * crédito é dito por extenso, com o valor no positivo: "R$ 50,00 a favor".
+ * crédito é dito por extenso, com o valor no positivo: "R$ 50,00 em crédito".
  */
 export function saldoTexto(saldo: number): string {
-  if (contaEstado(saldo) === 'credito') return `${formatBRL(-saldo)} a favor`
-  return formatBRL(saldo)
+  if (contaEstado(saldo) === "credito")
+    return `${formatBRL(-saldo)} em crédito`;
+  return formatBRL(saldo);
 }
 
 /**
@@ -58,17 +59,17 @@ export function saldoTexto(saldo: number): string {
  * justamente nesse caso; a legenda diz o que houve em vez de deixar o buraco.
  */
 export function contaLegenda(
-  devedor: Pick<Devedor, 'saldo' | 'dias_em_aberto'>,
+  devedor: Pick<Devedor, "saldo" | "dias_em_aberto">,
 ): string {
   switch (contaEstado(devedor.saldo)) {
-    case 'credito':
-      return 'pagou mais do que devia'
-    case 'quite':
-      return 'sem nada em aberto'
+    case "credito":
+      return "pagou mais do que devia";
+    case "quite":
+      return "sem nada em aberto";
     default:
       // Sem `dias_em_aberto` a conta ainda está aberta; o que falta é a idade,
       // e inventá-la aqui seria contar o tempo no relógio errado.
-      return agingLabel(devedor.dias_em_aberto) ?? 'em aberto'
+      return agingLabel(devedor.dias_em_aberto) ?? "em aberto";
   }
 }
 
@@ -77,21 +78,21 @@ export function contaLegenda(
  * pagou. Não existe campo `tipo` no movimento, e não deve existir um aqui —
  * esta função é a leitura do sinal, não um segundo discriminador.
  */
-export type MovimentoTipo = 'divida' | 'pagamento'
+export type MovimentoTipo = "divida" | "pagamento";
 
 export function movimentoTipo(valor: number): MovimentoTipo {
-  return valor < 0 ? 'pagamento' : 'divida'
+  return valor < 0 ? "pagamento" : "divida";
 }
 
 export const movimentoLabels: Record<MovimentoTipo, string> = {
-  divida: 'levou fiado',
-  pagamento: 'pagou',
-}
+  divida: "levou fiado",
+  pagamento: "pagou",
+};
 
 /** "12/06/2026". */
 export function formatFiadoDate(iso: string): string {
-  const parsed = parseISO(iso)
-  return isValid(parsed) ? format(parsed, 'dd/MM/yyyy') : iso
+  const parsed = parseISO(iso);
+  return isValid(parsed) ? format(parsed, "dd/MM/yyyy") : iso;
 }
 
 /**
@@ -100,12 +101,12 @@ export function formatFiadoDate(iso: string): string {
  * resto do app faz com meses.
  */
 export function formatDiaLabel(iso: string): string {
-  const parsed = parseISO(iso)
-  if (!isValid(parsed)) return iso
-  return format(parsed, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR })
+  const parsed = parseISO(iso);
+  if (!isValid(parsed)) return iso;
+  return format(parsed, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR });
 }
 
 /** O endereço de um devedor no app. */
 export function devedorPath(cliente: string): string {
-  return `/fiado/${encodeURIComponent(cliente)}`
+  return `/fiado/${encodeURIComponent(cliente)}`;
 }

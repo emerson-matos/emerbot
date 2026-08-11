@@ -96,7 +96,7 @@ describe('Fiado', () => {
    * Saldo negativo é crédito do cliente, e nesse caso `dias_em_aberto` vem
    * null: quem tem crédito não está devendo há dia nenhum.
    */
-  it('mostra crédito a favor sem dar idade a quem não está devendo', () => {
+  it('mostra crédito em crédito sem dar idade a quem não está devendo', () => {
     renderPage(
       caderninho({
         data: {
@@ -116,7 +116,7 @@ describe('Fiado', () => {
     )
 
     const link = screen.getByRole('link', { name: /Ana/ })
-    expect(normalizeSpaces(link.textContent ?? '')).toContain('R$ 50,00 a favor')
+    expect(normalizeSpaces(link.textContent ?? '')).toContain('R$ 50,00 em crédito')
     expect(within(link).getByText('pagou mais do que devia')).toBeInTheDocument()
     expect(link.textContent).not.toMatch(/em aberto há/)
   })

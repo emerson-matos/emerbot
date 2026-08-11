@@ -223,7 +223,7 @@ describe('FiadoCliente', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('mostra crédito a favor sem inventar idade para ele', () => {
+  it('mostra crédito sem inventar idade para ele', () => {
     renderPage(
       devedorQuery({
         data: makeDevedor({ saldo: -5000, desde: null, dias_em_aberto: null }),
@@ -231,8 +231,8 @@ describe('FiadoCliente', () => {
     )
 
     expect(
-      normalizeSpaces(screen.getByText(/a favor/).textContent!),
-    ).toBe('R$ 50,00 a favor')
+      normalizeSpaces(screen.getByText(/em crédito/).textContent!),
+    ).toBe('R$ 50,00 em crédito')
     expect(screen.getByText('pagou mais do que devia')).toBeInTheDocument()
     expect(screen.queryByText(/em aberto há/)).not.toBeInTheDocument()
     expect(screen.queryByText(/desde/)).not.toBeInTheDocument()
