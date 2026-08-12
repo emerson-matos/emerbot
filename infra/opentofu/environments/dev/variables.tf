@@ -28,6 +28,11 @@ variable "notifier_zip_path" {
   description = "Caminho do artefato zip do notifier Lambda (alertas por WhatsApp)."
 }
 
+variable "worker_zip_path" {
+  type        = string
+  description = "Caminho do artefato zip do worker Lambda (consome a fila de mensagens do WhatsApp)."
+}
+
 variable "importer_zip_path" {
   type        = string
   description = "Caminho do artefato zip do payment-importer Lambda (importação de dados PagBank/Stone via S3)."
@@ -129,5 +134,26 @@ variable "state_bucket_name" {
     Bucket do state remoto, usado para dar ao papel de deploy acesso a ele em
     deploy_role.tf. Precisa bater com o 'bucket' em backend.tf (que não aceita
     variável) e com state_bucket_name no bootstrap. Se mudar, mude nos três.
+  EOT
+}
+
+variable "budget_alert_email" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    E-mail que recebe o alerta do orçamento mensal (a guarda de custo do
+    ADR-028). Vazio não cria o orçamento: um alerta sem destinatário não avisa
+    ninguém. Passe via TF_VAR_budget_alert_email, como os demais valores que
+    não moram no repositório.
+  EOT
+}
+
+variable "budget_monthly_limit_usd" {
+  type        = string
+  default     = "4"
+  description = <<-EOT
+    Teto mensal do orçamento, em dólar. É a conversão folgada do teto de
+    R$20/mês do ADR-008 — a intenção é avisar antes de chegar lá, não acertar a
+    cotação do dia. O custo real hoje é ~R$0,03/mês.
   EOT
 }

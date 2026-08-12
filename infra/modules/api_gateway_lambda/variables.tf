@@ -21,6 +21,11 @@ variable "notifier_zip_path" {
   description = "Caminho do artefato zip do notifier Lambda (alertas por WhatsApp)."
 }
 
+variable "worker_zip_path" {
+  type        = string
+  description = "Caminho do artefato zip do worker Lambda (consome a fila de mensagens do WhatsApp)."
+}
+
 variable "importer_zip_path" {
   type        = string
   description = "Caminho do artefato zip do payment-importer Lambda (importação de dados PagBank/Stone via S3)."

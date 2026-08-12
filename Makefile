@@ -20,6 +20,7 @@ LAMBDA_ZIP := $(LAMBDA_DIR)/webhook.zip
 DASHBOARD_ZIP := $(LAMBDA_DIR)/dashboard-api.zip
 NOTIFIER_ZIP := $(LAMBDA_DIR)/notifier.zip
 IMPORTER_ZIP := $(LAMBDA_DIR)/payment-importer.zip
+WORKER_ZIP := $(LAMBDA_DIR)/worker.zip
 
 # Every Lambda links against the shared packages/, so any Go change can affect
 # any zip. We over-approximate each zip's dependency set to all non-test Go
@@ -33,7 +34,7 @@ GO_SOURCES := $(shell find apps packages -name '*.go' ! -name '*_test.go') go.mo
         logs-webhook logs-api \
         seed seed-fiado seed-payments import-pagbank demo demo-ollama \
         web-dev \
-        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambdas clean-lambdas \
+        build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambda-worker build-lambdas clean-lambdas \
         tofu-fmt tofu-fmt-check tofu-init tofu-bootstrap tofu-bootstrap-plan tofu-bootstrap-adopt tofu-migrate-state gh-secrets \
         tofu-plan tofu-apply tofu-destroy
 
@@ -82,11 +83,15 @@ $(NOTIFIER_ZIP): $(GO_SOURCES)
 $(IMPORTER_ZIP): $(GO_SOURCES)
 	$(call build_lambda,payment-importer,./apps/payment-importer/cmd/lambda)
 
+$(WORKER_ZIP): $(GO_SOURCES)
+	$(call build_lambda,worker,./apps/worker/cmd/lambda)
+
 build-lambda-webhook: $(LAMBDA_ZIP)
 build-lambda-dashboard-api: $(DASHBOARD_ZIP)
 build-lambda-notifier: $(NOTIFIER_ZIP)
 build-lambda-payment-importer: $(IMPORTER_ZIP)
-build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer
+build-lambda-worker: $(WORKER_ZIP)
+build-lambdas: build-lambda-webhook build-lambda-dashboard-api build-lambda-notifier build-lambda-payment-importer build-lambda-worker
 
 # Escape hatch only — the zips now rebuild themselves when Go sources change.
 clean-lambdas:
@@ -299,6 +304,8 @@ TF_VAR_whatsapp_phone_number_id    ?= $(WHATSAPP_PHONE_NUMBER_ID)
 export TF_VAR_whatsapp_phone_number_id
 TF_VAR_cloudflare_zone_id          ?= $(CLOUDFLARE_ZONE_ID)
 export TF_VAR_cloudflare_zone_id
+TF_VAR_budget_alert_email          ?= $(BUDGET_ALERT_EMAIL)
+export TF_VAR_budget_alert_email
 
 tofu-init: build-lambdas
 	$(TOFU) -chdir=$(TOFU_DIR) init

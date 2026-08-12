@@ -28,6 +28,7 @@ rows=(
   "TF_VAR_CLOUDFLARE_ZONE_ID         CLOUDFLARE_ZONE_ID        no"
   "TF_VAR_CLOUDFLARE_ACCOUNT_ID      CLOUDFLARE_ACCOUNT_ID     no"
   "CLOUDFLARE_API_TOKEN              CLOUDFLARE_API_TOKEN      no"
+  "TF_VAR_BUDGET_ALERT_EMAIL         BUDGET_ALERT_EMAIL        no"
 )
 
 for row in "${rows[@]}"; do
