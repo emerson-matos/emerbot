@@ -18,7 +18,19 @@ flowchart LR
     webhook ==>|"SendMessage"| fifo[["SQS FIFO"]]
     fifo ==>|"event source mapping"| worker["worker<br/>60s"]
     fifo -.->|"5 tentativas"| dlq[["DLQ"]]
+
+    classDef nosso fill:#2f6f4e,stroke:#1d4733,stroke-width:2px,color:#ffffff
+    classDef aws fill:#e8912d,stroke:#a8641a,stroke-width:1px,color:#1b1b1b
+    classDef externo fill:#d9d9d9,stroke:#8c8c8c,stroke-width:1px,color:#1b1b1b,stroke-dasharray:4 3
+
+    class webhook,worker,dash,notif,imp nosso
+    class apigw,cognito,fifo,dlq,s3in,sched aws
+    class metain,browser,pages externo
 ```
+
+Verde é código nosso, laranja é serviço gerenciado da AWS, cinza tracejado é o
+que está fora da conta. As cinco caixas verdes são o repositório inteiro rodando
+em produção.
 
 Quem toca o quê — em tabela e não em setas, porque cinco funções contra três
 tabelas é um emaranhado desenhado e uma linha lida:
