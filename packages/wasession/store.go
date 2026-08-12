@@ -51,10 +51,13 @@ type Store interface {
 	Processed(ctx context.Context, messageID string, now time.Time) (bool, error)
 	// MarkProcessed records that messageID has been handled and reports whether
 	// this call is the one that recorded it (false = someone got there first).
+	//
+	// It is written when the turn *ends*, not when it starts: the mark is the
+	// fact that the message was answered, not a reservation that a failed turn
+	// would then have to give back. The compensating Unmark it replaces never
+	// worked in production anyway — the policy had no dynamodb:DeleteItem, so
+	// every retry was answered "ignoring duplicate" (ADR-029).
+	//
 	// An empty messageID always returns true (nothing to dedup on).
 	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
-	// Unmark removes a message's dedup marker. It compensates a MarkProcessed
-	// whose turn then failed without a 2xx, so WhatsApp's retry is reprocessed
-	// instead of being swallowed as a duplicate. An empty messageID is a no-op.
-	Unmark(ctx context.Context, messageID string) error
 }
