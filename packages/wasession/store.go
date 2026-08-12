@@ -24,7 +24,15 @@ const DedupWindow = 48 * time.Hour
 // collide with a phone number (which is all digits) in the shared table.
 const dedupKeyPrefix = "MSGID#"
 
-// Store persists the "phone last messaged us" signal behind the 24h window.
+// Store persists the "phone last messaged us" signal behind the 24h window,
+// and the mark that says a message has been answered.
+//
+// It is the contract between the two implementations, not a dependency anyone
+// takes: no consumer needs all of it, and each declares the slice it uses
+// (notifier.WindowReader, app.SessionStore, waturn.ProcessedStore). Keeping it
+// whole here is what makes the DynamoDB store and the in-memory one answer the
+// same way; taking it as a parameter is what made an unrelated signature churn
+// when the dedup half changed.
 type Store interface {
 	// RecordInbound marks that phone messaged us at `at`; the session is then
 	// active until at+Window.
