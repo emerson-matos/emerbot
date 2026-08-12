@@ -1048,6 +1048,7 @@ func TestListCategoriesBackfillsMissingDefaults(t *testing.T) {
 	backfilled := findCategory(got, "fornecedor_perfumaria")
 	if backfilled == nil {
 		t.Fatal("the missing default category was not returned")
+		return
 	}
 	if !backfilled.Default || backfilled.Label != "Fornecedor de Perfumaria" {
 		t.Fatalf("backfilled = %+v, want the current default definition", *backfilled)

@@ -3,8 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Analysis as AnalysisData,
   ProjectionExperiment,
+  YearMonth,
 } from "@/api/types";
 import { currentMonthKey } from "@/lib/entries";
+
+// currentMonthKey is typed as a plain string; the shape it returns is the one
+// YearMonth describes, and Analysis.month is declared with it.
+const thisMonth = currentMonthKey() as YearMonth;
 import { normalizeSpaces } from "@/test/factories";
 
 const useMonthlyAnalysis = vi.hoisted(() => vi.fn());
@@ -221,7 +226,7 @@ describe("the experimental projection section", () => {
 
     // The section only renders for the month in progress, which is the only
     // month a forecast has anything to say about.
-    renderWith(analysisData({ month: currentMonthKey() }));
+    renderWith(analysisData({ month: thisMonth }));
 
     expect(
       screen.getByText(/Ainda não há histórico suficiente para o backtest/),
@@ -234,7 +239,7 @@ describe("the experimental projection section", () => {
   it("never presents the candidate as the official projection", () => {
     // The section only renders for the month in progress, which is the only
     // month a forecast has anything to say about.
-    renderWith(analysisData({ month: currentMonthKey() }));
+    renderWith(analysisData({ month: thisMonth }));
 
     expect(
       screen.getByText(/Não altera a projeção oficial/),
@@ -294,9 +299,7 @@ describe("Analysis page", () => {
     // The ask is a whole-day figure measured from the morning, so without the
     // day's own takings nobody can tell whether it was met. The fixture has
     // R$482,00 in against an ask of R$1.211,00.
-    // The section only renders for the month in progress, which is the only
-    // month a forecast has anything to say about.
-    renderWith(analysisData({ month: currentMonthKey() }));
+    renderWith(analysisData());
 
     expect(screen.getByText(/R\$ 482,00 vendidos até agora/)).toBeInTheDocument();
     expect(screen.queryByText(/Meta batida/)).not.toBeInTheDocument();
@@ -571,9 +574,7 @@ describe("the KPI row", () => {
 
 describe("the cash position card", () => {
   it("says the runway counts an ordinary day's receipts", () => {
-    // The section only renders for the month in progress, which is the only
-    // month a forecast has anything to say about.
-    renderWith(analysisData({ month: currentMonthKey() }));
+    renderWith(analysisData());
 
     expect(
       screen.getByText("Contando o recebimento médio de cada dia da semana nos dias que faltam."),

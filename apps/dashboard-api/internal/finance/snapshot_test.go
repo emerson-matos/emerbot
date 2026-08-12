@@ -209,6 +209,7 @@ func TestComparisonShowsKpiDeltas(t *testing.T) {
 	c := buildComparison(today, currSnap, prevSnap)
 	if c == nil {
 		t.Fatal("comparison is nil")
+		return
 	}
 	if c.KPIs == nil || c.KPIs.Faturamento == nil {
 		t.Fatal("receita delta missing")
