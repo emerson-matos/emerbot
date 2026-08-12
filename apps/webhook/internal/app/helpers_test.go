@@ -109,25 +109,48 @@ func TestSendReplyIsSkippedWhenThereIsNothingToReplyTo(t *testing.T) {
 	app := New(nil, client, "secret", "verify", nil)
 
 	// No message id: there is no inbound message to attach a reply to.
-	app.sendReply(context.Background(), Request{UserID: "u1"}, "olá")
+	if err := app.sendReply(context.Background(), Request{UserID: "u1"}, "olá"); err != nil {
+		t.Fatalf("nothing to reply to is not an error: %v", err)
+	}
 	if client.sendReplyCalls != 0 {
 		t.Fatalf("sendReply issued %d calls, want none without a message id", client.sendReplyCalls)
 	}
 
 	// No client configured at all must not panic.
-	New(nil, nil, "secret", "verify", nil).
-		sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá")
+	if err := New(nil, nil, "secret", "verify", nil).
+		sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá"); err != nil {
+		t.Fatalf("no client configured is not an error: %v", err)
+	}
 }
 
-func TestSendReplySwallowsATransportError(t *testing.T) {
+// sendReply now reports a transport failure instead of swallowing it, because
+// the failure path needs to know: having reached the user is what decides
+// between owning the turn and handing it back to WhatsApp.
+func TestSendReplyReportsATransportError(t *testing.T) {
 	client := &erroringWhatsAppClient{}
 	app := New(nil, client, "secret", "verify", nil)
 
-	// A failed send is logged, not propagated: the turn already succeeded and
-	// returning an error would make WhatsApp retry the whole message.
-	app.sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá")
+	if err := app.sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá"); err == nil {
+		t.Fatal("a failed send must be reported to the caller")
+	}
 	if client.calls != 1 {
 		t.Fatalf("sendReply issued %d calls, want 1", client.calls)
+	}
+}
+
+// The invariant that moved rather than disappeared: on a turn that *succeeded*,
+// a failed send is still logged and not propagated. The work is already done —
+// making WhatsApp retry would run it a second time.
+func TestSuccessfulTurnStaysHandledWhenTheReplyFailsToSend(t *testing.T) {
+	client := &erroringWhatsAppClient{}
+	app := New(orchestrator.NewService(orchestrator.Config{}), client, "secret", "verify", nil)
+
+	_, status, err := app.Handle(context.Background(), Request{UserID: "u1", MessageID: "m1", Text: "oi"})
+	if err != nil {
+		t.Fatalf("Handle returned error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — the turn succeeded, only the send failed", status)
 	}
 }
 
