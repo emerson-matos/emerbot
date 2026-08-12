@@ -181,42 +181,78 @@ func TestMarkProcessedPropagatesRealErrors(t *testing.T) {
 	}
 }
 
-func TestUnmarkLetsARetryBeReprocessed(t *testing.T) {
+// Processed is the question the worker asks before spending a turn on a
+// message: the mark is written when processing ends, so anything that reads
+// back as marked was answered (ADR-029).
+func TestProcessedSeesTheMark(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
-	now := time.Now()
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+
+	done, err := s.Processed(ctx, "wamid.ABC", now)
+	if err != nil {
+		t.Fatalf("processed: %v", err)
+	}
+	if done {
+		t.Fatal("a message nobody marked must not read as processed")
+	}
 
 	if _, err := s.MarkProcessed(ctx, "wamid.ABC", now); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
-	// The turn failed without a 2xx, so the marker is compensated and
-	// WhatsApp's retry must be treated as new work rather than a duplicate.
-	if err := s.Unmark(ctx, "wamid.ABC"); err != nil {
-		t.Fatalf("unmark: %v", err)
+
+	done, err = s.Processed(ctx, "wamid.ABC", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("processed: %v", err)
+	}
+	if !done {
+		t.Fatal("a redelivery of an answered message must read as processed")
 	}
 
-	again, err := s.MarkProcessed(ctx, "wamid.ABC", now)
-	if err != nil || !again {
-		t.Fatalf("after unmark = %v (err %v), want the retry to be reprocessed", again, err)
-	}
-}
-
-func TestUnmarkWithEmptyIDIsANoOp(t *testing.T) {
-	s, tbl := newStore(t)
-	if err := s.Unmark(context.Background(), ""); err != nil {
-		t.Fatalf("unmark empty: %v", err)
-	}
-	if tbl.Calls("DeleteItem") != 0 {
-		t.Fatal("an empty message id must not issue a delete")
+	// A different id is a different message.
+	if done, _ = s.Processed(ctx, "wamid.XYZ", now); done {
+		t.Fatal("the mark must be per message id")
 	}
 }
 
-func TestUnmarkPropagatesError(t *testing.T) {
-	s, tbl := newStore(t)
-	boom := errors.New("delete failed")
-	tbl.FailNext("DeleteItem", boom)
+func TestProcessedIgnoresTTLDeletionLag(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 
-	if err := s.Unmark(context.Background(), "wamid.ABC"); !errors.Is(err, boom) {
+	if _, err := s.MarkProcessed(ctx, "wamid.ABC", now); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	// Same guard as Active: DynamoDB's TTL sweep lags, so an item past its
+	// ExpiresAt must read as gone rather than as a mark.
+	done, err := s.Processed(ctx, "wamid.ABC", now.Add(DedupWindow+time.Hour))
+	if err != nil {
+		t.Fatalf("processed: %v", err)
+	}
+	if done {
+		t.Fatal("an expired but not-yet-swept mark must read as unprocessed")
+	}
+}
+
+func TestProcessedWithEmptyIDReadsNothing(t *testing.T) {
+	s, tbl := newStore(t)
+	done, err := s.Processed(context.Background(), "", time.Now())
+	if err != nil || done {
+		t.Fatalf("empty id = %v (err %v), want false", done, err)
+	}
+	if tbl.Calls("GetItem") != 0 {
+		t.Fatal("an empty message id has nothing to look up and must not read")
+	}
+}
+
+func TestProcessedPropagatesError(t *testing.T) {
+	s, tbl := newStore(t)
+	boom := errors.New("read failed")
+	tbl.FailNext("GetItem", boom)
+
+	// The caller decides what a failed check means; swallowing it here would
+	// make an unreachable table look like "never processed".
+	if _, err := s.Processed(context.Background(), "wamid.ABC", time.Now()); !errors.Is(err, boom) {
 		t.Fatalf("error = %v, want it to wrap %v", err, boom)
 	}
 }
@@ -257,5 +293,45 @@ func TestActiveIgnoresTTLDeletionLag(t *testing.T) {
 	}
 	if active {
 		t.Fatal("an expired but not-yet-swept item must read as an inactive session")
+	}
+}
+
+func TestUnmarkLetsARetryBeReprocessed(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if _, err := s.MarkProcessed(ctx, "wamid.ABC", now); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	// The turn failed without a 2xx, so the marker is compensated and
+	// WhatsApp's retry must be treated as new work rather than a duplicate.
+	if err := s.Unmark(ctx, "wamid.ABC"); err != nil {
+		t.Fatalf("unmark: %v", err)
+	}
+
+	again, err := s.MarkProcessed(ctx, "wamid.ABC", now)
+	if err != nil || !again {
+		t.Fatalf("after unmark = %v (err %v), want the retry to be reprocessed", again, err)
+	}
+}
+
+func TestUnmarkWithEmptyIDIsANoOp(t *testing.T) {
+	s, tbl := newStore(t)
+	if err := s.Unmark(context.Background(), ""); err != nil {
+		t.Fatalf("unmark empty: %v", err)
+	}
+	if tbl.Calls("DeleteItem") != 0 {
+		t.Fatal("an empty message id must not issue a delete")
+	}
+}
+
+func TestUnmarkPropagatesError(t *testing.T) {
+	s, tbl := newStore(t)
+	boom := errors.New("delete failed")
+	tbl.FailNext("DeleteItem", boom)
+
+	if err := s.Unmark(context.Background(), "wamid.ABC"); !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want it to wrap %v", err, boom)
 	}
 }

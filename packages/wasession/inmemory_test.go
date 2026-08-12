@@ -61,21 +61,27 @@ func TestInMemoryMarkProcessedDedups(t *testing.T) {
 	}
 }
 
-func TestInMemoryUnmarkAllowsReprocessing(t *testing.T) {
+func TestInMemoryProcessed(t *testing.T) {
 	ctx := context.Background()
 	s := NewInMemoryStore()
 	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
 
-	if first, _ := s.MarkProcessed(ctx, "wamid.X", now); !first {
-		t.Fatal("first mark must report first=true")
+	if done, _ := s.Processed(ctx, "wamid.X", now); done {
+		t.Fatal("an unseen message id must not read as processed")
 	}
-	// A failed turn drops the marker...
-	if err := s.Unmark(ctx, "wamid.X"); err != nil {
+	if _, err := s.MarkProcessed(ctx, "wamid.X", now); err != nil {
 		t.Fatal(err)
 	}
-	// ...so the retry is treated as fresh again.
-	if first, _ := s.MarkProcessed(ctx, "wamid.X", now.Add(time.Minute)); !first {
-		t.Fatal("after Unmark, the retry must report first=true")
+	if done, _ := s.Processed(ctx, "wamid.X", now.Add(time.Hour)); !done {
+		t.Fatal("a marked message id must read as processed")
+	}
+	// Past the dedup window the mark is gone, same as the TTL would take it.
+	if done, _ := s.Processed(ctx, "wamid.X", now.Add(DedupWindow+time.Minute)); done {
+		t.Fatal("an expired mark must not read as processed")
+	}
+	// Nothing to remember an empty id by.
+	if done, _ := s.Processed(ctx, "", now); done {
+		t.Fatal("an empty message id must not read as processed")
 	}
 }
 
@@ -96,5 +102,23 @@ func TestInMemoryRecordOnlyExtends(t *testing.T) {
 	at := older.Add(Window).Add(time.Minute)
 	if ok, _ := s.Active(ctx, "p", at); !ok {
 		t.Fatal("older retry should not have shortened the window")
+	}
+}
+
+func TestInMemoryUnmarkAllowsReprocessing(t *testing.T) {
+	ctx := context.Background()
+	s := NewInMemoryStore()
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now); !first {
+		t.Fatal("first mark must report first=true")
+	}
+	// A failed turn drops the marker...
+	if err := s.Unmark(ctx, "wamid.X"); err != nil {
+		t.Fatal(err)
+	}
+	// ...so the retry is treated as fresh again.
+	if first, _ := s.MarkProcessed(ctx, "wamid.X", now.Add(time.Minute)); !first {
+		t.Fatal("after Unmark, the retry must report first=true")
 	}
 }

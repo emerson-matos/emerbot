@@ -65,6 +65,38 @@ func (s *DynamoDBStore) RecordInbound(ctx context.Context, phone string, at time
 	return nil
 }
 
+func (s *DynamoDBStore) Processed(ctx context.Context, messageID string, now time.Time) (bool, error) {
+	if messageID == "" {
+		return false, nil
+	}
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"Phone": &types.AttributeValueMemberS{Value: dedupKeyPrefix + messageID},
+		},
+	})
+	if err != nil {
+		return false, fmt.Errorf("processed: %w", err)
+	}
+	if out.Item == nil {
+		return false, nil
+	}
+	raw, ok := out.Item["ExpiresAt"].(*types.AttributeValueMemberN)
+	if !ok {
+		// The mark is there; only its expiry is unreadable. A mark is a fact
+		// about a message that was answered, and answering somebody twice is
+		// worse than letting one duplicate through.
+		return true, nil
+	}
+	exp, err := strconv.ParseInt(raw.Value, 10, 64)
+	if err != nil {
+		return true, nil
+	}
+	// Same read-time guard as Active: TTL deletion can lag by hours, so trust
+	// ExpiresAt rather than mere presence.
+	return time.Unix(exp, 0).After(now), nil
+}
+
 func (s *DynamoDBStore) MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error) {
 	if messageID == "" {
 		return true, nil
@@ -76,8 +108,9 @@ func (s *DynamoDBStore) MarkProcessed(ctx context.Context, messageID string, now
 			"Phone":     &types.AttributeValueMemberS{Value: dedupKeyPrefix + messageID},
 			"ExpiresAt": &types.AttributeValueMemberN{Value: exp},
 		},
-		// The write only succeeds the first time; a retry of the same message ID
-		// fails the condition and is reported as a duplicate.
+		// The write only succeeds the first time; a redelivery of the same
+		// message ID fails the condition and is reported as a duplicate. This
+		// is the conditional write ADR-029 rests on: whoever writes, processed.
 		ConditionExpression: aws.String("attribute_not_exists(Phone)"),
 	})
 	if err != nil {

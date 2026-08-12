@@ -32,6 +32,16 @@ func (s *InMemoryStore) RecordInbound(_ context.Context, phone string, at time.T
 	return nil
 }
 
+func (s *InMemoryStore) Processed(_ context.Context, messageID string, now time.Time) (bool, error) {
+	if messageID == "" {
+		return false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	exp, ok := s.processed[messageID]
+	return ok && exp.After(now), nil
+}
+
 func (s *InMemoryStore) MarkProcessed(_ context.Context, messageID string, now time.Time) (bool, error) {
 	if messageID == "" {
 		return true, nil

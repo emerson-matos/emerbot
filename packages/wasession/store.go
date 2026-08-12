@@ -15,9 +15,9 @@ import (
 // notifier's timing and clock skew) and is also the DynamoDB TTL on each record.
 const Window = 20 * time.Hour
 
-// DedupWindow is how long a processed message ID is remembered so WhatsApp
-// retries (which re-deliver the same message ID) are ignored. It comfortably
-// exceeds Meta's retry span so a duplicate can never slip through after expiry.
+// DedupWindow is how long a processed message ID is remembered so a redelivery
+// (the queue's, or Meta's own retry behind it) is ignored. It comfortably
+// exceeds both retry spans so a duplicate can never slip through after expiry.
 const DedupWindow = 48 * time.Hour
 
 // dedupKeyPrefix namespaces message-dedup items so their hash key can never
@@ -40,9 +40,18 @@ type Store interface {
 	// via TTL, that covers both "never messaged us" and "messaged us long
 	// enough ago that the record is gone" — indistinguishable by design.
 	ActiveUntil(ctx context.Context, phone string) (time.Time, error)
+	// Processed answers the domain's question — "já respondemos esta mensagem?"
+	// — as of now. The worker asks it before doing any work, so a redelivery
+	// costs a read instead of a second Gemini turn and a second answer.
+	//
+	// It is a different question from the queue's transport dedup, which only
+	// covers "esta mensagem chegou duas vezes agora" and expires with a window
+	// that belongs to SQS (ADR-029). An empty messageID is never processed
+	// (there is nothing to remember it by).
+	Processed(ctx context.Context, messageID string, now time.Time) (bool, error)
 	// MarkProcessed records that messageID has been handled and reports whether
-	// this is the first time it was seen (true = process it; false = a retry to
-	// ignore). An empty messageID always returns true (nothing to dedup on).
+	// this call is the one that recorded it (false = someone got there first).
+	// An empty messageID always returns true (nothing to dedup on).
 	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
 	// Unmark removes a message's dedup marker. It compensates a MarkProcessed
 	// whose turn then failed without a 2xx, so WhatsApp's retry is reprocessed
