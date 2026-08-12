@@ -40,12 +40,15 @@ func TestNewFromEnvWithNothingConfigured(t *testing.T) {
 	app := NewFromEnv("secret-do-app", "")
 	if app == nil {
 		t.Fatal("NewFromEnv returned nil")
+		return
 	}
 	if app.queue != nil {
 		t.Fatal("no queue url means no publisher")
+		return
 	}
 	if app.sessions != nil {
 		t.Fatal("no sessions table means no session store")
+		return
 	}
 	// WEBHOOK_VERIFY_TOKEN unset falls back to the app secret.
 	if app.verifyToken != "secret-do-app" {

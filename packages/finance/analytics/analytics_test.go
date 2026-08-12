@@ -604,6 +604,7 @@ func TestCashPosition(t *testing.T) {
 		next := got.NextDay
 		if next == nil {
 			t.Fatal("NextDay = nil, want tomorrow's own line of the runway")
+			return
 		}
 		if next.Date != "2026-07-11" {
 			t.Errorf("Date = %q, want tomorrow", next.Date)
@@ -959,6 +960,7 @@ func TestHealthGoalPaceMessages(t *testing.T) {
 	}
 	if behind == nil {
 		t.Fatalf("expected a goal-behind insight, got %+v", health.Messages)
+		return
 	}
 	if behind.Description != "A projeção indica fechamento abaixo da meta." {
 		t.Errorf("description = %q, want neutral projection message", behind.Description)
@@ -3361,6 +3363,7 @@ func TestPartialMonthStillReportsARealDrop(t *testing.T) {
 	}
 	if dropped == nil {
 		t.Fatalf("expected an income-drop insight, got %+v", got.Health.Messages)
+		return
 	}
 	// The 7th, not the 9th: the window closes on whole weeks, so days 8 and 9
 	// wait for the second week to finish before they can be held against July.
