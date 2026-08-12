@@ -21,6 +21,11 @@ func analysisRequest(query string) *http.Request {
 	return req.WithContext(apiauth.WithClaims(req.Context(), claims))
 }
 
+func projectionExperimentRequest() *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/analysis/projection-experiment", nil)
+	return req.WithContext(apiauth.WithClaims(req.Context(), apiauth.Claims{UserID: testUser}))
+}
+
 func seedPaidEntry(t *testing.T, store pkgfinance.Store, date string, amount int64, category string, kind domain.EntryType) {
 	t.Helper()
 	d, err := domain.ParseCalendarDate(date)
@@ -104,5 +109,20 @@ func TestAnalysisMonthlyRequiresAuth(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 without claims", rec.Code)
+	}
+}
+
+func TestProjectionExperimentReturnsAnObservationPayload(t *testing.T) {
+	rec := httptest.NewRecorder()
+	NewAnalysisHandler(pkgfinance.NewInMemoryStore(), time.UTC).ProjectionExperiment(rec, projectionExperimentRequest())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got analytics.ProjectionExperiment
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode experiment: %v", err)
+	}
+	if got.Current.Available {
+		t.Error("empty ledger returned an available experiment")
 	}
 }

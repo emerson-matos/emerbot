@@ -7,6 +7,7 @@ import {
   Circle,
   CircleDollarSign,
   Clock,
+  FlaskConical,
   Banknote,
   Lightbulb,
   PieChart,
@@ -22,6 +23,7 @@ import EmptyState from '@/components/EmptyState'
 import KpiCard, { KpiCardContent, toneVar } from '@/components/KpiCard'
 import WeekRhythm from '@/components/WeekRhythm'
 import { useMonthlyAnalysis } from '../hooks/useMonthlyAnalysis'
+import { useProjectionExperiment } from '../hooks/useProjectionExperiment'
 import { formatBRL, formatMonthLabel } from '@/lib/format'
 import { weekdayFull } from '@/lib/weekdays'
 import { currentMonthKey } from '@/lib/entries'
@@ -540,6 +542,44 @@ function ProjectionSection({ projection, faturamento, period }: {
   )
 }
 
+// ADR-030 keeps this card out of the operational projection: it is evidence for
+// a candidate model, not a second instruction about what the pharmacy should do.
+function ProjectionExperimentSection({ experiment }: { experiment: ReturnType<typeof useProjectionExperiment> }) {
+  if (experiment.isPending) {
+    return <Section title="Projeções em teste" icon={FlaskConical}><Skeleton className="h-24 w-full" /></Section>
+  }
+  if (experiment.isError || !experiment.data) {
+    return <Section title="Projeções em teste" icon={FlaskConical} empty="Não foi possível carregar a validação da projeção.">{null}</Section>
+  }
+
+  const { current, backtest } = experiment.data
+  return (
+    <Section
+      title="Projeções em teste"
+      icon={FlaskConical}
+      action={<span className="text-xs font-medium text-muted-foreground">Não altera a projeção oficial</span>}
+      empty={!current.available ? 'Ainda não há dias fechados suficientes para medir o ritmo recente.' : undefined}
+    >
+      {current.available && <>
+        <div className="grid grid-cols-2 gap-3">
+          <div><p className="text-xs text-muted-foreground">Oficial</p><p className="font-semibold tabular-nums">{formatBRL(current.official)}</p></div>
+          <div><p className="text-xs text-muted-foreground">Por ritmo recente</p><p className="font-semibold tabular-nums">{formatBRL(current.experimental)}</p></div>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Ritmo recente: <span className="font-medium text-foreground">{Math.round((current.recentFactor - 1) * 100)}%</span>{' '}
+          sobre o padrão dos dias da semana, em {current.observations} dias fechados.
+        </p>
+        {backtest.samples.length > 0 ? <div className="space-y-1 border-t pt-3 text-sm">
+          <p className="font-medium">Validação histórica</p>
+          <Row label="Erro médio oficial" value={formatBRL(backtest.officialMae)} />
+          <Row label="Erro médio ritmo recente" value={formatBRL(backtest.regimeMae)} />
+          <p className="text-xs text-muted-foreground">Vitórias: oficial {backtest.officialWins}, ritmo recente {backtest.regimeWins}, em {backtest.samples.length} cortes.</p>
+        </div> : <p className="border-t pt-3 text-sm text-muted-foreground">Ainda não há histórico suficiente para o backtest.</p>}
+      </>}
+    </Section>
+  )
+}
+
 function WeekComparisonSection({ data }: { data: Analysis['weekComparison'] }) {
   // The pace pair, not the running totals: both sides cover the same finished
   // days of the week, so today — still being traded — is in neither. Comparing
@@ -747,6 +787,8 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
 }
 
 function AnalysisBody({ analysis }: { analysis: Analysis }) {
+  const experiment = useProjectionExperiment(analysis.month === currentMonthKey())
+
   return (
     <>
       {/* The two questions the page exists to answer, in the order they are
@@ -758,11 +800,19 @@ function AnalysisBody({ analysis }: { analysis: Analysis }) {
         period={analysis.period}
       />
 
+      {/* The candidate answers today's close. A past-month analysis has already
+          closed, so placing today's experiment beside it would be misleading. */}
+      {analysis.month === currentMonthKey() && <ProjectionExperimentSection experiment={experiment} />}
+
       <Section
         title="A semana da farmácia"
         icon={Calendar}
       >
-        <WeekRhythm days={analysis.weekdays} todayTarget={analysis.projection.todayTarget} />
+        <WeekRhythm
+          days={analysis.weekdays}
+          todayTarget={analysis.projection.todayTarget}
+          errors={experiment.data?.backtest.weekdayErrors}
+        />
       </Section>
 
       <KpiSection

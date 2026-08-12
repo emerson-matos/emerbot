@@ -116,6 +116,66 @@ func TestBuildTrend(t *testing.T) {
 	}
 }
 
+func TestRecentFactorUsesMedianRatherThanAnExceptionalDay(t *testing.T) {
+	from := day(t, "2026-06-16")
+	to := day(t, "2026-08-10")
+	entries := make([]domain.FinancialEntry, 0, recentRegimeDays)
+	start := to.Time().AddDate(0, 0, -(recentRegimeDays - 1))
+	for current := start; !current.After(to.Time()); current = current.AddDate(0, 0, 1) {
+		amount := int64(110000)
+		if current.Format("2006-01-02") == "2026-08-01" {
+			amount = 470000 // must not move the median from the current rhythm.
+		}
+		entries = append(entries, sale(t, current.Format("2006-01-02"), amount))
+	}
+
+	factor, observations, ok := recentFactor(entries, ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000), from, to)
+	if !ok || observations != recentRegimeDays {
+		t.Fatalf("recentFactor availability = %v/%d, want true/%d", ok, observations, recentRegimeDays)
+	}
+	if factor != 1.1 {
+		t.Errorf("factor = %.2f, want 1.10", factor)
+	}
+}
+
+func TestProjectedCloseSharesOfficialArithmetic(t *testing.T) {
+	monthClock := clock(t, "2026-07", "2026-07-27")
+	rates := ratesFor(100000, 100000, 100000, 100000, 100000, 100000, 100000)
+	remaining, projected := projectedClose(rates, 1, monthClock, 1000000, 25000, monthClock.today)
+	official := buildProjection(rates, GoalProgress{RevenueActual: 1000000, DaysRemaining: monthClock.remaining}, monthClock, 25000)
+	if remaining != official.Remaining || projected != official.Projected {
+		t.Errorf("shared close = %d/%d, official = %d/%d", remaining, projected, official.Remaining, official.Projected)
+	}
+}
+
+func TestWeekdayForecastErrorsAreOutOfSample(t *testing.T) {
+	// The error window ends on 10 August. Every earlier day sells R$1.000,00;
+	// that Monday sells R$2.000,00. Its baseline must still be R$1.000,00,
+	// because the baseline for a day ends the day before it.
+	entries := make([]domain.FinancialEntry, 0, 80)
+	for current := at12(t, "2026-05-26"); !current.After(at12(t, "2026-08-10")); current = current.AddDate(0, 0, 1) {
+		amount := int64(100000)
+		if current.Format("2006-01-02") == "2026-08-10" {
+			amount = 200000
+		}
+		entries = append(entries, sale(t, current.Format("2006-01-02"), amount))
+	}
+
+	errors := weekdayForecastErrors(entries, at12(t, "2026-08-11"))
+	var monday ExperimentWeekdayError
+	for _, got := range errors {
+		if got.Day == time.Monday {
+			monday = got
+		}
+	}
+	if monday.Observations != 3 {
+		t.Fatalf("Monday observations = %d, want 3", monday.Observations)
+	}
+	if monday.MAE != 33333 {
+		t.Errorf("Monday MAE = %d, want 33333", monday.MAE)
+	}
+}
+
 func TestWeekdayStatsAveragesOverDistinctDays(t *testing.T) {
 	// Two sales on the same Monday, one on the next — the Monday average is
 	// over two Mondays, not three sales. With Gaussian weighting and both
@@ -2296,8 +2356,11 @@ func TestBuildProducesAWholeAnalysis(t *testing.T) {
 	if got.Trends.Faturamento.Previous != 400000 {
 		t.Errorf("Trends.Faturamento.Previous = %d, want last month through the 14th", got.Trends.Faturamento.Previous)
 	}
-	if got.Goals.RevenueActual != 450000 {
-		t.Errorf("Goals.RevenueActual = %d, want the faturamento total", got.Goals.RevenueActual)
+	// Goals.RevenueActual is now through-today (not the full-month summary),
+	// matching the projection's actual baseline. All four sales fall on or
+	// before the 15th (today), so the total is 200k+100k+150k+99.999 = 549.999.
+	if got.Goals.RevenueActual != 549999 {
+		t.Errorf("Goals.RevenueActual = %d, want revenue through today (549999)", got.Goals.RevenueActual)
 	}
 	// July is genuinely *ahead* over the days that have finished: 450.000 by
 	// the 14th against June's 400.000 by its 14th. Comparing against June's
@@ -2675,14 +2738,27 @@ func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {
 			window = append(window, sale(t, date.String(), amount))
 		}
 	}
+	// RevenueEntries must be month-scoped so revenueThroughDay (which matches
+	// by day-of-month) doesn't count June/July entries.
+	monthRevenue := []domain.FinancialEntry{
+		sale(t, "2026-08-01", 120000),
+		sale(t, "2026-08-02", 120000),
+		sale(t, "2026-08-03", 40000), // Sunday
+		sale(t, "2026-08-04", 120000),
+		sale(t, "2026-08-05", 120000),
+		sale(t, "2026-08-06", 120000),
+		sale(t, "2026-08-07", 120000),
+		sale(t, "2026-08-08", 120000),
+		sale(t, "2026-08-09", 120000),
+	}
 
 	analysis := Build(Input{
 		Month:                "2026-08",
 		Entries:              window,
-		RevenueEntries:       window,
+		RevenueEntries:       monthRevenue,
 		WindowRevenueEntries: window,
 		Summaries:            []*pkgfinance.MonthlySummary{nil, nil, summary(360000, 0)},
-		Goals:                []*domain.Goal{nil, nil, {Month: "2026-08", RevenueTarget: 4000000}},
+		Goals:                []*domain.Goal{nil, nil, {Month: "2026-08", RevenueTarget: 10000000}},
 		Now:                  at12(t, "2026-08-09"), // a Sunday
 	})
 
@@ -4061,5 +4137,53 @@ func TestClosedMonthKeepsEveryDay(t *testing.T) {
 	}
 	if composed != 500000 {
 		t.Errorf("ExpenseComposition totals %d, want the whole closed month (500000)", composed)
+	}
+}
+
+func TestEstimateAtDoesNotInflateTodayRevenueFromOtherMonths(t *testing.T) {
+	// The bug: revenueOnDay matched by day-of-month number only. An entry from
+	// Jul 12 counted as "today's revenue" on Aug 12, inflating todayRevenue
+	// and collapsing the projection. This test proves the fix by checking that
+	// a huge previous-month entry on the same day number does NOT reduce the
+	// official projection.
+	//
+	// Setup: Aug 2026, today is Aug 12 (Wednesday). We seed enough entries in
+	// the trailing window so both paths get identical rates. Then we add a
+	// giant entry on Jul 12 — if todayRevenue is inflated by it, the
+	// projection drops; if the fix works, the projection is unchanged.
+
+	// Seed a full 8-week window of entries (one per weekday) so rates are
+	// well-defined and identical for both entry sets.
+	entries := make([]domain.FinancialEntry, 0, 60)
+	for d := at12(t, "2026-06-15"); !d.After(at12(t, "2026-08-11")); d = d.AddDate(0, 0, 1) {
+		wd := d.Weekday()
+		if wd == time.Sunday {
+			continue // pharmacy closed Sundays
+		}
+		entries = append(entries, domain.FinancialEntry{
+			TransactionDate: domain.NewCalendarDate(d),
+			Amount:          100000, // R$1.000 flat
+			Type:            domain.EntryTypeIncome,
+			Category:        "venda_balcao",
+			Origin:          domain.OriginVenda,
+		})
+	}
+
+	// Add today's entry (Aug 12) for R$100
+	entries = append(entries, sale(t, "2026-08-12", 10000))
+
+	// A huge entry on Jul 12 (same day number) — the old bug would count
+	// this as today's revenue, inflating it and collapsing the projection.
+	broadEntries := append(slices.Clone(entries), sale(t, "2026-07-12", 5000000))
+
+	monthOnly := estimateAt(entries, "2026-08", at12(t, "2026-08-12"))
+	broad := estimateAt(broadEntries, "2026-08", at12(t, "2026-08-12"))
+
+	// The projection must NOT drop when previous-month entries are present.
+	// Before the fix, the Jul 12 entry inflated todayRevenue and reduced
+	// the official projection significantly.
+	if broad.Official < monthOnly.Official {
+		t.Errorf("broad entry set lowered projection: month-only=%d, broad=%d (Jul 12 entry leaked into todayRevenue)",
+			monthOnly.Official, broad.Official)
 	}
 }

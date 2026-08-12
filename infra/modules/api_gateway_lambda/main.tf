@@ -581,7 +581,7 @@ locals {
     "GET /entries", "POST /entries",
     "GET /entries/{date}/{id}", "PUT /entries/{date}/{id}", "DELETE /entries/{date}/{id}",
     "GET /summary/monthly", "GET /summary/categories", "GET /summary/cashflow",
-    "GET /analysis/monthly", "GET /analysis", "POST /analysis",
+    "GET /analysis/monthly", "GET /analysis/projection-experiment", "GET /analysis", "POST /analysis",
     "GET /categories", "POST /categories", "GET /goals", "PUT /goals",
     # Só leitura: não há preferência para gravar (ADR-023), e é esse GET que
     # cadastra o destinatário. Sem a rota do PUT, um cliente antigo que ainda
@@ -1012,4 +1012,3 @@ resource "aws_s3_bucket_notification" "payment_imports" {
 
   depends_on = [aws_lambda_permission.allow_s3_importer]
 }
-

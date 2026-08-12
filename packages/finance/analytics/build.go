@@ -106,6 +106,10 @@ func Build(in Input) Analysis {
 	// "everything scheduled" ones in the same row, and made Resultado the one
 	// minus the other. See monthClock.elapsed.
 	sofar := totalsThroughDay(in.Entries, clock.elapsed())
+	// Actual revenue through today, matching the experiment's revenueThrough:
+	// the summary covers the full month including future sales, but the
+	// projection must only start from what has already been sold.
+	actualRevenue := revenueThroughDay(in.RevenueEntries, clock.elapsed())
 	// The same window as a slice, for every retrospective breakdown below. They
 	// read the whole month while Despesa above read the days that had arrived,
 	// so one payload carried both "despesa R$ 3.000,00" and a composition
@@ -137,7 +141,7 @@ func Build(in Input) Analysis {
 		revenueTarget = currentGoal.RevenueTarget
 	}
 	week := buildWeekComparison(in.RevenueEntries, in.Now, revenueTarget)
-	goals := goalProgress(currentGoal, clock, faturamento, sofar.expense)
+	goals := goalProgress(currentGoal, clock, actualRevenue, sofar.expense)
 	// One reading of the trailing window: per-weekday averages, Gaussian-weighted
 	// so recent weeks count for more. The card is a view of it (weekdayStats) and
 	// the projection is priced from it, so the average the page displays is by

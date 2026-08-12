@@ -593,6 +593,35 @@ export interface Projection {
   plan: Plan;
 }
 
+/** ADR-030's observational forecast candidate; it never drives the official projection. */
+export interface ProjectionExperiment {
+  current: {
+    available: boolean;
+    official: number;
+    experimental: number;
+    recentFactor: number;
+    observations: number;
+  };
+  backtest: {
+    samples: Array<{
+      month: string;
+      cutoffDay: number;
+      actualClose: number;
+      official: number;
+      experimental: number;
+    }>;
+    officialMae: number;
+    regimeMae: number;
+    officialWins: number;
+    regimeWins: number;
+    weekdayErrors: Array<{
+      day: number;
+      mae: number;
+      observations: number;
+    }>;
+  };
+}
+
 export interface Plan {
   state: DayTargetState;
   /** Never below 1. Meaningless unless `state` is `ok`. */

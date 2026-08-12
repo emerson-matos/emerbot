@@ -54,3 +54,22 @@ func (h *AnalysisHandler) Monthly(w http.ResponseWriter, r *http.Request) {
 
 	httpx.OK(w, analysis)
 }
+
+// ProjectionExperiment serves the isolated, observational forecast candidate.
+// It intentionally does not share the monthly payload: the experiment must not
+// change the snapshot, bot or operational projection contract.
+func (h *AnalysisHandler) ProjectionExperiment(w http.ResponseWriter, r *http.Request) {
+	claims, ok := apiauth.ClaimsFromContext(r.Context())
+	if !ok {
+		httpx.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	experiment, err := analytics.AssembleProjectionExperiment(r.Context(), h.store, claims.UserID, time.Now().In(h.loc))
+	if err != nil {
+		log.Printf("projection experiment error: %v", err)
+		httpx.Error(w, "failed to build projection experiment", http.StatusInternalServerError)
+		return
+	}
+	httpx.OK(w, experiment)
+}

@@ -50,20 +50,7 @@ func buildProjection(rates dailyRates, goals GoalProgress, clock monthClock, tod
 		DaysRemaining: goals.DaysRemaining,
 		Basis:         basis,
 	}
-
-	// From today, inclusive: today is a day the pharmacy can still sell on.
-	// Starting at tomorrow wrote today off before it had happened, and on the
-	// last day of the month left nothing at all to project.
-	for day := clock.today; clock.inProgress && day <= clock.total; day++ {
-		avg := rates.avg[int(clock.weekdayOf(day))]
-		if day == clock.today {
-			// Only the part of an ordinary day that has not happened yet is
-			// still ahead of us.
-			avg = max(0, avg-todayRevenue)
-		}
-		projection.Remaining += avg
-	}
-	projection.Projected += projection.Remaining
+	projection.Remaining, projection.Projected = projectedClose(rates, 1, clock, goals.RevenueActual, todayRevenue, clock.today)
 
 	// Today's ask, assigned exactly once and before the early return below, so
 	// that a month with no goal still says *why* it has no ask instead of
@@ -88,6 +75,21 @@ func buildProjection(rates dailyRates, goals GoalProgress, clock monthClock, tod
 		projection.Gap = gap
 	}
 	return projection
+}
+
+// projectedClose is the shared arithmetic behind the official forecast and an
+// experimental one. factor changes only the expectation for days still ahead;
+// what today has already sold is never multiplied or counted twice.
+func projectedClose(rates dailyRates, factor float64, clock monthClock, actual, todayRevenue int64, asOf int) (remaining, projected int64) {
+	projected = actual
+	for day := asOf; clock.inProgress && day <= clock.total; day++ {
+		expected := roundToInt64(float64(rates.avg[int(clock.weekdayOf(day))]) * factor)
+		if day == asOf {
+			expected = max(0, expected-todayRevenue)
+		}
+		remaining += expected
+	}
+	return remaining, projected + remaining
 }
 
 // newPlan distributes the gap over the days the month has left, and never asks

@@ -3,7 +3,7 @@ import EmptyState from '@/components/EmptyState'
 import { formatBRL } from '@/lib/format'
 import { weekdayFull, weekdayShort, weekdayWithArticle } from '@/lib/weekdays'
 import { DayTargetSource, DayTargetState } from '@/api/types'
-import type { DayTarget, DayTargetScale, WeekdayStat } from '@/api/types'
+import type { DayTarget, DayTargetScale, ProjectionExperiment, WeekdayStat } from '@/api/types'
 
 // A pharmacy's week has a shape — the weekend carries it, Sunday is a trough —
 // and the seven figures used to be printed in seven identical grey boxes, where
@@ -72,9 +72,10 @@ function TodayMark({ target }: { target: DayTarget }) {
   )
 }
 
-export default function WeekRhythm({ days, todayTarget }: {
+export default function WeekRhythm({ days, todayTarget, errors = [] }: {
   days: WeekdayStat[]
   todayTarget: DayTarget
+  errors?: ProjectionExperiment['backtest']['weekdayErrors']
 }) {
   // Weekday order, always. Today used to be sorted to the front, which on any
   // day but a Sunday left a strip labelled Qua, Dom, Seg, Ter… — a week that
@@ -92,6 +93,7 @@ export default function WeekRhythm({ days, todayTarget }: {
   const ceiling = Math.max(...week.map((day) => (day.count > 0 ? day.avg : 0))) * 1.15
 
   const weeksMeasured = Math.max(...week.map((day) => day.count), 0)
+  const errorByDay = new Map(errors.map((error) => [error.day, error]))
 
   if (!traded) {
     return (
@@ -163,6 +165,11 @@ export default function WeekRhythm({ days, todayTarget }: {
                   ? formatBRL(day.avg, { fractionDigits: 0, roundingMode: 'expand' })
                   : '—'}
               </p>
+              {errorByDay.get(day.day) && (
+                <p className="text-center text-[11px] leading-tight text-muted-foreground tabular-nums">
+                  erro médio {formatBRL(errorByDay.get(day.day)!.mae, { fractionDigits: 0, roundingMode: 'expand' })}
+                </p>
+              )}
             </div>
           )
         })}

@@ -87,6 +87,9 @@ func newApp(finStore pkgfinance.Store, payRepo pkgpayments.Repository, fiadoStor
 	// The whole analysis in one call — health, trends, weekday averages, week
 	// comparison, goal pace, cash position and recommendations.
 	mux.Handle("GET /analysis/monthly", authMw(http.HandlerFunc(analysisHandler.Monthly)))
+	// ADR-030: an observation-only forecast candidate, separate from the
+	// operational analysis and its stored daily snapshots.
+	mux.Handle("GET /analysis/projection-experiment", authMw(http.HandlerFunc(analysisHandler.ProjectionExperiment)))
 
 	// Cached daily snapshot — the notifier persists it, this serves it.
 	// POST /analysis triggers an on-demand recalculation.
