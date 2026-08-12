@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -555,9 +556,7 @@ func TestCreateEntryToolRecordsOrigin(t *testing.T) {
 				"type": "income", "amount": 100.0,
 				"category": "venda_balcao", "is_pending": false,
 			}
-			for k, v := range tc.args {
-				args[k] = v
-			}
+			maps.Copy(args, tc.args)
 			callTool(t, h, "u1", args)
 
 			entries, err := store.ListEntries(context.Background(), "u1", EntryFilter{})

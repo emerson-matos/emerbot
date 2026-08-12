@@ -586,18 +586,18 @@ func TestBillListSplitsRatherThanTruncates(t *testing.T) {
 		t.Errorf("BillListsSent = %d, want %d", res.BillListsSent, len(lists))
 	}
 
-	all := ""
+	var all strings.Builder
 	for i, m := range lists {
 		if len(m.body) > maxWhatsAppText {
 			t.Errorf("message %d is %d chars, over the %d budget", i+1, len(m.body), maxWhatsAppText)
 		}
-		all += m.body
+		all.WriteString(m.body)
 	}
 	// Nothing was dropped on the way, and the last bill is as present as the
 	// first — the whole point of splitting instead of capping.
 	for i := range bills {
 		want := fmt.Sprintf("hospitalar número %03d", i)
-		if got := strings.Count(all, want); got != 1 {
+		if got := strings.Count(all.String(), want); got != 1 {
 			t.Fatalf("bill %d appears %d times across %d messages", i, got, len(lists))
 		}
 	}
@@ -637,7 +637,7 @@ func TestBillListSurvivesAnAbsurdDescription(t *testing.T) {
 		t.Fatalf("the list did not go out: %d messages, res=%+v", len(lists), res)
 	}
 
-	all := ""
+	var all strings.Builder
 	for i, m := range lists {
 		if len(m.body) > maxWhatsAppText {
 			t.Errorf("message %d is %d bytes — Meta would reject it whole", i+1, len(m.body))
@@ -645,20 +645,20 @@ func TestBillListSurvivesAnAbsurdDescription(t *testing.T) {
 		if !utf8.ValidString(m.body) {
 			t.Errorf("message %d was cut mid-rune", i+1)
 		}
-		all += m.body
+		all.WriteString(m.body)
 	}
 	// The bills behind the absurd one are what this is about.
 	for _, want := range []string{"R$ 9.000,00 — Folha de pagamento", "R$ 135,00 — Energia"} {
-		if !strings.Contains(all, want) {
-			t.Errorf("a bill was lost behind the over-long line: %q missing from\n%s", want, all)
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("a bill was lost behind the over-long line: %q missing from\n%s", want, all.String())
 		}
 	}
 	// The clipped one keeps its amount and says it was cut.
-	if !strings.Contains(all, "R$ 1.000,00 — descrição colada") {
-		t.Errorf("the clipped line lost its amount:\n%s", all)
+	if !strings.Contains(all.String(), "R$ 1.000,00 — descrição colada") {
+		t.Errorf("the clipped line lost its amount:\n%s", all.String())
 	}
-	if !strings.Contains(all, "…") {
-		t.Errorf("the line was cut without saying so:\n%s", all)
+	if !strings.Contains(all.String(), "…") {
+		t.Errorf("the line was cut without saying so:\n%s", all.String())
 	}
 }
 

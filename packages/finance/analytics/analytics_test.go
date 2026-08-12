@@ -664,6 +664,7 @@ func TestCashPosition(t *testing.T) {
 		next := got.NextDay
 		if next == nil {
 			t.Fatal("NextDay = nil, want tomorrow's own line of the runway")
+			return
 		}
 		if next.Date != "2026-07-11" {
 			t.Errorf("Date = %q, want tomorrow", next.Date)
@@ -1019,6 +1020,7 @@ func TestHealthGoalPaceMessages(t *testing.T) {
 	}
 	if behind == nil {
 		t.Fatalf("expected a goal-behind insight, got %+v", health.Messages)
+		return
 	}
 	if behind.Description != "A projeção indica fechamento abaixo da meta." {
 		t.Errorf("description = %q, want neutral projection message", behind.Description)
@@ -1826,9 +1828,9 @@ func TestTheMonthIsProjectedAtTheRatesTheCardShows(t *testing.T) {
 	var window []domain.FinancialEntry
 	// Eight weeks of trading, every weekday, at amounts that differ week to week
 	// so a flat average and a weighted one cannot coincide by accident.
-	for week := 0; week < 8; week++ {
+	for week := range 8 {
 		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
-		for d := 0; d < 7; d++ {
+		for d := range 7 {
 			date := domain.NewCalendarDate(monday.AddDate(0, 0, d))
 			window = append(window, sale(t, date.String(), int64(100000+week*7000+d*3000)))
 		}
@@ -1963,7 +1965,7 @@ func TestTheRestOfTheMonthIsPricedAtItsRemainingWeekdays(t *testing.T) {
 // six older weeks and the projection took the full window to catch up.
 func TestProjectionRatesFollowARecentShift(t *testing.T) {
 	var window []domain.FinancialEntry
-	for week := 0; week < 8; week++ {
+	for week := range 8 {
 		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
 		amount := int64(100000)
 		if week >= 6 { // the last two weeks of the window
@@ -2102,7 +2104,7 @@ func TestProjectionRatesDoNotLurchOnOneMoreTradingDay(t *testing.T) {
 	withSix := projectionRates(six, from, to)
 	withSeven := projectionRates(seven, from, to)
 
-	for d := 0; d < daysInWeek; d++ {
+	for d := range daysInWeek {
 		if d == 6 {
 			continue
 		}
@@ -2727,9 +2729,9 @@ func TestToolPayloadCarriesTheDaysAskAndItsHistory(t *testing.T) {
 	// Eight weeks where a Sunday is worth a third of a Saturday, which is the
 	// shape a flat daily average gets wrong.
 	var window []domain.FinancialEntry
-	for week := 0; week < projectionWindowWeeks; week++ {
+	for week := range projectionWindowWeeks {
 		monday := day(t, "2026-06-08").Time().AddDate(0, 0, week*7)
-		for d := 0; d < daysInWeek; d++ {
+		for d := range daysInWeek {
 			date := domain.NewCalendarDate(monday.AddDate(0, 0, d))
 			amount := int64(120000)
 			if date.Time().Weekday() == time.Sunday {
@@ -3437,6 +3439,7 @@ func TestPartialMonthStillReportsARealDrop(t *testing.T) {
 	}
 	if dropped == nil {
 		t.Fatalf("expected an income-drop insight, got %+v", got.Health.Messages)
+		return
 	}
 	// The 7th, not the 9th: the window closes on whole weeks, so days 8 and 9
 	// wait for the second week to finish before they can be held against July.
@@ -3842,7 +3845,7 @@ func TestGaussianWeightDistribution(t *testing.T) {
 func TestWeekdayStatsWeightedConstantSeries(t *testing.T) {
 	// 8 consecutive Mondays, each with R$100.
 	var entries []domain.FinancialEntry
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7) // Mon Jun 1, Jun 8, ...
 		entries = append(entries, domain.FinancialEntry{
 			TransactionDate: domain.NewCalendarDate(date),
@@ -3873,7 +3876,7 @@ func TestWeekdayStatsWeightedOutlierSuppression(t *testing.T) {
 	// 7 recent Mondays at R$100, 1 old Monday (week 7) at R$5000.
 	var entries []domain.FinancialEntry
 	// The recent normal series: June 1 through July 6 (Mondays).
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		date := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
 		entries = append(entries, domain.FinancialEntry{
 			TransactionDate: domain.NewCalendarDate(date),
@@ -3920,7 +3923,7 @@ func TestWeekdayStatsWeightedOutlierSuppression(t *testing.T) {
 func TestWeekdayStatsWeightedRecencyBias(t *testing.T) {
 	// 7 old Mondays at R$100, 1 recent Monday at R$5000.
 	var entries []domain.FinancialEntry
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		date := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
 		entries = append(entries, domain.FinancialEntry{
 			TransactionDate: domain.NewCalendarDate(date),
@@ -3959,7 +3962,7 @@ func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
 
 	// 3 distinct weeks → parcial.
 	var few []domain.FinancialEntry
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		date := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
 		few = append(few, domain.FinancialEntry{
 			TransactionDate: domain.NewCalendarDate(date),
@@ -3976,7 +3979,7 @@ func TestWeekdayStatsWeightedBasisThresholds(t *testing.T) {
 
 	// 7 distinct weeks → janela.
 	var many []domain.FinancialEntry
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		date := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
 		many = append(many, domain.FinancialEntry{
 			TransactionDate: domain.NewCalendarDate(date),
