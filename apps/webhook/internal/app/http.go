@@ -43,18 +43,19 @@ func (a *App) HandleWebhookHTTP(ctx context.Context, req WebhookHTTPRequest) (We
 			return httpJSONResponse(http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		}
 
-		// Process every batched message and answer Meta with a single status.
+		// Enqueue every batched message and answer Meta with a single status.
 		// 200 for success and for permanent (4xx) errors — a malformed message
 		// won't parse differently on retry, so we don't want Meta hammering it
 		// for 7 days. But a transient (5xx) failure returns a non-200 so Meta
 		// redelivers instead of silently dropping the message.
 		//
-		// NOTE: a real inbound notification carries a single message, so a
-		// batch-level retry effectively never reprocesses a sibling. Per-message
-		// idempotency (for larger batches) is a tracked follow-up.
+		// A batch-level retry re-enqueues the siblings that already made it,
+		// which is now harmless rather than a follow-up: the message id is the
+		// FIFO dedup id, and past that window the worker's mark in DynamoDB is
+		// what keeps one message from being answered twice (ADR-029).
 		retryStatus := 0
 		for i := range messages {
-			if _, status, herr := a.Handle(ctx, messages[i]); herr != nil {
+			if status, herr := a.Handle(ctx, messages[i]); herr != nil {
 				log.Printf("handling webhook message %s: %v", messages[i].MessageID, herr)
 				if status >= http.StatusInternalServerError {
 					retryStatus = status

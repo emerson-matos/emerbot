@@ -6,22 +6,22 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/emerson/emerbot/packages/domain"
-	"github.com/emerson/emerbot/packages/orchestrator"
-	"github.com/emerson/emerbot/packages/wasession"
+	"github.com/emerson/emerbot/packages/wainbound"
 )
 
 func TestHandleLambdaOK(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newTestApp(client)
+	app, queue := newTestApp(client)
 	body := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
@@ -44,8 +44,13 @@ func TestHandleLambdaOK(t *testing.T) {
 	if client.markAsReadCalls != 1 {
 		t.Fatalf("expected MarkAsRead to be called once, got %d", client.markAsReadCalls)
 	}
-	if client.sendReplyCalls != 1 {
-		t.Fatalf("expected SendReply to be called once, got %d", client.sendReplyCalls)
+	// The webhook does not answer anybody: it hands the message over and says
+	// so. Whatever the reply turns out to be is the worker's business (ADR-028).
+	if client.sendReplyCalls != 0 {
+		t.Fatalf("the webhook must not reply, got %d sends", client.sendReplyCalls)
+	}
+	if len(queue.published) != 1 {
+		t.Fatalf("published %d messages, want 1", len(queue.published))
 	}
 	if response.Body != `{"ok":true}` {
 		t.Fatalf("expected ok response body, got %s", response.Body)
@@ -56,7 +61,7 @@ func TestHandleWebhookHTTPProcessesBatchedMessages(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newTestApp(client)
+	app, queue := newTestApp(client)
 	body := []byte(testWebhookWithTexts("oi", "olá"))
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -73,15 +78,15 @@ func TestHandleWebhookHTTPProcessesBatchedMessages(t *testing.T) {
 	if client.markAsReadCalls != 2 {
 		t.Fatalf("expected MarkAsRead for both messages, got %d", client.markAsReadCalls)
 	}
-	if client.sendReplyCalls != 2 {
-		t.Fatalf("expected SendReply for both messages, got %d", client.sendReplyCalls)
+	if len(queue.published) != 2 {
+		t.Fatalf("published %d messages, want both of them", len(queue.published))
 	}
 }
 
 func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(&fakeWhatsAppClient{})
+	app, _ := newTestApp(&fakeWhatsAppClient{})
 	rawBody := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
@@ -107,7 +112,7 @@ func TestHandleLambdaRejectsInvalidSignature(t *testing.T) {
 func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(&fakeWhatsAppClient{})
+	app, _ := newTestApp(&fakeWhatsAppClient{})
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
@@ -126,7 +131,7 @@ func TestHandleLambdaRejectsInvalidMethod(t *testing.T) {
 func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(&fakeWhatsAppClient{})
+	app, _ := newTestApp(&fakeWhatsAppClient{})
 	rawBody := testTextWebhook()
 
 	response, err := app.HandleLambda(context.Background(), events.APIGatewayV2HTTPRequest{
@@ -152,7 +157,7 @@ func TestHandleLambdaAcceptsBase64EncodedBody(t *testing.T) {
 func TestHandleWebhookHTTPVerification(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(&fakeWhatsAppClient{})
+	app, _ := newTestApp(&fakeWhatsAppClient{})
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
 		Method: http.MethodGet,
@@ -176,7 +181,7 @@ func TestHandleWebhookHTTPVerification(t *testing.T) {
 func TestHandleWebhookHTTPRejectsInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(&fakeWhatsAppClient{})
+	app, _ := newTestApp(&fakeWhatsAppClient{})
 	body := []byte(`{"object":`)
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -198,7 +203,7 @@ func TestHandleWebhookHTTPAcceptsCanonicalHeaderCase(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newTestApp(client)
+	app, _ := newTestApp(client)
 	body := []byte(testTextWebhook())
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -223,7 +228,7 @@ func TestHandleWebhookHTTPIgnoresStatusPayload(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newTestApp(client)
+	app, queue := newTestApp(client)
 	body := []byte(testStatusWebhook())
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -245,8 +250,8 @@ func TestHandleWebhookHTTPIgnoresStatusPayload(t *testing.T) {
 	if client.markAsReadCalls != 0 {
 		t.Fatalf("expected MarkAsRead not to be called, got %d", client.markAsReadCalls)
 	}
-	if client.sendReplyCalls != 0 {
-		t.Fatalf("expected SendReply not to be called, got %d", client.sendReplyCalls)
+	if len(queue.published) != 0 {
+		t.Fatalf("published %d messages, want nothing enqueued", len(queue.published))
 	}
 }
 
@@ -254,7 +259,7 @@ func TestHandleWebhookHTTPIgnoresUnsupportedMessageType(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newTestApp(client)
+	app, queue := newTestApp(client)
 	body := []byte(testImageWebhook())
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -276,48 +281,20 @@ func TestHandleWebhookHTTPIgnoresUnsupportedMessageType(t *testing.T) {
 	if client.markAsReadCalls != 0 {
 		t.Fatalf("expected MarkAsRead not to be called, got %d", client.markAsReadCalls)
 	}
-	if client.sendReplyCalls != 0 {
-		t.Fatalf("expected SendReply not to be called, got %d", client.sendReplyCalls)
+	if len(queue.published) != 0 {
+		t.Fatalf("published %d messages, want nothing enqueued", len(queue.published))
 	}
 }
 
-// A turn that fails must not end in silence: a message that gets no reply is
-// indistinguishable from one that never arrived. Having told the user is also
-// what makes the 200 correct — a WhatsApp retry would re-run the same failing
-// turn and, when it worked, answer the same question twice.
-func TestFailedTurnTellsTheUserInsteadOfGoingQuiet(t *testing.T) {
+// The webhook's answer to Meta now depends on one thing only: did the message
+// reach the queue. A failure there is transient by nature — nobody will ever
+// answer a message that was never enqueued — so Meta is asked to redeliver.
+func TestAFailedEnqueueIsHandedBackToMeta(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeWhatsAppClient{}
-	app := newFailingApp(client)
-	body := []byte(testWebhookWithTexts("como estamos"))
-
-	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
-		Method: http.MethodPost,
-		Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
-		Body:   body,
-	})
-	if err != nil {
-		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("told the user, so the delivery is handled: expected 200, got %d", response.StatusCode)
-	}
-	if client.sendReplyCalls != 1 {
-		t.Fatalf("expected exactly one fallback message, got %d sends", client.sendReplyCalls)
-	}
-	if client.lastReply != fallbackReply {
-		t.Fatalf("reply = %q, want the fallback", client.lastReply)
-	}
-}
-
-// The retry only earns its keep when the user could not be reached at all —
-// then silence is what they got, and WhatsApp trying again is the second chance.
-func TestFailedTurnHandsBackToWhatsAppWhenTheUserCannotBeReached(t *testing.T) {
-	t.Parallel()
-
-	client := &fakeWhatsAppClient{sendReplyErr: fmt.Errorf("graph api unreachable")}
-	app := newFailingApp(client)
+	app, queue := newTestApp(client)
+	queue.err = errors.New("sqs is down")
 	body := []byte(testWebhookWithTexts("como estamos"))
 
 	response, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
@@ -329,92 +306,76 @@ func TestFailedTurnHandsBackToWhatsAppWhenTheUserCannotBeReached(t *testing.T) {
 		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
 	}
 	if response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("nobody was told, so Meta must retry: expected 500, got %d", response.StatusCode)
+		t.Fatalf("nothing was enqueued, so Meta must retry: expected 500, got %d", response.StatusCode)
 	}
 }
 
-func newTestApp(client *fakeWhatsAppClient) *App {
-	stores := orchestrator.NewInMemoryStores()
-	if err := stores.Save(context.Background(), domain.Memory{
-		UserID: "u1",
-		Type:   "Goal",
-		ID:     "LearnAWS",
-		Value:  "Study Lambda architecture locally first.",
+// A webhook with nowhere to put the message is broken, not idle: saying 200
+// would tell Meta the message is handled and end its retries, which is the one
+// way to lose a message for good.
+func TestAWebhookWithoutAQueueRefusesTheMessage(t *testing.T) {
+	t.Parallel()
+
+	app := New(nil, &fakeWhatsAppClient{}, "secret", "verify", nil)
+
+	status, err := app.Handle(context.Background(), Request{UserID: "u1", MessageID: "m1", Text: "oi"})
+	if err == nil {
+		t.Fatal("expected an error when there is no queue configured")
+	}
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", status)
+	}
+}
+
+// What goes on the queue is the message this repo already normalized, plus the
+// business number the worker has to answer from — never Meta's envelope
+// (ADR-028).
+func TestTheEnqueuedEnvelopeCarriesWhatTheWorkerNeeds(t *testing.T) {
+	t.Parallel()
+
+	app, queue := newTestApp(&fakeWhatsAppClient{})
+	body := []byte(testTextWebhook())
+
+	if _, err := app.HandleWebhookHTTP(context.Background(), WebhookHTTPRequest{
+		Method: http.MethodPost,
+		Header: map[string]string{"X-Hub-Signature-256": signBytes(body, app.secret)},
+		Body:   body,
 	}); err != nil {
-		panic(err)
+		t.Fatalf("HandleWebhookHTTP returned error: %v", err)
 	}
-
-	return New(
-		orchestrator.NewService(orchestrator.Config{}),
-		client,
-		"test-secret",
-		"test-verify-token",
-		nil,
-	)
-}
-
-type failingLLM struct{}
-
-func (failingLLM) Generate(context.Context, orchestrator.Input) (orchestrator.Output, error) {
-	return orchestrator.Output{}, fmt.Errorf("llm unavailable")
-}
-
-func newFailingApp(client *fakeWhatsAppClient) *App {
-	return New(
-		orchestrator.NewServiceWithGenerator(failingLLM{}),
-		client,
-		"test-secret",
-		"test-verify-token",
-		nil,
-	)
-}
-
-// TestHandleReprocessesAfterUnreachableTurn proves the dedup marker is
-// compensated on the one path that still needs it: the user could not be told,
-// so the turn ends without a 2xx, the marker is dropped, and WhatsApp's retry
-// of the same message ID is reprocessed rather than swallowed as a duplicate.
-//
-// In production this failed the other way round — the Unmark had no
-// dynamodb:DeleteItem, so the marker survived and every retry was answered
-// "ignoring duplicate": a message that failed once could never succeed.
-func TestHandleReprocessesAfterUnreachableTurn(t *testing.T) {
-	t.Parallel()
-
-	sessions := wasession.NewInMemoryStore()
-	client := &fakeWhatsAppClient{sendReplyErr: fmt.Errorf("graph api unreachable")}
-	app := New(orchestrator.NewServiceWithGenerator(failingLLM{}), client, "secret", "verify", sessions)
-
-	req := Request{UserID: "u1", MessageID: "wamid.FAIL", Text: "olá"}
-
-	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
-		t.Fatalf("first delivery: expected 500, got %d", status)
+	if len(queue.published) != 1 {
+		t.Fatalf("published %d messages, want 1", len(queue.published))
 	}
-	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusInternalServerError {
-		t.Fatalf("retry after an unreachable turn must reprocess (500), got %d", status)
+	env := queue.published[0]
+	if env.Message.UserID != "u1" || env.Message.Text != "oi" || env.Message.MessageID != "wamid.HBgLMQ" {
+		t.Fatalf("message = %+v, want the extracted fields", env.Message)
+	}
+	if env.PhoneNumberID != "123" {
+		t.Fatalf("phone number id = %q, want the one from Meta's metadata", env.PhoneNumberID)
+	}
+	if want := time.Date(2025, 7, 14, 4, 0, 0, 0, time.UTC); !env.Message.Timestamp.Equal(want) {
+		t.Fatalf("timestamp = %v, want %v", env.Message.Timestamp, want)
 	}
 }
 
-// The mirror image: once the user has been told, the retry is the wrong
-// outcome. The marker stays, so WhatsApp's second delivery is swallowed and
-// nobody is answered twice for one question.
-func TestHandleDoesNotReprocessOnceTheUserWasTold(t *testing.T) {
-	t.Parallel()
+func newTestApp(client *fakeWhatsAppClient) (*App, *fakePublisher) {
+	queue := &fakePublisher{}
+	return New(queue, client, "test-secret", "test-verify-token", nil), queue
+}
 
-	sessions := wasession.NewInMemoryStore()
-	client := &fakeWhatsAppClient{}
-	app := New(orchestrator.NewServiceWithGenerator(failingLLM{}), client, "secret", "verify", sessions)
+// fakePublisher stands in for the queue: the webhook's whole output is what it
+// hands over and whether the handover worked.
+type fakePublisher struct {
+	published []wainbound.Envelope
+	err       error
+}
 
-	req := Request{UserID: "u1", MessageID: "wamid.TOLD", Text: "como estamos"}
-
-	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusOK {
-		t.Fatalf("first delivery: expected 200, got %d", status)
+func (f *fakePublisher) Publish(_ context.Context, env wainbound.Envelope) error {
+	if f.err != nil {
+		return f.err
 	}
-	if _, status, _ := app.Handle(context.Background(), req); status != http.StatusOK {
-		t.Fatalf("retry: expected 200, got %d", status)
-	}
-	if client.sendReplyCalls != 1 {
-		t.Fatalf("expected the fallback exactly once across both deliveries, got %d", client.sendReplyCalls)
-	}
+	f.published = append(f.published, env)
+	return nil
 }
 
 type fakeWhatsAppClient struct {

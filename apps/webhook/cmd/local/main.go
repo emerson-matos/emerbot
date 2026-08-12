@@ -1,20 +1,41 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
 
 	"github.com/emerson/emerbot/apps/webhook/internal/app"
 	"github.com/emerson/emerbot/packages/shared"
+	"github.com/emerson/emerbot/packages/wainbound"
+	"github.com/emerson/emerbot/packages/waturn"
 )
+
+// inlinePublisher stands in for the queue when there is no queue.
+//
+// Locally (`make demo`, `make run-webhook`) there is no SQS and no second
+// Lambda, so the webhook's publisher runs the worker's turn in the same
+// process: the caller blocks for the length of the turn, exactly as the old
+// webhook did, and the wa-simulator still gets its reply. Deployed, this code
+// is never reached — apps/webhook/cmd/lambda refuses to start without a queue
+// URL, so production always has the real thing.
+//
+// lastAttempt is true because it is: nothing here will redeliver, so a failed
+// turn must tell the person rather than counting on a retry that is not coming.
+type inlinePublisher struct{ turn *waturn.Worker }
+
+func (p inlinePublisher) Publish(ctx context.Context, env wainbound.Envelope) error {
+	return p.turn.Process(ctx, env, true)
+}
 
 func main() {
 	shared.InitSlog()
 	addr := shared.Getenv("WEBHOOK_ADDR", ":8080")
 	secret := shared.Getenv("WEBHOOK_SECRET", "local-secret")
 
-	application := app.NewFromEnv(secret, "")
+	application := app.NewFromEnvWithPublisher(secret, "",
+		inlinePublisher{turn: waturn.NewFromEnv(context.Background())})
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

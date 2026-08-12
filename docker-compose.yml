@@ -110,6 +110,11 @@ services:
   # ---------------------------------------------------------------------------
   # Webhook service  →  http://localhost:8080
   # ---------------------------------------------------------------------------
+  # Deployed, this is two Lambdas with an SQS FIFO queue between them
+  # (ADR-028). Locally it is one process: with no WHATSAPP_INBOUND_QUEUE_URL,
+  # apps/webhook/cmd/local runs the worker's turn (packages/waturn) inline, so
+  # the wa-simulator still gets its answer and there is no queue to emulate.
+  # That is why this service still knows the finance and conversations tables.
   webhook:
     build:
       context: .

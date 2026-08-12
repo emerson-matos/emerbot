@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/wasession"
 )
 
@@ -14,7 +13,8 @@ import (
 // That invariant is asserted where it now lives, in
 // packages/orchestrator.TestGeminiGeneratorUsesSharedLedgerRegardlessOfSender —
 // the webhook used to enforce it separately for slash commands, and those are
-// gone.
+// gone. The agent itself moved out of this app entirely (ADR-028); what is
+// left to assert here is the 24h window, which stayed.
 
 // TestHandleRecordsInboundMessage proves every inbound message opens the
 // WhatsApp 24h window: after handling one, the sender's phone has a recorded
@@ -23,12 +23,10 @@ func TestHandleRecordsInboundMessage(t *testing.T) {
 	t.Parallel()
 
 	sessions := wasession.NewInMemoryStore()
-	// Every message now reaches the orchestrator — there is no command branch
-	// left that answers without it — so this wires the static one.
-	app := New(orchestrator.NewService(orchestrator.Config{}), &fakeWhatsAppClient{}, "secret", "verify", sessions)
+	app := New(&fakePublisher{}, &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
 	when := time.Now().UTC().Add(-time.Hour)
-	if _, _, err := app.Handle(context.Background(), Request{
+	if _, err := app.Handle(context.Background(), Request{
 		UserID:    "5511999999999",
 		MessageID: "m1",
 		Text:      "bom dia",
