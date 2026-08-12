@@ -31,7 +31,6 @@ import (
 	"github.com/emerson/emerbot/packages/notifications"
 	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
-	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
 
@@ -60,9 +59,22 @@ type LedgerReader interface {
 	SaveInsightSnapshot(ctx context.Context, userID, date string, snapshot []byte, computedAt time.Time) error
 }
 
+// WindowReader is the slice of the session store the notifier needs: it asks
+// when a phone's 24h customer-service window closes, and nothing else. It never
+// records an inbound message and has no business with the dedup mark, so taking
+// the whole wasession.Store meant a signature that churned every time the other
+// half of that store changed — as it just did (ADR-029).
+//
+// ActiveUntil rather than Active because the notifier has to explain a
+// non-delivery: "the window shut at 14:20" and "this phone never messaged us"
+// are different problems with different fixes.
+type WindowReader interface {
+	ActiveUntil(ctx context.Context, phone string) (time.Time, error)
+}
+
 type Notifier struct {
 	store         LedgerReader
-	sessions      wasession.Store
+	sessions      WindowReader
 	wa            whatsapp.Client
 	phoneNumberID string
 	dashboardURL  string
@@ -77,7 +89,7 @@ type Notifier struct {
 // generator used to personalize the daily digest (pass StaticClient{} or
 // NewTextGenerator from the orchestrator package). The clock is time.Now;
 // tests can override it via SetClock.
-func New(store LedgerReader, sessions wasession.Store, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
+func New(store LedgerReader, sessions WindowReader, wa whatsapp.Client, phoneNumberID string, dashboardURL string, loc *time.Location, gen orchestrator.TextGenerator) *Notifier {
 	if loc == nil {
 		loc = time.UTC
 	}

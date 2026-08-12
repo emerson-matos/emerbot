@@ -48,6 +48,14 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "logs:*",
       "acm:*",
       "cognito-idp:*",
+      # A fila de entrada do WhatsApp e sua DLQ (ADR-028). Sem isto o apply do
+      # CI para no primeiro recurso da fila — o recurso e a permissão que ele
+      # exige viajam na mesma PR, por convenção do repositório.
+      "sqs:*",
+      # O orçamento com alerta que é o gatilho da guarda de custo do ADR-028.
+      # A API de Budgets é global (us-east-1) e não aceita recurso por nome no
+      # plan, então fica aqui junto com o resto.
+      "budgets:*",
     ]
     resources = ["*"]
   }

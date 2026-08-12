@@ -15,16 +15,24 @@ import (
 // notifier's timing and clock skew) and is also the DynamoDB TTL on each record.
 const Window = 20 * time.Hour
 
-// DedupWindow is how long a processed message ID is remembered so WhatsApp
-// retries (which re-deliver the same message ID) are ignored. It comfortably
-// exceeds Meta's retry span so a duplicate can never slip through after expiry.
+// DedupWindow is how long a processed message ID is remembered so a redelivery
+// (the queue's, or Meta's own retry behind it) is ignored. It comfortably
+// exceeds both retry spans so a duplicate can never slip through after expiry.
 const DedupWindow = 48 * time.Hour
 
 // dedupKeyPrefix namespaces message-dedup items so their hash key can never
 // collide with a phone number (which is all digits) in the shared table.
 const dedupKeyPrefix = "MSGID#"
 
-// Store persists the "phone last messaged us" signal behind the 24h window.
+// Store persists the "phone last messaged us" signal behind the 24h window,
+// and the mark that says a message has been answered.
+//
+// It is the contract between the two implementations, not a dependency anyone
+// takes: no consumer needs all of it, and each declares the slice it uses
+// (notifier.WindowReader, app.SessionStore, waturn.ProcessedStore). Keeping it
+// whole here is what makes the DynamoDB store and the in-memory one answer the
+// same way; taking it as a parameter is what made an unrelated signature churn
+// when the dedup half changed.
 type Store interface {
 	// RecordInbound marks that phone messaged us at `at`; the session is then
 	// active until at+Window.
@@ -40,12 +48,24 @@ type Store interface {
 	// via TTL, that covers both "never messaged us" and "messaged us long
 	// enough ago that the record is gone" — indistinguishable by design.
 	ActiveUntil(ctx context.Context, phone string) (time.Time, error)
+	// Processed answers the domain's question — "já respondemos esta mensagem?"
+	// — as of now. The worker asks it before doing any work, so a redelivery
+	// costs a read instead of a second Gemini turn and a second answer.
+	//
+	// It is a different question from the queue's transport dedup, which only
+	// covers "esta mensagem chegou duas vezes agora" and expires with a window
+	// that belongs to SQS (ADR-029). An empty messageID is never processed
+	// (there is nothing to remember it by).
+	Processed(ctx context.Context, messageID string, now time.Time) (bool, error)
 	// MarkProcessed records that messageID has been handled and reports whether
-	// this is the first time it was seen (true = process it; false = a retry to
-	// ignore). An empty messageID always returns true (nothing to dedup on).
+	// this call is the one that recorded it (false = someone got there first).
+	//
+	// It is written when the turn *ends*, not when it starts: the mark is the
+	// fact that the message was answered, not a reservation that a failed turn
+	// would then have to give back. The compensating Unmark it replaces never
+	// worked in production anyway — the policy had no dynamodb:DeleteItem, so
+	// every retry was answered "ignoring duplicate" (ADR-029).
+	//
+	// An empty messageID always returns true (nothing to dedup on).
 	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
-	// Unmark removes a message's dedup marker. It compensates a MarkProcessed
-	// whose turn then failed without a 2xx, so WhatsApp's retry is reprocessed
-	// instead of being swallowed as a duplicate. An empty messageID is a no-op.
-	Unmark(ctx context.Context, messageID string) error
 }

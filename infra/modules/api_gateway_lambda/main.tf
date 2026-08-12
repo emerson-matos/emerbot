@@ -155,28 +155,24 @@ resource "aws_lambda_function" "webhook" {
   handler          = var.lambda_handler
   runtime          = var.lambda_runtime
   architectures    = ["arm64"]
-  # The agent loop budgets 25s for itself (packages/orchestrator/internal/gemini
-  # agent.go), across up to 5 tool rounds. At 10s the Lambda was killed before
-  # that budget could ever apply: "oi" answers in one round and fit, while any
-  # question that calls a tool needs round 0 (model asks) + tools + round 1
-  # (model composes) and did not — so it died silently, and the deadline
-  # propagating into the SDK also showed up as Gemini 504 DEADLINE_EXCEEDED.
-  # This must stay above that 25s so the agent's own timeout is what fires,
-  # with a real error, instead of the platform killing the process.
-  timeout     = 30
+  # Signature, extraction, one SendMessage, 200 — some 50ms (ADR-028). The 30s
+  # this used to need was the agent's own budget, and the agent is not here any
+  # more; what is left only has to cover a cold start plus one SQS call. It has
+  # stopped being a bet on how long Gemini takes today.
+  timeout     = 10
   memory_size = 128
 
+  # No finance table, no conversations, no Gemini key: the webhook cannot reach
+  # the business data even by accident, because it no longer knows its name.
+  # What stays is the 24h WhatsApp window (RecordInbound), the Graph token that
+  # marks a message read, and the queue everything else happens behind.
   environment {
     variables = {
-      WEBHOOK_SECRET          = var.webhook_secret
-      WEBHOOK_VERIFY_TOKEN    = var.webhook_secret_value
-      APP_TIMEZONE            = var.app_timezone
-      FINANCIAL_ENTRIES_TABLE = aws_dynamodb_table.financial_entries.name
-      WHATSAPP_SESSIONS_TABLE = aws_dynamodb_table.whatsapp_sessions.name
-      CONVERSATIONS_TABLE     = aws_dynamodb_table.conversations.name
-      META_GRAPH_API_TOKEN    = var.meta_graph_api_token_value
-      GEMINI_API_KEY          = var.gemini_api_key_value
-      DASHBOARD_URL           = var.dashboard_origin
+      WEBHOOK_SECRET             = var.webhook_secret
+      WEBHOOK_VERIFY_TOKEN       = var.webhook_secret_value
+      WHATSAPP_SESSIONS_TABLE    = aws_dynamodb_table.whatsapp_sessions.name
+      WHATSAPP_INBOUND_QUEUE_URL = aws_sqs_queue.whatsapp_inbound.url
+      META_GRAPH_API_TOKEN       = var.meta_graph_api_token_value
     }
   }
 }
@@ -259,72 +255,229 @@ resource "aws_lambda_permission" "allow_apigw" {
 }
 
 # ---------------------------------------------------------------------------
-# IAM policy: webhook Lambda needs DynamoDB access to new tables
+# IAM: what is left of the webhook's reach.
+#
+# The finance and conversations policies that used to live here are gone with
+# the turn they served (ADR-028) — as is the dynamodb:DeleteItem that the dedup
+# Unmark needed, because the compensating unmark itself is gone (ADR-029): the
+# mark is now written when processing ends, so there is nothing to give back.
 # ---------------------------------------------------------------------------
-resource "aws_iam_role_policy" "webhook_dynamodb" {
-  name = "${local.prefix}-webhook-dynamodb"
-  role = aws_iam_role.lambda_exec.id
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "dynamodb:PutItem",
-        "dynamodb:GetItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:Query",
-        "dynamodb:Scan",
-      ]
-      Resource = [
-        aws_dynamodb_table.financial_entries.arn,
-        "${aws_dynamodb_table.financial_entries.arn}/index/*",
-      ]
-    }]
-  })
-}
-
-# The webhook writes one session item per inbound message.
+# One session item per inbound message: the 24h customer-service window.
 resource "aws_iam_role_policy" "webhook_sessions" {
   name = "${local.prefix}-webhook-sessions"
   role = aws_iam_role.lambda_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    # DeleteItem is the dedup Unmark (apps/webhook/internal/app): the webhook
-    # claims a message's marker before processing so a near-simultaneous retry
-    # is short-circuited, and drops it again when the turn ends without a 2xx,
-    # so WhatsApp's retry is reprocessed instead of swallowed. Without the
-    # action that path failed with AccessDenied on every failure and the retry
-    # was answered "ignoring duplicate" — a message that failed once could
-    # never succeed. A documented mechanism that cannot run is worse than
-    # either granting this or deleting the code.
     Statement = [{
       Effect   = "Allow"
-      Action   = ["dynamodb:PutItem", "dynamodb:DeleteItem"]
+      Action   = ["dynamodb:PutItem"]
       Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
     }]
   })
 }
 
-# The webhook appends each turn (PutItem) and loads the recent history (Query)
-# for the chat-memory feature.
-resource "aws_iam_role_policy" "webhook_conversations" {
-  name = "${local.prefix}-webhook-conversations"
+# Enqueueing is now the webhook's only outbound action of consequence.
+resource "aws_iam_role_policy" "webhook_inbound_queue" {
+  name = "${local.prefix}-webhook-inbound-queue"
   role = aws_iam_role.lambda_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["sqs:SendMessage"]
+      Resource = [aws_sqs_queue.whatsapp_inbound.arn]
+    }]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Fila de entrada do WhatsApp + worker (ADR-028)
+#
+# O webhook devolve 200 para a Meta assim que a mensagem entra aqui; quem
+# conversa com o Gemini é o worker, do outro lado. FIFO não é enfeite: o agente
+# lê o histórico da conversa como entrada, então duas mensagens do mesmo
+# telefone processadas em paralelo são uma execução lendo um passado que ainda
+# não aconteceu. MessageGroupId = telefone dá ordem dentro de uma conversa e
+# mantém conversas diferentes em paralelo.
+#
+# A franquia do SQS (1 milhão de requisições/mês, perpétua e igual para FIFO e
+# Standard) cobre a conta inteira, somando todas as filas — é por isso que a DLQ
+# não ganha um consumidor: um ESM sondando a segunda fila gastaria a mesma
+# franquia com trabalho que já foi dado por perdido, e a mensagem chegaria ao
+# usuário depois. Quem avisa é o worker, na última tentativa, que ele reconhece
+# pelo ApproximateReceiveCount.
+# ---------------------------------------------------------------------------
+locals {
+  # O worker precisa deste número para saber quando está na última entrega, e
+  # ele é passado para a Lambda como variável de ambiente: a política de
+  # redrive e o aviso ao usuário não podem discordar.
+  whatsapp_inbound_max_receives = 5
+}
+
+resource "aws_sqs_queue" "whatsapp_inbound_dlq" {
+  name       = "${local.prefix}-whatsapp-inbound-dlq.fifo"
+  fifo_queue = true
+  # Retenção máxima: a DLQ é o registro de que algo falhou, e duas semanas é o
+  # que dá para uma falha de sexta à noite ainda estar lá na segunda seguinte.
+  message_retention_seconds = 1209600
+}
+
+resource "aws_sqs_queue" "whatsapp_inbound" {
+  name       = "${local.prefix}-whatsapp-inbound.fifo"
+  fifo_queue = true
+  # A deduplicação de transporte usa o message ID da Meta, enviado
+  # explicitamente pelo webhook (packages/wainbound) — nunca um hash do corpo,
+  # que mudaria com o timestamp e deixaria passar a retentativa.
+  content_based_deduplication = false
+  # 6× o timeout do worker (60s), como a AWS recomenda. A AWS valida que o
+  # timeout da função é <= este valor e recusa o event source mapping se não
+  # for: mexer em um dos dois é mexer nos dois.
+  visibility_timeout_seconds = 360
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.whatsapp_inbound_dlq.arn
+    maxReceiveCount     = local.whatsapp_inbound_max_receives
+  })
+}
+
+resource "aws_iam_role" "worker_exec" {
+  name = "${local.prefix}-worker-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "worker_basic" {
+  role       = aws_iam_role.worker_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# O que era do webhook agora é daqui: as ferramentas do agente escrevem a tabela
+# financeira (o caderninho mora na mesma), o histórico curto vive em
+# conversations, e a marca de idempotência é um item da tabela de sessões.
+resource "aws_iam_role_policy" "worker_dynamodb" {
+  name = "${local.prefix}-worker-dynamodb"
+  role = aws_iam_role.worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+        ]
+        Resource = [
+          aws_dynamodb_table.financial_entries.arn,
+          "${aws_dynamodb_table.financial_entries.arn}/index/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+        ]
+        Resource = [aws_dynamodb_table.conversations.arn]
+      },
+      {
+        # GetItem pergunta "já respondemos esta mensagem?"; PutItem escreve a
+        # marca quando o turno termina. Sem DeleteItem: não há mais nada a
+        # desfazer (ADR-029).
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+        Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
+      },
+    ]
+  })
+}
+
+# O event source mapping é quem chama estas ações, com a role da função.
+resource "aws_iam_role_policy" "worker_inbound_queue" {
+  name = "${local.prefix}-worker-inbound-queue"
+  role = aws_iam_role.worker_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
       Action = [
-        "dynamodb:PutItem",
-        "dynamodb:Query",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:ChangeMessageVisibility",
       ]
-      Resource = [aws_dynamodb_table.conversations.arn]
+      Resource = [aws_sqs_queue.whatsapp_inbound.arn]
     }]
   })
+}
+
+resource "aws_cloudwatch_log_group" "worker" {
+  name              = "/aws/lambda/${local.prefix}-worker"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "worker" {
+  function_name    = "${local.prefix}-worker"
+  role             = aws_iam_role.worker_exec.arn
+  filename         = var.worker_zip_path
+  source_code_hash = filebase64sha256(var.worker_zip_path)
+  handler          = var.lambda_handler
+  runtime          = var.lambda_runtime
+  architectures    = ["arm64"]
+  # O agente reserva 25s para si, em até 5 rodadas de ferramenta
+  # (packages/orchestrator/internal/gemini). 60s é folga suficiente para que o
+  # timeout que dispara seja o dele, com erro de verdade, e não a plataforma
+  # matando o processo — que foi exatamente o sintoma que originou o ADR-028.
+  timeout     = 60
+  memory_size = 128
+
+  environment {
+    variables = {
+      APP_TIMEZONE                  = var.app_timezone
+      FINANCIAL_ENTRIES_TABLE       = aws_dynamodb_table.financial_entries.name
+      CONVERSATIONS_TABLE           = aws_dynamodb_table.conversations.name
+      WHATSAPP_SESSIONS_TABLE       = aws_dynamodb_table.whatsapp_sessions.name
+      META_GRAPH_API_TOKEN          = var.meta_graph_api_token_value
+      GEMINI_API_KEY                = var.gemini_api_key_value
+      DASHBOARD_URL                 = var.dashboard_origin
+      WHATSAPP_INBOUND_MAX_RECEIVES = local.whatsapp_inbound_max_receives
+    }
+  }
+}
+
+resource "aws_lambda_event_source_mapping" "whatsapp_inbound" {
+  event_source_arn = aws_sqs_queue.whatsapp_inbound.arn
+  function_name    = aws_lambda_function.worker.arn
+  # Uma mensagem por invocação. O lote do FIFO vai a 10, mas um lote maior só
+  # traria a pergunta de o que fazer quando a terceira mensagem falha: sem
+  # relatório parcial, o lote inteiro volta. Com uma por vez, a retentativa é
+  # exatamente a mensagem que falhou.
+  batch_size = 1
+
+  # O botão de custo que o ADR-028 manda revisar antes de trocar o mecanismo.
+  # Ele limita as invocações concorrentes do ESM, não a quantidade de pollers —
+  # essa só é configurável em Provisioned Mode, que tem custo próprio e não
+  # usamos. Menos concorrência reduz o polling por tabela, mas indiretamente:
+  # quem for atrás de cortar ReceiveMessage não vai achar a alavanca aqui.
+  # 2 é o mínimo que a AWS aceita, e com uma farmácia e dois telefones sobra.
+  scaling_config {
+    maximum_concurrency = 2
+  }
 }
 
 # ---------------------------------------------------------------------------

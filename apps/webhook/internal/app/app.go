@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,12 +16,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/emerson/emerbot/packages/conversation"
 	"github.com/emerson/emerbot/packages/domain"
-	pkgfiado "github.com/emerson/emerbot/packages/fiado"
-	pkgfinance "github.com/emerson/emerbot/packages/finance"
-	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/shared"
+	"github.com/emerson/emerbot/packages/wainbound"
 	"github.com/emerson/emerbot/packages/wasession"
 	"github.com/emerson/emerbot/packages/whatsapp"
 )
@@ -30,10 +29,6 @@ type Request struct {
 	PhoneNumberID string `json:"phone_number_id"`
 	Text          string `json:"text"`
 	Timestamp     string `json:"timestamp"`
-}
-
-type Response struct {
-	Message string `json:"message"`
 }
 
 // waWebhook matches the real WhatsApp Business Platform webhook payload.
@@ -91,8 +86,14 @@ type waStatus struct {
 	Status string `json:"status"`
 }
 
-// There is deliberately no slash-command layer here. Every message goes to the
-// agent, which writes the ledger through the finance tools
+// This handler does four things: check Meta's signature, extract the messages,
+// put each one on the queue, and answer 200. It does not know what Gemini is,
+// has no conversation history, no tools and no access to the business DynamoDB
+// — all of that moved to apps/worker (ADR-028), because a question that calls a
+// tool takes tens of seconds and Meta was waiting for it.
+//
+// There is deliberately no slash-command layer here either. Every message goes
+// to the agent, which writes the ledger through the finance tools
 // (packages/finance.FinanceTools) with typed arguments.
 //
 // The commands it replaced parsed amounts out of free text with a regex, and
@@ -107,30 +108,34 @@ type waStatus struct {
 // SessionStore records when a phone last messaged us, so the scheduled
 // notifier can respect WhatsApp's 24h customer-service window (free-form
 // messages are only allowed within it). packages/wasession satisfies this.
+//
+// Dedup is deliberately absent: "já processamos esta mensagem" is a question
+// about a turn, and the turn happens in the worker, which is where it is now
+// asked and answered (ADR-029).
 type SessionStore interface {
 	RecordInbound(ctx context.Context, phone string, at time.Time) error
-	// MarkProcessed records that a message ID was handled and reports whether
-	// this is the first time it was seen (false = a WhatsApp retry to ignore).
-	MarkProcessed(ctx context.Context, messageID string, now time.Time) (bool, error)
-	// Unmark drops a message's dedup marker so a WhatsApp retry is reprocessed
-	// when the original turn ended without a 2xx.
-	Unmark(ctx context.Context, messageID string) error
+}
+
+// Publisher hands an extracted message to the worker. This is the webhook's
+// whole contract with the rest of the system: recebi e enfileirei.
+type Publisher interface {
+	Publish(ctx context.Context, env wainbound.Envelope) error
 }
 
 type App struct {
-	service        *orchestrator.Service
+	queue          Publisher
 	whatsappClient whatsapp.Client
 	sessions       SessionStore
 	secret         string
 	verifyToken    string
 }
 
-func New(service *orchestrator.Service, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
+func New(queue Publisher, waClient whatsapp.Client, secret, verifyToken string, sessions SessionStore) *App {
 	if verifyToken == "" {
 		verifyToken = secret
 	}
 	return &App{
-		service:        service,
+		queue:          queue,
 		whatsappClient: waClient,
 		sessions:       sessions,
 		secret:         secret,
@@ -139,48 +144,25 @@ func New(service *orchestrator.Service, waClient whatsapp.Client, secret, verify
 }
 
 func NewFromEnv(secret, graphAPIToken string) *App {
+	var queue Publisher
+	if queueURL := shared.Getenv("WHATSAPP_INBOUND_QUEUE_URL", ""); queueURL != "" {
+		publisher, err := wainbound.NewSQSPublisher(context.Background(), queueURL, shared.Getenv("SQS_ENDPOINT", ""))
+		if err != nil {
+			log.Fatalf("NewFromEnv: inbound queue: %v", err)
+		}
+		queue = publisher
+	}
+	return NewFromEnvWithPublisher(secret, graphAPIToken, queue)
+}
+
+// NewFromEnvWithPublisher is NewFromEnv with the queue chosen by the caller. It
+// exists for the local entrypoint, which has no queue at all and runs the turn
+// in the same process (see apps/webhook/cmd/local).
+func NewFromEnvWithPublisher(secret, graphAPIToken string, queue Publisher) *App {
 	var sessions SessionStore
 	endpoint := shared.Getenv("DYNAMODB_ENDPOINT", "")
 
-	cfg := orchestrator.Config{}
-	finTable := shared.Getenv("FINANCIAL_ENTRIES_TABLE", "")
-	if finTable != "" {
-		ctx := context.Background()
-		store, err := pkgfinance.NewDynamoDBStore(ctx, finTable, endpoint)
-		if err != nil {
-			log.Fatalf("NewFromEnv: finance store: %v", err)
-		}
-		cfg.FinanceStore = store
-		// The caderninho lives in the same table, as a neighbour of the entries
-		// in the user's partition — no resource of its own (ADR-027 §4).
-		fiadoStore, err := pkgfiado.NewDynamoDBStore(ctx, finTable, endpoint)
-		if err != nil {
-			log.Fatalf("NewFromEnv: fiado store: %v", err)
-		}
-		cfg.FiadoStore = fiadoStore
-		cfg.GeminiAPIKey = shared.Getenv("GEMINI_API_KEY", "")
-		// LLM_PROVIDER=ollama runs a local open-source model for dev (ADR-012);
-		// unset keeps the Gemini/static path used in production.
-		cfg.LLMProvider = shared.Getenv("LLM_PROVIDER", "")
-		cfg.OllamaHost = shared.Getenv("OLLAMA_HOST", "")
-		cfg.OllamaModel = shared.Getenv("OLLAMA_MODEL", "")
-		cfg.DashboardURL = shared.Getenv("DASHBOARD_URL", "")
-	}
-
-	// Short-term chat history lives in its own TTL-managed table so the bot keeps
-	// context across messages and cold starts. When unset, NewService falls back
-	// to an in-memory store (fine locally, lost on every Lambda recycle).
-	if convTable := shared.Getenv("CONVERSATIONS_TABLE", ""); convTable != "" {
-		ctx := context.Background()
-		convStore, err := conversation.NewDynamoDBStore(ctx, convTable, endpoint)
-		if err != nil {
-			log.Fatalf("NewFromEnv: conversation store: %v", err)
-		}
-		cfg.ShortTerm = convStore
-	}
-
-	// The 24h-window session store lives in its own table (TTL-managed), so it
-	// is wired independently of the finance store.
+	// The 24h-window session store lives in its own table (TTL-managed).
 	if sessTable := shared.Getenv("WHATSAPP_SESSIONS_TABLE", ""); sessTable != "" {
 		ctx := context.Background()
 		sessStore, err := wasession.NewDynamoDBStore(ctx, sessTable, endpoint)
@@ -190,17 +172,18 @@ func NewFromEnv(secret, graphAPIToken string) *App {
 		sessions = sessStore
 	}
 
-	svc := orchestrator.NewService(cfg)
 	waClient := whatsapp.NewClientFromEnv(graphAPIToken)
 	verifyToken := shared.Getenv("WEBHOOK_VERIFY_TOKEN", secret)
 
-	return New(svc, waClient, secret, verifyToken, sessions)
+	return New(queue, waClient, secret, verifyToken, sessions)
 }
 
-func (a *App) Handle(ctx context.Context, req Request) (resp Response, status int, err error) {
+// Handle takes one extracted message as far as the queue and reports the status
+// Meta should get for it.
+func (a *App) Handle(ctx context.Context, req Request) (int, error) {
 	message, err := normalize(req)
 	if err != nil {
-		return Response{}, http.StatusBadRequest, err
+		return http.StatusBadRequest, err
 	}
 
 	if a.whatsappClient != nil {
@@ -218,85 +201,24 @@ func (a *App) Handle(ctx context.Context, req Request) (resp Response, status in
 		}
 	}
 
-	// WhatsApp re-delivers a message (same ID) until it gets a 200, so dedup by
-	// message ID before doing any work — otherwise a retry would write the entry
-	// (and re-bill Gemini) a second time. Best-effort: on a store error we fall
-	// through and process, favoring a possible duplicate over a dropped message.
-	if a.sessions != nil && message.MessageID != "" {
-		marked, derr := a.sessions.MarkProcessed(ctx, message.MessageID, message.Timestamp)
-		if derr != nil {
-			log.Printf("dedup check: %v", derr)
-		} else if !marked {
-			log.Printf("ignoring duplicate message_id=%s", message.MessageID)
-			return Response{}, http.StatusOK, nil
-		} else {
-			// We claimed the marker before processing (so a near-simultaneous
-			// retry is short-circuited). If the turn then ends without a 2xx —
-			// a path WhatsApp will retry — drop the marker so that retry is
-			// reprocessed instead of swallowed. Use a detached context so the
-			// cleanup still runs when ctx is the reason we failed.
-			defer func() {
-				if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
-					if uerr := a.sessions.Unmark(context.WithoutCancel(ctx), message.MessageID); uerr != nil {
-						log.Printf("dedup unmark message_id=%s: %v", message.MessageID, uerr)
-					}
-				}
-			}()
-		}
+	// Enqueueing is the only thing whose failure changes the answer: the two
+	// calls above are true whether or not the turn ever runs (the window was
+	// opened by the person messaging us; the message was read), while a message
+	// that did not reach the queue is a message nobody will ever answer. So it
+	// is a 500 and Meta redelivers.
+	//
+	// A redelivery is not a second turn: the same Meta message id is the FIFO
+	// MessageDeduplicationId, and behind it the worker's mark in DynamoDB
+	// answers the same question without a time window (ADR-029).
+	if a.queue == nil {
+		return http.StatusInternalServerError, errors.New("no inbound queue configured")
+	}
+	env := wainbound.Envelope{Message: message, PhoneNumberID: req.PhoneNumberID}
+	if err := a.queue.Publish(ctx, env); err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("enqueue message %s: %w", message.MessageID, err)
 	}
 
-	// Every message — including one that starts with a slash — goes to the
-	// agent. It reaches the ledger through the finance tools, which is also
-	// where the sender's phone stops mattering: the tools are called with
-	// shared.FinanceLedgerID (see orchestrator.agentGenerator), so the pharmacy
-	// has one set of books no matter which of its two phones wrote to it.
-	response, err := a.service.HandleMessage(ctx, message)
-	if err != nil {
-		log.Printf("handling webhook message %s: %v", message.MessageID, err)
-		// Say so, rather than going quiet. A message that gets no reply is
-		// indistinguishable from one that never arrived, and the person is left
-		// deciding alone whether to type it again — which is how a slow answer
-		// became "o bot não responde".
-		//
-		// If that reaches them we own the failure and return 200: a WhatsApp
-		// retry would re-run the same turn that just failed and, when it
-		// worked, answer the same question twice. Only when we cannot reach
-		// them at all is the retry the better outcome — and then the 500 below
-		// lets the deferred Unmark hand the message back to WhatsApp.
-		if serr := a.sendReply(ctx, req, fallbackReply); serr != nil {
-			log.Printf("send fallback: %v", serr)
-			return Response{}, http.StatusInternalServerError, err
-		}
-		return Response{Message: fallbackReply}, http.StatusOK, nil
-	}
-
-	if response.Text != "" {
-		if serr := a.sendReply(ctx, req, response.Text); serr != nil {
-			log.Printf("send reply: %v", serr)
-		}
-	}
-
-	return Response{Message: response.Text}, http.StatusOK, nil
-}
-
-// fallbackReply is what the user hears when the agent could not answer.
-//
-// It does not name a cause: the same silence came from a Lambda killed at its
-// timeout, from Gemini returning 504, and from a tool erroring, and guessing
-// wrong in front of someone is worse than not guessing. What it does carry is
-// the one action that actually helps — a smaller question fits in the budget
-// that a big one did not.
-const fallbackReply = "Não consegui montar essa resposta agora. " +
-	"Manda de novo daqui a pouco — se for uma pergunta grande, quebrar em duas costuma passar."
-
-// sendReply returns the send error instead of only logging it, because the
-// caller's next decision depends on it: having told the user is what makes
-// swallowing the WhatsApp retry the right call.
-func (a *App) sendReply(ctx context.Context, req Request, reply string) error {
-	if a.whatsappClient == nil || req.MessageID == "" {
-		return nil
-	}
-	return a.whatsappClient.SendReply(ctx, req.PhoneNumberID, req.UserID, reply, req.MessageID)
+	return http.StatusOK, nil
 }
 
 func (a *App) HandleVerification(mode, token, challenge string) events.APIGatewayV2HTTPResponse {

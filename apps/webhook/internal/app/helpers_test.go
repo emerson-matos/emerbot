@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emerson/emerbot/packages/orchestrator"
 	"github.com/emerson/emerbot/packages/wasession"
 )
 
@@ -29,21 +28,21 @@ func TestNewFallsBackToTheSecretAsVerifyToken(t *testing.T) {
 	}
 }
 
-func TestNewFromEnvWithNoTablesConfigured(t *testing.T) {
-	// With no table names set, nothing touches AWS: the orchestrator falls back
-	// to its in-memory stores and the WhatsApp client to the simulator. This is
-	// the path `make run-webhook` takes.
-	t.Setenv("FINANCIAL_ENTRIES_TABLE", "")
-	t.Setenv("CONVERSATIONS_TABLE", "")
+func TestNewFromEnvWithNothingConfigured(t *testing.T) {
+	// With no table and no queue, nothing touches AWS: the WhatsApp client
+	// falls back to the simulator and there is no publisher. This is the path
+	// `make run-webhook` takes — where cmd/local supplies its own publisher,
+	// because a webhook with nowhere to put a message cannot answer 200.
 	t.Setenv("WHATSAPP_SESSIONS_TABLE", "")
+	t.Setenv("WHATSAPP_INBOUND_QUEUE_URL", "")
 	t.Setenv("WEBHOOK_VERIFY_TOKEN", "")
 
 	app := NewFromEnv("secret-do-app", "")
 	if app == nil {
 		t.Fatal("NewFromEnv returned nil")
 	}
-	if app.service == nil {
-		t.Fatal("the orchestrator service must always be wired")
+	if app.queue != nil {
+		t.Fatal("no queue url means no publisher")
 	}
 	if app.sessions != nil {
 		t.Fatal("no sessions table means no session store")
@@ -58,9 +57,8 @@ func TestNewFromEnvWithNoTablesConfigured(t *testing.T) {
 }
 
 func TestNewFromEnvHonoursTheVerifyToken(t *testing.T) {
-	t.Setenv("FINANCIAL_ENTRIES_TABLE", "")
-	t.Setenv("CONVERSATIONS_TABLE", "")
 	t.Setenv("WHATSAPP_SESSIONS_TABLE", "")
+	t.Setenv("WHATSAPP_INBOUND_QUEUE_URL", "")
 	t.Setenv("WEBHOOK_VERIFY_TOKEN", "token-da-meta")
 
 	if app := NewFromEnv("secret-do-app", ""); app.verifyToken != "token-da-meta" {
@@ -104,53 +102,47 @@ func TestHandleVerification(t *testing.T) {
 	})
 }
 
-func TestSendReplyIsSkippedWhenThereIsNothingToReplyTo(t *testing.T) {
+// A message the webhook could not enqueue is not a message it can call
+// handled, and a successful handover is all a 200 claims.
+func TestHandleEnqueuesAndSaysSo(t *testing.T) {
+	queue := &fakePublisher{}
 	client := &fakeWhatsAppClient{}
-	app := New(nil, client, "secret", "verify", nil)
+	app := New(queue, client, "secret", "verify", nil)
 
-	// No message id: there is no inbound message to attach a reply to.
-	if err := app.sendReply(context.Background(), Request{UserID: "u1"}, "olá"); err != nil {
-		t.Fatalf("nothing to reply to is not an error: %v", err)
-	}
-	if client.sendReplyCalls != 0 {
-		t.Fatalf("sendReply issued %d calls, want none without a message id", client.sendReplyCalls)
-	}
-
-	// No client configured at all must not panic.
-	if err := New(nil, nil, "secret", "verify", nil).
-		sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá"); err != nil {
-		t.Fatalf("no client configured is not an error: %v", err)
-	}
-}
-
-// sendReply now reports a transport failure instead of swallowing it, because
-// the failure path needs to know: having reached the user is what decides
-// between owning the turn and handing it back to WhatsApp.
-func TestSendReplyReportsATransportError(t *testing.T) {
-	client := &erroringWhatsAppClient{}
-	app := New(nil, client, "secret", "verify", nil)
-
-	if err := app.sendReply(context.Background(), Request{UserID: "u1", MessageID: "m1"}, "olá"); err == nil {
-		t.Fatal("a failed send must be reported to the caller")
-	}
-	if client.calls != 1 {
-		t.Fatalf("sendReply issued %d calls, want 1", client.calls)
-	}
-}
-
-// The invariant that moved rather than disappeared: on a turn that *succeeded*,
-// a failed send is still logged and not propagated. The work is already done —
-// making WhatsApp retry would run it a second time.
-func TestSuccessfulTurnStaysHandledWhenTheReplyFailsToSend(t *testing.T) {
-	client := &erroringWhatsAppClient{}
-	app := New(orchestrator.NewService(orchestrator.Config{}), client, "secret", "verify", nil)
-
-	_, status, err := app.Handle(context.Background(), Request{UserID: "u1", MessageID: "m1", Text: "oi"})
+	status, err := app.Handle(context.Background(), Request{
+		UserID: "5511999", MessageID: "wamid.OK", PhoneNumberID: "phone-1", Text: "oi",
+	})
 	if err != nil {
-		t.Fatalf("Handle returned error: %v", err)
+		t.Fatalf("handle: %v", err)
 	}
 	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — the turn succeeded, only the send failed", status)
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if len(queue.published) != 1 {
+		t.Fatalf("published %d messages, want 1", len(queue.published))
+	}
+	// Marking the message read is the one thing the webhook still says to
+	// WhatsApp; the answer itself comes from the worker.
+	if client.markAsReadCalls != 1 || client.sendReplyCalls != 0 {
+		t.Fatalf("markAsRead=%d sendReply=%d, want 1 and 0", client.markAsReadCalls, client.sendReplyCalls)
+	}
+}
+
+// MarkAsRead failing is not the message failing: the person still wrote to us,
+// the message is still enqueued, and Meta gets its 200.
+func TestAFailedMarkAsReadDoesNotStopTheMessage(t *testing.T) {
+	queue := &fakePublisher{}
+	app := New(queue, &erroringWhatsAppClient{}, "secret", "verify", nil)
+
+	status, err := app.Handle(context.Background(), Request{UserID: "u1", MessageID: "m1", Text: "oi"})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if len(queue.published) != 1 {
+		t.Fatalf("published %d messages, want the message enqueued anyway", len(queue.published))
 	}
 }
 
@@ -297,21 +289,17 @@ func TestValidSignature(t *testing.T) {
 	}
 }
 
-func TestHandleMarksInboundSessionAndRepliesOnSuccess(t *testing.T) {
-	client := &fakeWhatsAppClient{}
+func TestHandleMarksInboundSession(t *testing.T) {
 	sessions := wasession.NewInMemoryStore()
-	app := New(orchestrator.NewService(orchestrator.Config{}), client, "secret", "verify", sessions)
+	app := New(&fakePublisher{}, &fakeWhatsAppClient{}, "secret", "verify", sessions)
 
 	req := Request{UserID: "5511999", MessageID: "wamid.OK", PhoneNumberID: "phone-1", Text: "oi"}
-	_, status, err := app.Handle(context.Background(), req)
+	status, err := app.Handle(context.Background(), req)
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
-	}
-	if client.markAsReadCalls != 1 || client.sendReplyCalls != 1 {
-		t.Fatalf("markAsRead=%d sendReply=%d, want 1 of each", client.markAsReadCalls, client.sendReplyCalls)
 	}
 
 	// An inbound message opens the 24h window the notifier later depends on.
@@ -325,9 +313,9 @@ func TestHandleMarksInboundSessionAndRepliesOnSuccess(t *testing.T) {
 }
 
 func TestHandleRejectsAMalformedTimestamp(t *testing.T) {
-	app := New(orchestrator.NewService(orchestrator.Config{}), &fakeWhatsAppClient{}, "secret", "verify", nil)
+	app := New(&fakePublisher{}, &fakeWhatsAppClient{}, "secret", "verify", nil)
 
-	_, status, err := app.Handle(context.Background(), Request{
+	status, err := app.Handle(context.Background(), Request{
 		UserID: "u1", MessageID: "m1", Text: "oi", Timestamp: "ontem",
 	})
 	if err == nil {

@@ -66,6 +66,13 @@ Pipeline: `.github/workflows/deploy.yml`.
    | `CLOUDFLARE_API_TOKEN` | `CLOUDFLARE_API_TOKEN` | if using Cloudflare |
    | `TF_VAR_CLOUDFLARE_ZONE_ID` | `CLOUDFLARE_ZONE_ID` | if using Cloudflare |
    | `TF_VAR_CLOUDFLARE_ACCOUNT_ID` | `CLOUDFLARE_ACCOUNT_ID` | if using Pages |
+   | `TF_VAR_BUDGET_ALERT_EMAIL` | `BUDGET_ALERT_EMAIL` | to arm the cost guard |
+
+   > `TF_VAR_BUDGET_ALERT_EMAIL` is optional to Tofu and not optional to the
+   > architecture: it is the address the monthly budget alert goes to, and the
+   > budget is the trigger ADR-028 requires for its cost guard. Unset, no
+   > budget is created and the guard is back to being an intention someone has
+   > to remember — `tofu plan` shows the resource missing, not a warning.
 
    > The remote state is private (Block Public Access on, encrypted, TLS-only) —
    > but note it stores these secret values in plaintext, so treat read access
@@ -173,6 +180,29 @@ state rather than duplicating rows.
 A malformed envelope will keep failing until the envelope or the parser is
 fixed, so read the logged error before replaying.
 
+## Mensagem do WhatsApp parada na DLQ
+
+O webhook enfileira e o worker processa (ADR-028). Uma mensagem que falha cinco
+entregas vai para `emerbot-dev-whatsapp-inbound-dlq.fifo` — e a pessoa **já
+foi avisada**: o worker manda o texto de fallback na última tentativa, então a
+DLQ é o registro para investigar, não um usuário esperando em silêncio.
+
+```sh
+aws sqs get-queue-attributes \
+  --queue-url "$(aws sqs get-queue-url --queue-name emerbot-dev-whatsapp-inbound-dlq.fifo --output text)" \
+  --attribute-names ApproximateNumberOfMessages
+```
+
+O motivo está no log do worker (`/aws/lambda/emerbot-dev-worker`), pelo
+`message_id`. Para reprocessar depois de corrigir a causa, use o redrive do
+console do SQS (Start DLQ redrive) ou `aws sqs start-message-move-task`. É
+seguro: o worker não marca como processada uma mensagem cujo turno falhou, e
+uma que tiver sido respondida no meio do caminho é ignorada pela marca no
+DynamoDB (ADR-029) em vez de responder duas vezes.
+
+Não há Lambda ouvindo a DLQ, de propósito: seria uma segunda fila sondada
+continuamente, gastando a mesma franquia com trabalho já dado por perdido.
+
 ## Break-glass: deploy from your machine
 
 The Makefile still drives Tofu locally against the same remote state, for when
@@ -194,13 +224,13 @@ Esperado, e vale saber antes de assustar com o plan. O build é determinístico
 **na mesma máquina**: `make clean-lambdas && go clean -cache && make
 build-lambdas` duas vezes seguidas produz zips byte a byte idênticos. Entre
 máquinas diferentes, não: os zips gerados aqui para o commit `3e4a6b6`, com o
-mesmo Go 1.25.0 que o runner usa, têm sha256 diferente dos quatro que o CI
+mesmo Go 1.25.0 que o runner usa, têm sha256 diferente dos cinco que o CI
 aplicou para esse mesmo commit.
 
 A diferença é quase certamente do contêiner zip (modo do arquivo, versão do
 Info-ZIP) e não do binário — o `-trimpath` e o `CGO_ENABLED=0` cuidam do
 binário, e a data já é zerada com `touch -d @0`. Consequência prática: um
-`make tofu-apply` de emergência mostra os quatro Lambdas com
+`make tofu-apply` de emergência mostra os cinco Lambdas com
 `source_code_hash` mudando mesmo sem nenhuma linha de Go ter mudado. É barulho,
 não risco: o código é o mesmo, só publica uma versão nova de cada função.
 
