@@ -145,6 +145,13 @@ func transactionDay(e domain.FinancialEntry) int { return e.TransactionDate.Day(
 // revenueThroughDay sums faturamento up to throughDay, bucketed by the day of
 // the sale — the only date a sale can honestly be attributed to. entries must
 // have been read on the transaction basis.
+//
+// entries must also cover exactly one month. The comparison is on the
+// day-of-month number, so a slice spanning several months counts every one of
+// their 12ths as the same day — which is the bug ADR-030's experiment was
+// fixed for. Every caller passes a monthEntries read, month-bounded by
+// construction; anything wider wants revenueInMonthThrough, which compares
+// whole calendar dates.
 func revenueThroughDay(entries []domain.FinancialEntry, throughDay int) int64 {
 	var total int64
 	for _, e := range entries {

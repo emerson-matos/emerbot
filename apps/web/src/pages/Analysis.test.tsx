@@ -1,10 +1,20 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import type { Analysis as AnalysisData } from "@/api/types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  Analysis as AnalysisData,
+  ProjectionExperiment,
+} from "@/api/types";
+import { currentMonthKey } from "@/lib/entries";
 import { normalizeSpaces } from "@/test/factories";
 
 const useMonthlyAnalysis = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useMonthlyAnalysis", () => ({ useMonthlyAnalysis }));
+
+// ADR-030's experiment is a second query, and the page calls it on every
+// render. Mocked at the hook, like the analysis above, so these tests stay
+// about what the page prints rather than needing a QueryClientProvider.
+const useProjectionExperiment = vi.hoisted(() => vi.fn());
+vi.mock("../hooks/useProjectionExperiment", () => ({ useProjectionExperiment }));
 
 import Analysis from "./Analysis";
 
@@ -139,6 +149,47 @@ function analysisData(overrides: Partial<AnalysisData> = {}): AnalysisData {
   } as AnalysisData;
 }
 
+function experimentData(
+  overrides: Partial<ProjectionExperiment> = {},
+): ProjectionExperiment {
+  return {
+    current: {
+      available: true,
+      official: 3370501,
+      experimental: 3210000,
+      recentFactor: 0.95,
+      observations: 21,
+    },
+    backtest: {
+      samples: [
+        {
+          month: "2026-06",
+          cutoffDay: 15,
+          actualClose: 3400000,
+          official: 3300000,
+          experimental: 3350000,
+        },
+      ],
+      officialMae: 100000,
+      regimeMae: 50000,
+      officialWins: 0,
+      regimeWins: 1,
+      weekdayErrors: [{ day: 1, mae: 12345, observations: 3 }],
+    },
+    ...overrides,
+  };
+}
+
+// Every test renders the whole page, so the experiment query has to answer on
+// all of them. Individual tests override it when the experiment is the subject.
+beforeEach(() => {
+  useProjectionExperiment.mockReturnValue({
+    data: experimentData(),
+    isPending: false,
+    isError: false,
+  });
+});
+
 function renderWith(data: AnalysisData) {
   useMonthlyAnalysis.mockReturnValue({
     data,
@@ -147,6 +198,49 @@ function renderWith(data: AnalysisData) {
   });
   return render(<Analysis />);
 }
+
+describe("the experimental projection section", () => {
+  it("states the backtest is empty instead of throwing on it", () => {
+    // The backend sends no samples until a month is old enough to backtest,
+    // which is the ordinary case for a pharmacy in its first months. The
+    // section used to read samples.length off it and take the page down.
+    useProjectionExperiment.mockReturnValue({
+      data: experimentData({
+        backtest: {
+          samples: [],
+          officialMae: 0,
+          regimeMae: 0,
+          officialWins: 0,
+          regimeWins: 0,
+          weekdayErrors: [],
+        },
+      }),
+      isPending: false,
+      isError: false,
+    });
+
+    // The section only renders for the month in progress, which is the only
+    // month a forecast has anything to say about.
+    renderWith(analysisData({ month: currentMonthKey() }));
+
+    expect(
+      screen.getByText(/Ainda não há histórico suficiente para o backtest/),
+    ).toBeInTheDocument();
+    // The rest of the page is still there — the empty backtest is a state, not
+    // a failure of the analysis around it.
+    expect(screen.getByText("A semana da farmácia")).toBeInTheDocument();
+  });
+
+  it("never presents the candidate as the official projection", () => {
+    // The section only renders for the month in progress, which is the only
+    // month a forecast has anything to say about.
+    renderWith(analysisData({ month: currentMonthKey() }));
+
+    expect(
+      screen.getByText(/Não altera a projeção oficial/),
+    ).toBeInTheDocument();
+  });
+});
 
 describe("Analysis page", () => {
   it("quotes the backend's per-day ask instead of deriving a second one", () => {
@@ -200,7 +294,9 @@ describe("Analysis page", () => {
     // The ask is a whole-day figure measured from the morning, so without the
     // day's own takings nobody can tell whether it was met. The fixture has
     // R$482,00 in against an ask of R$1.211,00.
-    renderWith(analysisData());
+    // The section only renders for the month in progress, which is the only
+    // month a forecast has anything to say about.
+    renderWith(analysisData({ month: currentMonthKey() }));
 
     expect(screen.getByText(/R\$ 482,00 vendidos até agora/)).toBeInTheDocument();
     expect(screen.queryByText(/Meta batida/)).not.toBeInTheDocument();
@@ -475,7 +571,9 @@ describe("the KPI row", () => {
 
 describe("the cash position card", () => {
   it("says the runway counts an ordinary day's receipts", () => {
-    renderWith(analysisData());
+    // The section only renders for the month in progress, which is the only
+    // month a forecast has anything to say about.
+    renderWith(analysisData({ month: currentMonthKey() }));
 
     expect(
       screen.getByText("Contando o recebimento médio de cada dia da semana nos dias que faltam."),

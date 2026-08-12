@@ -603,6 +603,10 @@ export interface ProjectionExperiment {
     observations: number;
   };
   backtest: {
+    /**
+     * Empty until a month is old enough to backtest, which is the ordinary
+     * state of a new account — never null, so `.length` is safe.
+     */
     samples: Array<{
       month: string;
       cutoffDay: number;
@@ -614,7 +618,16 @@ export interface ProjectionExperiment {
     regimeMae: number;
     officialWins: number;
     regimeWins: number;
+    /**
+     * Always an array — the backend allocates it — so it can be indexed
+     * against `WeekdayStat.day` without a null guard.
+     */
     weekdayErrors: Array<{
+      /**
+       * Go's time.Weekday: 0 = Sunday, the same convention and the same
+       * numbering as `WeekdayStat.day`. WeekRhythm joins the two on it, so
+       * they have to stay the same scale; name it with lib/weekdays.
+       */
       day: number;
       mae: number;
       observations: number;

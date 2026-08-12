@@ -85,13 +85,17 @@ func experimentFrom(now time.Time) time.Time {
 func BuildProjectionExperiment(entries []domain.FinancialEntry, now time.Time) ProjectionExperiment {
 	month := now.Format("2006-01")
 	current := estimateAt(entries, month, now)
-	backtest := ExperimentBacktest{}
+	// Allocated rather than left nil: a nil slice marshals to `null`, and the
+	// browser reads samples as an array. A pharmacy in its first months has a
+	// measurable `current` and no month old enough to backtest, so this is the
+	// ordinary case for a new account, not an edge one.
+	backtest := ExperimentBacktest{Samples: make([]ExperimentSample, 0, len(backtestCutoffs)*backtestMonths)}
 
 	for offset := backtestMonths; offset >= 1; offset-- {
 		first := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, now.Location()).AddDate(0, -offset, 0)
 		month := first.Format("2006-01")
 		clock := newMonthClock(month, first)
-		actualClose := revenueThrough(entries, clock, clock.total)
+		actualClose := revenueInMonthThrough(entries, clock, clock.total)
 		for _, cutoff := range backtestCutoffs {
 			if cutoff > clock.total {
 				continue
@@ -129,6 +133,12 @@ func BuildProjectionExperiment(entries []domain.FinancialEntry, now time.Time) P
 	return ProjectionExperiment{Current: current, Backtest: backtest}
 }
 
+// weekdayForecastErrors re-reads the window once per day on purpose: what makes
+// each reading out-of-sample is that its window *ends the day before the day it
+// prices*, so the twenty-one windows are twenty-one different stretches and no
+// one of them can be shared. It is O(21×n) over a slice of a few months, paid
+// only when the experimental section is opened — sliding the window to save
+// that is what would put a day inside its own baseline.
 func weekdayForecastErrors(entries []domain.FinancialEntry, now time.Time) []ExperimentWeekdayError {
 	type total struct {
 		error int64
@@ -166,15 +176,31 @@ func estimateAt(entries []domain.FinancialEntry, month string, now time.Time) Ex
 	from, to := clock.projectionWindow()
 	rates := projectionRates(entries, from, to)
 	asOf := clock.today
-	actual := revenueThrough(entries, clock, asOf)
+	actual := revenueInMonthThrough(entries, clock, asOf)
 	todayRevenue := revenueOnDate(entries, domain.NewCalendarDate(clock.dayOf(asOf)))
 	_, official := projectedClose(rates, 1, clock, actual, todayRevenue, asOf)
 	factor, observations, ok := recentFactor(entries, rates, from, to)
 	if !ok {
-		return ExperimentEstimate{Official: official}
+		// Observations still travels: "4 of the 7 closed days needed" is an
+		// answer, and a bare zero cannot be told from "no history at all".
+		return ExperimentEstimate{Official: official, Observations: observations}
 	}
-	_, experimental := projectedClose(rates, factor, clock, actual, todayRevenue, asOf)
-	return ExperimentEstimate{true, official, experimental, factor, observations}
+	// Keyed, because Official and Experimental are both int64 and the whole
+	// point of this type is telling those two numbers apart — an unkeyed
+	// literal would swap them on a field reorder and still compile.
+	return ExperimentEstimate{
+		Available:    true,
+		Official:     official,
+		Experimental: experimental(rates, factor, clock, actual, todayRevenue, asOf),
+		RecentFactor: factor,
+		Observations: observations,
+	}
+}
+
+// experimental prices the same close at the recent regime's factor.
+func experimental(rates dailyRates, factor float64, clock monthClock, actual, todayRevenue int64, asOf int) int64 {
+	_, close := projectedClose(rates, factor, clock, actual, todayRevenue, asOf)
+	return close
 }
 
 func recentFactor(entries []domain.FinancialEntry, rates dailyRates, from, to domain.CalendarDate) (float64, int, bool) {
@@ -207,7 +233,14 @@ func recentFactor(entries []domain.FinancialEntry, rates dailyRates, from, to do
 	return median, len(ratios), true
 }
 
-func revenueThrough(entries []domain.FinancialEntry, clock monthClock, through int) int64 {
+// revenueInMonthThrough sums faturamento from the analysed month's first day
+// through one of its days, both bounds being full calendar dates.
+//
+// It is not revenueThroughDay: that one matches on the day-of-month number and
+// so requires a slice already scoped to a single month, which is true of
+// Build's inputs and emphatically false here — the experiment holds five months
+// at once, and matching by number is precisely the bug this file was fixed for.
+func revenueInMonthThrough(entries []domain.FinancialEntry, clock monthClock, through int) int64 {
 	if through <= 0 {
 		return 0
 	}

@@ -96,6 +96,11 @@ func Build(in Input) Analysis {
 	// figure in this Analysis agrees about which month a sale falls in.
 	// EntradasCaixa is the broader figure and is deliberately different: it is
 	// what arrived, not what was sold.
+	//
+	// It is the month's whole faturamento, future-dated sales included, because
+	// RevenueComposition has to decompose it exactly (see below). That makes it
+	// deliberately *not* the same figure as goals.RevenueActual, which stops at
+	// today — see actualRevenue.
 	faturamento := currentSummary.TotalRevenue
 
 	// Despesa and Resultado are re-totalled over the days that have arrived
@@ -106,9 +111,14 @@ func Build(in Input) Analysis {
 	// "everything scheduled" ones in the same row, and made Resultado the one
 	// minus the other. See monthClock.elapsed.
 	sofar := totalsThroughDay(in.Entries, clock.elapsed())
-	// Actual revenue through today, matching the experiment's revenueThrough:
-	// the summary covers the full month including future sales, but the
-	// projection must only start from what has already been sold.
+	// What the month has actually sold, through today. The projection builds on
+	// this and then adds each remaining day's weekday average on top, so a sale
+	// already carrying a later date would be counted twice — once here, once
+	// again as the day it falls on. faturamento above cannot be used for that
+	// reason, and the two figures differing is the point rather than a slip.
+	//
+	// in.RevenueEntries is one month's read, which is what lets revenueThroughDay
+	// match on the day-of-month number.
 	actualRevenue := revenueThroughDay(in.RevenueEntries, clock.elapsed())
 	// The same window as a slice, for every retrospective breakdown below. They
 	// read the whole month while Despesa above read the days that had arrived,

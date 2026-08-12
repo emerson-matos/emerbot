@@ -4190,3 +4190,53 @@ func TestEstimateAtDoesNotInflateTodayRevenueFromOtherMonths(t *testing.T) {
 			monthOnly.Official, broad.Official)
 	}
 }
+
+func TestBacktestSamplesAreAnArrayEvenWithNothingToBacktest(t *testing.T) {
+	// A pharmacy whose first sale was on 1 August, looked at on the 25th: it has
+	// enough closed days to measure a recent regime, and no month old enough to
+	// backtest against. That combination used to serialize `"samples": null`,
+	// and the analysis page reads samples.length — so the section threw for
+	// exactly the accounts that had just started using it.
+	var entries []domain.FinancialEntry
+	for d := at12(t, "2026-08-01"); !d.After(at12(t, "2026-08-24")); d = d.AddDate(0, 0, 1) {
+		entries = append(entries, sale(t, d.Format("2006-01-02"), 100000))
+	}
+
+	got := BuildProjectionExperiment(entries, at12(t, "2026-08-25"))
+	if !got.Current.Available {
+		t.Fatalf("Current.Available = false, want a measurable regime off 24 closed days")
+	}
+	if len(got.Backtest.Samples) != 0 {
+		t.Fatalf("Samples = %d, want none — no month is old enough", len(got.Backtest.Samples))
+	}
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"samples":[]`) {
+		t.Errorf("samples did not serialize as an empty array: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"weekdayErrors":[`) {
+		t.Errorf("weekdayErrors did not serialize as an array: %s", encoded)
+	}
+}
+
+func TestUnavailableEstimateStillReportsHowManyDaysItHas(t *testing.T) {
+	// Two days of trading give two weekdays a baseline, and each recurs three
+	// times in the 21-day window — six ratios, one short of the seven the
+	// regime needs. Reporting "0 dias fechados" would be a different fact from
+	// "6 of the 7 needed".
+	var entries []domain.FinancialEntry
+	for d := at12(t, "2026-08-01"); !d.After(at12(t, "2026-08-02")); d = d.AddDate(0, 0, 1) {
+		entries = append(entries, sale(t, d.Format("2006-01-02"), 100000))
+	}
+
+	got := estimateAt(entries, "2026-08", at12(t, "2026-08-03"))
+	if got.Available {
+		t.Fatalf("Available = true, want false on %d closed days", got.Observations)
+	}
+	if got.Observations == 0 {
+		t.Error("Observations = 0, want the days it did find")
+	}
+}
