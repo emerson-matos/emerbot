@@ -69,6 +69,13 @@ func (s *DynamoDBStore) Processed(ctx context.Context, messageID string, now tim
 	if messageID == "" {
 		return false, nil
 	}
+	// Leitura eventualmente consistente de propósito, ao contrário do que faz o
+	// caderninho (packages/fiado), onde duas mensagens chegam com segundos de
+	// diferença. Aqui a segunda entrega da mesma mensagem só acontece depois do
+	// visibility timeout da fila — 360s — e a marca é escrita pela entrega
+	// anterior, no mesmo grupo FIFO, que o SQS não deixa correr em paralelo.
+	// A janela de inconsistência do DynamoDB é de milissegundos: não há corrida
+	// aqui, e uma leitura consistente custaria o dobro sem comprar nada.
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{

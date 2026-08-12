@@ -469,9 +469,12 @@ resource "aws_lambda_event_source_mapping" "whatsapp_inbound" {
   # exatamente a mensagem que falhou.
   batch_size = 1
 
-  # O botão de custo que o ADR-028 manda revisar antes de trocar o mecanismo:
-  # limita os pollers e a concorrência do ESM. 2 é o mínimo que a AWS aceita, e
-  # com uma farmácia e dois telefones é folga de sobra.
+  # O botão de custo que o ADR-028 manda revisar antes de trocar o mecanismo.
+  # Ele limita as invocações concorrentes do ESM, não a quantidade de pollers —
+  # essa só é configurável em Provisioned Mode, que tem custo próprio e não
+  # usamos. Menos concorrência reduz o polling por tabela, mas indiretamente:
+  # quem for atrás de cortar ReceiveMessage não vai achar a alavanca aqui.
+  # 2 é o mínimo que a AWS aceita, e com uma farmácia e dois telefones sobra.
   scaling_config {
     maximum_concurrency = 2
   }
