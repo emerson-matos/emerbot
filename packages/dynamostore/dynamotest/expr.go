@@ -3,6 +3,7 @@ package dynamotest
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -604,10 +605,8 @@ func avContains(subject, operandVal types.AttributeValue) bool {
 		if !ok {
 			return false
 		}
-		for _, v := range s.Value {
-			if v == p {
-				return true
-			}
+		if slices.Contains(s.Value, p) {
+			return true
 		}
 	case *types.AttributeValueMemberNS:
 		n, ok := operandVal.(*types.AttributeValueMemberN)

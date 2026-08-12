@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 )
 
 const whatsappBaseURL = "https://graph.facebook.com/v25.0"
@@ -15,7 +16,7 @@ type metaReplyPayload struct {
 	MessagingProduct string       `json:"messaging_product"`
 	To               string       `json:"to"`
 	Text             metaTextBody `json:"text"`
-	Context          metaContext  `json:"context,omitempty"`
+	Context          metaContext  `json:"context"`
 }
 
 // metaTextPayload is a message with no reply context — Meta rejects a
@@ -124,10 +125,8 @@ func (c *MetaClient) postJSON(ctx context.Context, phoneNumberID string, payload
 		return nil, fmt.Errorf("meta read response: %w", readErr)
 	}
 
-	for _, status := range expectedStatus {
-		if resp.StatusCode == status {
-			return respBody, nil
-		}
+	if slices.Contains(expectedStatus, resp.StatusCode) {
+		return respBody, nil
 	}
 
 	return nil, fmt.Errorf("status=%d body=%s", resp.StatusCode, string(respBody))

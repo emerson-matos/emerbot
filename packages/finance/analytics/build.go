@@ -262,7 +262,7 @@ func buildWeekComparison(entries []domain.FinancialEntry, now time.Time, monthly
 	// One entry per day of the current week that has actually happened, so the
 	// chart never draws a bar for a day that has not been traded yet.
 	days := make([]time.Weekday, 0, daysInWeek)
-	for i := 0; i < daysInWeek; i++ {
+	for i := range daysInWeek {
 		d := thisMonday.AddDate(0, 0, i)
 		if d.Format("2006-01-02") > todayStr {
 			break

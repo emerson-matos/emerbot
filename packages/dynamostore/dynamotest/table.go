@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -927,9 +928,7 @@ func cloneItem(item map[string]types.AttributeValue) map[string]types.AttributeV
 		return nil
 	}
 	out := make(map[string]types.AttributeValue, len(item))
-	for k, v := range item {
-		out[k] = v
-	}
+	maps.Copy(out, item)
 	return out
 }
 
@@ -959,8 +958,8 @@ func tableNames(m map[string][]types.WriteRequest) []string {
 // firing in production.
 func transactionCancelled(total, index int, reason string) error {
 	code := reason
-	if i := strings.IndexByte(reason, ':'); i >= 0 {
-		code = reason[:i]
+	if before, _, ok := strings.Cut(reason, ":"); ok {
+		code = before
 	}
 	reasons := make([]types.CancellationReason, total)
 	for i := range reasons {

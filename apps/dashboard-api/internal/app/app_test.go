@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -74,9 +75,7 @@ func mintTokenWithOverrides(t *testing.T, key *rsa.PrivateKey, kid, sub, email, 
 		"iss": testIssuer,
 		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 	}
-	for k, v := range overrides {
-		claims[k] = v
-	}
+	maps.Copy(claims, overrides)
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = kid
 	signed, err := token.SignedString(key)
