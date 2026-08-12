@@ -155,8 +155,16 @@ resource "aws_lambda_function" "webhook" {
   handler          = var.lambda_handler
   runtime          = var.lambda_runtime
   architectures    = ["arm64"]
-  timeout          = 10
-  memory_size      = 128
+  # The agent loop budgets 25s for itself (packages/orchestrator/internal/gemini
+  # agent.go), across up to 5 tool rounds. At 10s the Lambda was killed before
+  # that budget could ever apply: "oi" answers in one round and fit, while any
+  # question that calls a tool needs round 0 (model asks) + tools + round 1
+  # (model composes) and did not — so it died silently, and the deadline
+  # propagating into the SDK also showed up as Gemini 504 DEADLINE_EXCEEDED.
+  # This must stay above that 25s so the agent's own timeout is what fires,
+  # with a real error, instead of the platform killing the process.
+  timeout     = 30
+  memory_size = 128
 
   environment {
     variables = {
@@ -284,9 +292,17 @@ resource "aws_iam_role_policy" "webhook_sessions" {
 
   policy = jsonencode({
     Version = "2012-10-17"
+    # DeleteItem is the dedup Unmark (apps/webhook/internal/app): the webhook
+    # claims a message's marker before processing so a near-simultaneous retry
+    # is short-circuited, and drops it again when the turn ends without a 2xx,
+    # so WhatsApp's retry is reprocessed instead of swallowed. Without the
+    # action that path failed with AccessDenied on every failure and the retry
+    # was answered "ignoring duplicate" — a message that failed once could
+    # never succeed. A documented mechanism that cannot run is worse than
+    # either granting this or deleting the code.
     Statement = [{
       Effect   = "Allow"
-      Action   = ["dynamodb:PutItem"]
+      Action   = ["dynamodb:PutItem", "dynamodb:DeleteItem"]
       Resource = [aws_dynamodb_table.whatsapp_sessions.arn]
     }]
   })

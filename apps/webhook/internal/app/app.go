@@ -252,23 +252,51 @@ func (a *App) Handle(ctx context.Context, req Request) (resp Response, status in
 	// has one set of books no matter which of its two phones wrote to it.
 	response, err := a.service.HandleMessage(ctx, message)
 	if err != nil {
-		return Response{}, http.StatusInternalServerError, err
+		log.Printf("handling webhook message %s: %v", message.MessageID, err)
+		// Say so, rather than going quiet. A message that gets no reply is
+		// indistinguishable from one that never arrived, and the person is left
+		// deciding alone whether to type it again — which is how a slow answer
+		// became "o bot não responde".
+		//
+		// If that reaches them we own the failure and return 200: a WhatsApp
+		// retry would re-run the same turn that just failed and, when it
+		// worked, answer the same question twice. Only when we cannot reach
+		// them at all is the retry the better outcome — and then the 500 below
+		// lets the deferred Unmark hand the message back to WhatsApp.
+		if serr := a.sendReply(ctx, req, fallbackReply); serr != nil {
+			log.Printf("send fallback: %v", serr)
+			return Response{}, http.StatusInternalServerError, err
+		}
+		return Response{Message: fallbackReply}, http.StatusOK, nil
 	}
 
 	if response.Text != "" {
-		a.sendReply(ctx, req, response.Text)
+		if serr := a.sendReply(ctx, req, response.Text); serr != nil {
+			log.Printf("send reply: %v", serr)
+		}
 	}
 
 	return Response{Message: response.Text}, http.StatusOK, nil
 }
 
-func (a *App) sendReply(ctx context.Context, req Request, reply string) {
+// fallbackReply is what the user hears when the agent could not answer.
+//
+// It does not name a cause: the same silence came from a Lambda killed at its
+// timeout, from Gemini returning 504, and from a tool erroring, and guessing
+// wrong in front of someone is worse than not guessing. What it does carry is
+// the one action that actually helps — a smaller question fits in the budget
+// that a big one did not.
+const fallbackReply = "Não consegui montar essa resposta agora. " +
+	"Manda de novo daqui a pouco — se for uma pergunta grande, quebrar em duas costuma passar."
+
+// sendReply returns the send error instead of only logging it, because the
+// caller's next decision depends on it: having told the user is what makes
+// swallowing the WhatsApp retry the right call.
+func (a *App) sendReply(ctx context.Context, req Request, reply string) error {
 	if a.whatsappClient == nil || req.MessageID == "" {
-		return
+		return nil
 	}
-	if err := a.whatsappClient.SendReply(ctx, req.PhoneNumberID, req.UserID, reply, req.MessageID); err != nil {
-		log.Printf("send reply: %v", err)
-	}
+	return a.whatsappClient.SendReply(ctx, req.PhoneNumberID, req.UserID, reply, req.MessageID)
 }
 
 func (a *App) HandleVerification(mode, token, challenge string) events.APIGatewayV2HTTPResponse {
