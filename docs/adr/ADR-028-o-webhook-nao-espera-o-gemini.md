@@ -143,5 +143,10 @@ gratuitos). Uma regra que depende de alguém lembrar de olhar o Cost Explorer n�
   neste volume
 - entrega é **at-least-once**: a fila reduz duplicatas, não as elimina, e o
   processamento precisa ser idempotente por conta própria (ADR-029)
+- **head-of-line blocking é o preço da ordenação**: uma mensagem que falha
+  bloqueia o próprio grupo — as mensagens seguintes daquele telefone — até ela
+  ir para a DLQ. É limitado por `maxReceiveCount` × visibility timeout (5 × 360s
+  no pior caso), e é a mesma propriedade que dá a ordem: não dá para ter uma sem
+  a outra. Outros telefones seguem intocados
 - o PR #98 não vira trabalho perdido: ele é a rede que segura o sistema até esta
   arquitetura existir, e o fallback continua sendo o que impede o silêncio
