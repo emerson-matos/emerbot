@@ -8,6 +8,7 @@ import {
 import { cognitoInitiateAuth } from "./cognito";
 import type {
   Analysis,
+  ProjectionExperiment,
   Entry,
   CreateEntryInput,
   UpdateEntryInput,
@@ -168,6 +169,8 @@ export const api = {
       const qs = month ? `?month=${month}` : "";
       return httpClient<Analysis>(`/analysis/monthly${qs}`);
     },
+    projectionExperiment: () =>
+      httpClient<ProjectionExperiment>("/analysis/projection-experiment"),
   },
 
   categories: {

@@ -24,6 +24,7 @@ export const queryKeys = {
     ["summary", "categories", from, to] as const,
   cashflow: (month: string) => ["summary", "cashflow", month] as const,
   analysis: (month: string) => ["analysis", "monthly", month] as const,
+  projectionExperiment: () => ["analysis", "projection-experiment"] as const,
   entries: (from: string, to: string) => ["entries", from, to] as const,
   entriesByMonth: () => ["entries", "byMonth"] as const,
   entry: (date: string, id: string) => ["entries", "byId", date, id] as const,

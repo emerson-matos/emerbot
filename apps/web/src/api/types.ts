@@ -593,6 +593,48 @@ export interface Projection {
   plan: Plan;
 }
 
+/** ADR-030's observational forecast candidate; it never drives the official projection. */
+export interface ProjectionExperiment {
+  current: {
+    available: boolean;
+    official: number;
+    experimental: number;
+    recentFactor: number;
+    observations: number;
+  };
+  backtest: {
+    /**
+     * Empty until a month is old enough to backtest, which is the ordinary
+     * state of a new account — never null, so `.length` is safe.
+     */
+    samples: Array<{
+      month: string;
+      cutoffDay: number;
+      actualClose: number;
+      official: number;
+      experimental: number;
+    }>;
+    officialMae: number;
+    regimeMae: number;
+    officialWins: number;
+    regimeWins: number;
+    /**
+     * Always an array — the backend allocates it — so it can be indexed
+     * against `WeekdayStat.day` without a null guard.
+     */
+    weekdayErrors: Array<{
+      /**
+       * Go's time.Weekday: 0 = Sunday, the same convention and the same
+       * numbering as `WeekdayStat.day`. WeekRhythm joins the two on it, so
+       * they have to stay the same scale; name it with lib/weekdays.
+       */
+      day: number;
+      mae: number;
+      observations: number;
+    }>;
+  };
+}
+
 export interface Plan {
   state: DayTargetState;
   /** Never below 1. Meaningless unless `state` is `ok`. */
